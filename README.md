@@ -46,6 +46,74 @@ cloud LLM  ──►  response
 `shield.py` (`PrivacyShield`) is the orchestrator, with four modes:
 **STANDARD · LOCAL_ONLY · ANONYMOUS_JSON · REGEX_ONLY**.
 
+## Run it — `scan()` + CLI
+
+The pipeline above is driven by one thin, agent-invokable entry point,
+`brain.privacy_shield.runner.scan` (also re-exported as
+`brain.privacy_shield.scan`). It walks a **folder**, a **single file**, or **raw
+text**, runs the real pipeline per document (extract → regex → semantic →
+local-LLM → redact → overlay), then the **egress guard** decides — on the source
+classification (privacy mode + confidential/berufsgeheimnis tiers + Art. 9) —
+whether the payload may leave. Only when it may does the **clean overlay** (the
+only thing meant to leave the machine) go out. Every decision is recorded to the
+standalone `audit_log`. No RVND is imported and no enforcement sink is attached.
+
+```python
+from brain.privacy_shield import scan
+from brain.privacy_shield.shield import PrivacyMode
+
+report = scan("/path/to/governed/folder", mode=PrivacyMode.STANDARD)
+report.all_allowed                 # aggregate egress verdict (bool)
+for doc in report.documents:
+    doc.overlay                    # the cleaned overlay — the ONLY thing that egresses
+    doc.spans                      # per-span findings (type/start/end/confidence/layer)
+    doc.egress_allowed             # this document's egress verdict
+    doc.classification             # public | internal | confidential | berufsgeheimnis
+report.to_dict()                   # JSON-ready structured result
+```
+
+`scan()` signature (keyword-only options):
+`scan(target, *, mode=PrivacyMode.STANDARD, destination="external_llm",
+redaction_mode=RedactionMode.REDACT, min_confidence=Confidence.MEDIUM,
+recursive=True, extensions=DEFAULT_EXTENSIONS, audit_log_path=None,
+tenant_id="", user_id="", force_text=False) -> ScanReport`.
+
+CLI (installed as the `privacy-shield` console script by `pip install -e .`):
+
+```
+privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REGEX_ONLY]
+                                  [--destination external_llm] [--out DIR] [--json]
+                                  [--redaction-mode redact|pseudonymize|hash|detect_only|block]
+                                  [--min-confidence low|medium|high]
+                                  [--audit-log PATH] [--no-recursive] [--all-files] [--text]
+```
+
+It prints the verdict, writes the clean overlays with `--out`, and **exits `0`
+when every overlay is cleared for egress, `2` when any document is blocked** (so
+an agent or a shell can gate on it). `-` reads text from stdin. Without an
+install, run it as `python -m brain.privacy_shield.cli scan ...`.
+
+**Honest limits (runner/CLI):**
+- **Egress verdict is source-classification, not proof of anonymity.** The gate
+  blocks LOCAL_ONLY / confidential / berufsgeheimnis / Art. 9 sources; a
+  non-confidential PII document passes and its redacted overlay leaves. It does
+  not re-scan the overlay to certify zero residual PII.
+- **Overlay cosmetics.** Redaction reuses the engine's `redactor.py`. When the
+  regex layers produce *overlapping* findings (e.g. a name pattern overlapping an
+  email), the placeholder splicing can leave placeholder-text fragments (never
+  original PII — the tests assert injected values never survive). The engine is
+  reused unchanged; this is a known redactor artefact, not introduced here.
+- **Folder walk** defaults to known text/document extensions (`DEFAULT_EXTENSIONS`);
+  use `--all-files` to consider every file. Binary/undecodable files are recorded
+  as per-document `errors`, not fatal.
+- **Semantic + local-LLM passes are optional.** With neither the `[semantic]`
+  extras nor a local model present, detection is the deterministic regex/lexicon
+  floor only (the modules degrade gracefully). `[extract]` extras (PyMuPDF/opencv)
+  are needed for PDF/image extraction; without them those documents surface an
+  extraction error.
+- **MCP wrapper** is intentionally out of Phase 1 — `scan()` is the callable
+  capability; wrap it in a tool server when needed.
+
 ## RVND-optional
 
 The core is **RVND-optional**: it runs as a complete standalone artifact with
@@ -95,6 +163,7 @@ not a core dependency.
 
 | Stage | Module | Status |
 |---|---|---|
+| Agent entry point (`scan()` + CLI) | `privacy_shield/runner.py`, `privacy_shield/cli.py` | complete (Phase 1) |
 | Orchestrator + 4 modes | `privacy_shield/shield.py` | complete |
 | Regex/lexicon filter (floor) | `privacy_shield/scanner.py` | complete |
 | Semantic PII (embeddings) | `privacy_shield_embeddings.py` (`PIIContextMatcher`) | complete |
@@ -142,12 +211,14 @@ tests run unmodified (no reimplementation). Distribution renaming is a later ste
 python3 -m pytest tests/ -q
 ```
 
-100 passed, 8 failed. Every privacy-shield **core** test file passes 100%
+114 passed, 8 failed. Every privacy-shield **core** test file passes 100%
 (regex-only, embeddings, semantic wiring, overlay, local-model runtime, config,
-onnx contextual PII, media inputs, review profiles, and the RVND-optional egress
-guard — `test_privacy_gate_rvnd_optional.py`). The 8 failures are all in
-`test_simplifier.py`'s LLM path, which patches `brain.services.llm_runtime` — the
-Brain LLM gateway chain that is intentionally out of scope here. Not weakened.
+onnx contextual PII, media inputs, review profiles, the RVND-optional egress
+guard — `test_privacy_gate_rvnd_optional.py` — and the runner + CLI on synthetic
+PII fixtures — `test_privacy_shield_runner.py`, 14 tests). The 8 failures are all
+in `test_simplifier.py`'s LLM path, which patches `brain.services.llm_runtime` —
+the Brain LLM gateway chain that is intentionally out of scope here. Pre-existing;
+not weakened by Phase 1.
 
 ## Install extras
 
@@ -158,6 +229,7 @@ Brain LLM gateway chain that is intentionally out of scope here. Not weakened.
 ## Gaps (to be a product)
 
 See `GAPS` section below and the assembly report. Headlines: the compliance
-evidence export is still woven into the Brain service layer; there is no packaged
-CLI / MCP entry point in this subset; ONNX contextual model is shadow-only (no
-promotion); no bundled pre-embedded PII-context file.
+evidence export is still woven into the Brain service layer; the CLI entry point
+now ships (`privacy-shield scan`) but there is no MCP-tool wrapper in this subset;
+ONNX contextual model is shadow-only (no promotion); no bundled pre-embedded
+PII-context file.

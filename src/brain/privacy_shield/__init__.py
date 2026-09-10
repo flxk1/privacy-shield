@@ -82,6 +82,12 @@ from .enforcement import (
     RvndEnforcementAdapter,
     NOOP_SINK,
 )
+from .runner import (
+    scan,
+    ScanReport,
+    DocumentScan,
+    SpanFinding,
+)
 
 __all__ = [
     # Main API
@@ -151,6 +157,11 @@ __all__ = [
     "NoOpEnforcementSink",
     "RvndEnforcementAdapter",
     "NOOP_SINK",
+    # Governed-folder runner (agent-invokable capability + CLI)
+    "scan",
+    "ScanReport",
+    "DocumentScan",
+    "SpanFinding",
 ]
 
 __version__ = "1.0.0"

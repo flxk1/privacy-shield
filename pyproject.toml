@@ -11,6 +11,9 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "flxk1" }]
 dependencies = []
 
+[project.scripts]
+privacy-shield = "brain.privacy_shield.cli:main"
+
 [project.optional-dependencies]
 # Semantic / contextual PII layer (embeddings + shadow ONNX model)
 semantic = ["numpy>=1.24", "onnxruntime>=1.16"]
