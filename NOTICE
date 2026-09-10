@@ -1,0 +1,8 @@
+Privacy Shield
+Extracted and consolidated from the Brain platform (internal, unpublished).
+
+Third-party derived components (to be verified/attributed before publication):
+  - Document/media extraction: PyMuPDF (AGPL-3.0 / commercial) — OPTIONAL extra,
+    must not be a core dependency. opencv (Apache-2.0).
+  - Contextual PII: onnxruntime (MIT), numpy (BSD-3-Clause).
+See the Brain compliance/ SBOM + THIRD_PARTY_CODE_REGISTRY for provenance.

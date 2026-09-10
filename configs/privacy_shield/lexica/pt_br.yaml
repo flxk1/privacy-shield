@@ -1,0 +1,43 @@
+pack_id: pt_br
+jurisdictions: [br]
+languages: [pt]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["nome", "nome completo", "sobrenome", "contato"]
+  email: ["email", "e-mail", "correio eletrônico"]
+  phone: ["telefone", "celular", "contato"]
+  address: ["endereco", "endereço", "cep", "logradouro", "domicilio"]
+  date_of_birth: ["data de nascimento", "nascido em", "nascida em"]
+  health: ["diagnostico", "diagnóstico", "tratamento", "paciente", "saude", "saúde"]
+  tax_id: ["cpf", "cadastro de pessoas fisicas", "cadastro de pessoas físicas", "rg"]
+
+honorifics:
+  - sr
+  - sra
+  - dr
+  - dra
+  - prof
+
+weak_name_context:
+  - "me chamo"
+  - "meu nome é"
+  - "assinado por"
+  - "responsável"
+
+sensitive_terms:
+  health: ["diagnóstico", "medicação", "prontuário", "afastamento médico", "paciente"]
+  religion: ["religião", "igreja", "mesquita", "sinagoga", "templo"]
+  politics: ["opinião política", "partido", "campanha", "filiação partidária"]
+  union: ["sindicato", "dirigente sindical", "convenção coletiva"]
+  biometric: ["impressão digital", "reconhecimento facial", "íris", "voz"]
+  criminal: ["antecedentes criminais", "condenação", "investigação criminal"]
+
+region_specific_ids:
+  - br_cpf
+
+negative_terms:
+  - cavalo
+  - projeto
+  - versao
+  - versão

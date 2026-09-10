@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.DS_Store
+# local model artifacts / on-disk embedding caches
+src/brain/data/privacy_shield/*.json
+*.onnx

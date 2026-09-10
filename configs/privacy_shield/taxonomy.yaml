@@ -1,0 +1,188 @@
+version: 1
+owner: privacy_shield
+source_alignment:
+  gdpr:
+    direct_identifier_scope:
+      - article_4_1
+    special_category_scope:
+      - article_9_1
+  iso:
+    - ISO/IEC 29100:2024
+    - ISO/IEC 20889:2018
+    - ISO/IEC 27561:2024
+    - ISO/IEC 27701:2019
+
+entities:
+  - id: email
+    canonical_name: EMAIL_ADDRESS
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: phone
+    canonical_name: PHONE_NUMBER
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: iban
+    canonical_name: IBAN
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: credit_card
+    canonical_name: PAYMENT_CARD
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: ip_address
+    canonical_name: IP_ADDRESS
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: steuer_id
+    canonical_name: TAX_IDENTIFIER_DE
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: svnr
+    canonical_name: SOCIAL_SECURITY_IDENTIFIER_DE
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: passport
+    canonical_name: PASSPORT_NUMBER
+    detector_class: direct_identifier
+    default_action: review
+    requires_review: true
+
+  - id: id_card
+    canonical_name: NATIONAL_ID_CARD
+    detector_class: direct_identifier
+    default_action: review
+    requires_review: true
+
+  - id: name
+    canonical_name: PERSON_NAME
+    detector_class: quasi_identifier
+    default_action: review
+    requires_review: true
+
+  - id: address
+    canonical_name: STREET_ADDRESS
+    detector_class: quasi_identifier
+    default_action: review
+    requires_review: true
+
+  - id: plz_city
+    canonical_name: POSTAL_LOCATION
+    detector_class: quasi_identifier
+    default_action: review
+    requires_review: true
+
+  - id: date_of_birth
+    canonical_name: DATE_OF_BIRTH
+    detector_class: quasi_identifier
+    default_action: redact
+    requires_review: false
+
+  - id: age
+    canonical_name: AGE
+    detector_class: quasi_identifier
+    default_action: review
+    requires_review: true
+
+  - id: health_data
+    canonical_name: HEALTH_DATA
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: icd_code
+    canonical_name: MEDICAL_CODE
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: biometric
+    canonical_name: BIOMETRIC_DATA
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: political
+    canonical_name: POLITICAL_OPINION
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: religious
+    canonical_name: RELIGIOUS_BELIEF
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: union
+    canonical_name: TRADE_UNION_MEMBERSHIP
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: sexual
+    canonical_name: SEX_LIFE_OR_ORIENTATION
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: criminal
+    canonical_name: CRIMINAL_DATA
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: genetic
+    canonical_name: GENETIC_DATA
+    detector_class: special_category
+    default_action: review
+    requires_review: true
+
+  - id: file_path
+    canonical_name: FILE_PATH
+    detector_class: internal_reference
+    default_action: review
+    requires_review: true
+
+  - id: internal_url
+    canonical_name: INTERNAL_URL
+    detector_class: internal_reference
+    default_action: review
+    requires_review: true
+
+  - id: ticket_id
+    canonical_name: INTERNAL_TICKET
+    detector_class: internal_reference
+    default_action: review
+    requires_review: true
+
+  - id: project_codename
+    canonical_name: PROJECT_CODENAME
+    detector_class: internal_reference
+    default_action: review
+    requires_review: true
+
+  - id: draft_marker
+    canonical_name: DRAFT_MARKER
+    detector_class: internal_reference
+    default_action: review
+    requires_review: true
+
+  - id: version_string
+    canonical_name: VERSION_STRING
+    detector_class: internal_reference
+    default_action: review
+    requires_review: true

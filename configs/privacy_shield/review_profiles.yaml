@@ -1,0 +1,67 @@
+version: 1
+
+profiles:
+  all:
+    id: all
+    label: All
+    recommendation: allowed
+    applies_to:
+      - chat
+      - file
+      - folder_batch
+    pii_review:
+      behavior: review_all_detected_findings
+      user_override_required_for_restoration: true
+    security_review:
+      act_on_severities: [critical, high, medium, low]
+      block_on_severities: [critical]
+
+  auto_not_recommended:
+    id: auto_not_recommended
+    label: Auto
+    recommendation: not_recommended
+    applies_to:
+      - chat
+      - file
+      - folder_batch
+    pii_review:
+      behavior: auto_apply_all_detected_redactions
+      user_override_required_for_restoration: true
+    security_review:
+      act_on_severities: [critical, high, medium, low]
+      block_on_severities: [critical]
+
+  high_only:
+    id: high_only
+    label: High risk only
+    recommendation: allowed
+    applies_to:
+      - chat
+      - file
+      - folder_batch
+    pii_review:
+      behavior: review_high_confidence_only
+      user_override_required_for_restoration: true
+    security_review:
+      act_on_severities: [critical, high]
+      block_on_severities: [critical]
+
+  high_and_medium_recommended:
+    id: high_and_medium_recommended
+    label: High and medium
+    recommendation: recommended
+    applies_to:
+      - chat
+      - file
+      - folder_batch
+    pii_review:
+      behavior: review_high_and_medium
+      user_override_required_for_restoration: true
+    security_review:
+      act_on_severities: [critical, high, medium]
+      block_on_severities: [critical]
+
+defaults:
+  chat_inline: high_and_medium_recommended
+  file_inline: high_and_medium_recommended
+  folder_batch: high_only

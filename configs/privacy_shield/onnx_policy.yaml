@@ -1,0 +1,162 @@
+version: 1
+purpose: >
+  Define how ONNX-based multilingual classifiers may participate in Privacy Shield
+  decisions without replacing deterministic policy.
+
+principles:
+  - regex_direct_identifiers_remain_authoritative
+  - lexica_are_context_only
+  - onnx_is_contextual_and_probabilistic
+  - ambiguous_cases_route_to_review
+  - unsupported_languages_fail_safe_to_regex_and_review
+
+language_policy:
+  detection_required: true
+  mixed_language_mode: keep_multiple_packs_active
+  unsupported_language_action: review
+  threshold_strategy: per_language
+  supported_languages:
+    - de
+    - en
+    - fr
+    - es
+    - pt
+
+decision_matrix:
+  - case: hard_regex_direct_identifier
+    examples:
+      - email
+      - phone
+      - iban
+      - credit_card
+      - ip_address
+      - steuer_id
+      - svnr
+    onnx_may:
+      - annotate
+      - add_secondary_type
+    onnx_must_not:
+      - suppress
+      - clear
+      - downgrade_to_safe
+    default_action: redact
+
+  - case: weak_or_heuristic_candidate
+    examples:
+      - name
+      - address
+      - plz_city
+      - passport
+      - id_card
+      - age
+    onnx_may:
+      - escalate_to_review
+      - escalate_to_redact
+      - deescalate_to_ignore
+    deescalation_guardrails:
+      requires_high_confidence: true
+      requires_no_supporting_lexicon_hit: true
+      forbidden_if_labelled_field: true
+      forbidden_if_special_category_context: true
+    default_action: review
+
+  - case: no_regex_but_sensitive_context
+    examples:
+      - health_data
+      - political
+      - religious
+      - union
+      - biometric
+      - criminal
+      - genetic
+    onnx_may:
+      - create_review_finding
+      - raise_confidence
+    onnx_must_not:
+      - silently_mark_safe
+    default_action: review
+
+  - case: conflicting_signals
+    examples:
+      - regex_name_shape_plus_project_name_context
+      - weak_id_match_plus_non_person_context
+      - lexicon_hit_plus_negative_term_plus_low_onnx_score
+    onnx_may:
+      - request_review
+      - lower_confidence
+    onnx_must_not:
+      - auto_clear_without_guardrails
+    default_action: review
+
+  - case: low_confidence_onnx_only
+    examples:
+      - faint_person_name_score
+      - weak_special_category_score
+    onnx_may:
+      - attach_advisory_score
+    onnx_must_not:
+      - create_auto_redact
+      - create_auto_ignore_if_other_signals_exist
+    default_action: review
+
+override_rules:
+  user_override_is_authoritative: true
+  user_approved_redaction_must_not_be_removed_by_onnx: true
+  explicit_user_unredact_requires_audit_event: true
+
+model_roles:
+  contextual_person_name_ner:
+    task: token_classification
+    primary_targets: [name, address]
+    multilingual_required: true
+    outputs:
+      - person_probability
+      - span_boundaries
+
+  contextual_pii_classifier:
+    task: sequence_classification
+    primary_targets: [name, address, date_of_birth, age]
+    multilingual_required: true
+    outputs:
+      - pii_probability
+      - contextual_reason_code
+
+  special_category_scorer:
+    task: sequence_classification
+    primary_targets: [health_data, political, religious, union, biometric, criminal, genetic]
+    multilingual_required: true
+    outputs:
+      - special_category_probability
+      - category_scores
+
+  prompt_injection_classifier:
+    task: sequence_classification
+    primary_targets: [prompt_injection]
+    multilingual_required: true
+    outputs:
+      - injection_probability
+      - threat_family
+
+promotion_gates:
+  global_requirements:
+    - beats_regex_baseline_on_holdout
+    - no_false_positive_regression_on_negative_corpus
+    - logs_model_version
+    - logs_language
+    - logs_confidence
+  per_language_requirements:
+    de:
+      min_holdout_cases: 100
+      max_false_positive_delta: 0.02
+    en:
+      min_holdout_cases: 100
+      max_false_positive_delta: 0.02
+    fr:
+      min_holdout_cases: 50
+      max_false_positive_delta: 0.03
+    es:
+      min_holdout_cases: 50
+      max_false_positive_delta: 0.03
+    pt:
+      min_holdout_cases: 50
+      max_false_positive_delta: 0.03

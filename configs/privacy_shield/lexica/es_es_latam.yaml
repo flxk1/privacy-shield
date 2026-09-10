@@ -1,0 +1,43 @@
+pack_id: es_es_latam
+jurisdictions: [es, mx, ar, co, cl, pe]
+languages: [es]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["nombre", "nombre completo", "apellido", "apellidos", "persona de contacto"]
+  email: ["correo", "correo electronico", "correo electrónico", "email"]
+  phone: ["telefono", "teléfono", "movil", "móvil", "celular"]
+  address: ["direccion", "dirección", "domicilio", "codigo postal", "código postal"]
+  date_of_birth: ["fecha de nacimiento", "nacido el", "nacida el"]
+  health: ["diagnostico", "diagnóstico", "tratamiento", "paciente", "salud"]
+  tax_id: ["dni", "nif", "nie", "identificacion", "identificación"]
+
+honorifics:
+  - sr
+  - sra
+  - srta
+  - dr
+  - dra
+
+weak_name_context:
+  - "me llamo"
+  - "mi nombre es"
+  - "firmado por"
+  - "persona de contacto"
+
+sensitive_terms:
+  health: ["diagnóstico", "medicación", "historial clínico", "baja médica", "paciente"]
+  religion: ["religion", "religión", "iglesia", "mezquita", "sinagoga"]
+  politics: ["afiliación política", "partido", "campaña", "militancia"]
+  union: ["sindicato", "afiliado sindical", "convenio colectivo"]
+  biometric: ["huella", "reconocimiento facial", "iris", "voz"]
+  criminal: ["antecedentes penales", "condena", "investigación penal"]
+
+region_specific_ids:
+  - es_nif_nie
+
+negative_terms:
+  - caballo
+  - proyecto
+  - version
+  - contrato

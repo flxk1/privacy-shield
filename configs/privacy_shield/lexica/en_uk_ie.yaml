@@ -1,0 +1,47 @@
+pack_id: en_uk_ie
+jurisdictions: [uk, ie]
+languages: [en]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["name", "full name", "surname", "family name", "contact person"]
+  email: ["email", "e-mail", "mail"]
+  phone: ["phone", "telephone", "mobile", "contact number", "tel"]
+  address: ["address", "postal address", "home address", "postcode"]
+  date_of_birth: ["date of birth", "dob", "born on"]
+  health: ["diagnosis", "medical", "patient", "treatment", "nhs"]
+  tax_id: ["national insurance", "national insurance number", "nino"]
+
+honorifics:
+  - mr
+  - mrs
+  - ms
+  - miss
+  - dr
+  - prof
+  - sir
+  - dame
+
+weak_name_context:
+  - "my name is"
+  - "signed by"
+  - "contact person"
+  - "for the attention of"
+
+sensitive_terms:
+  health: ["diagnosis", "prescription", "mental health", "medical leave", "patient record"]
+  religion: ["religion", "faith", "church", "mosque", "synagogue", "temple"]
+  politics: ["political opinion", "party membership", "campaign donor", "manifesto"]
+  union: ["trade union", "union member", "collective bargaining"]
+  biometric: ["fingerprint", "facial recognition", "iris scan", "voiceprint"]
+  criminal: ["criminal record", "conviction", "custody", "probation"]
+
+region_specific_ids:
+  - uk_nino
+
+negative_terms:
+  - horse
+  - tiger
+  - project
+  - release
+  - roadmap

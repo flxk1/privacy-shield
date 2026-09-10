@@ -1,0 +1,8 @@
+version = 1
+# Placeholder REUSE config. Third-party derived source files (extractor/media
+# helpers, ONNX runtime glue) must carry SPDX-License-Identifier + Upstream:
+# headers before publication — see NOTICE below and the Brain THIRD_PARTY registry.
+[[annotations]]
+path = "src/**"
+SPDX-FileCopyrightText = "flxk1"
+SPDX-License-Identifier = "Apache-2.0"

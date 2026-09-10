@@ -1,0 +1,73 @@
+version: 1
+execution_order:
+  - regex_patterns
+  - lexicon_boosts
+  - onnx_models
+  - policy_decision
+  - preview_override
+
+targets:
+  - id: contextual_person_name_ner
+    task: token_classification
+    purpose: Distinguish person names from ordinary nouns when regex and lexica are ambiguous.
+    runs_after: [name, address]
+    preferred_inputs:
+      - text
+      - regex_hits
+      - lexicon_hits
+      - jurisdiction_hint
+    outputs:
+      - person_span
+      - confidence
+    promotion_gate:
+      - beats_regex_on_name_holdout
+      - no_regression_on_false_positive_corpus
+
+  - id: contextual_pii_classifier
+    task: sequence_classification
+    purpose: Score whether a passage contains personal data when no direct identifier is present.
+    runs_after: [name, address, date_of_birth, age]
+    preferred_inputs:
+      - text
+      - lexicon_hits
+      - labelled_fields
+    outputs:
+      - pii_likelihood
+      - rationale_code
+
+  - id: special_category_sensitivity
+    task: sequence_classification
+    purpose: Raise or lower confidence for health, religion, politics, union, biometric, criminal, and genetic context.
+    runs_after: [health_data, political, religious, union, biometric, criminal, genetic]
+    preferred_inputs:
+      - text
+      - lexicon_hits
+      - surrounding_window
+    outputs:
+      - sensitivity_type
+      - confidence
+
+  - id: prompt_injection_classifier
+    task: sequence_classification
+    purpose: Complement the existing prompt-injection regex scanner with contextual detection.
+    runs_after: [prompt_injection_patterns]
+    preferred_inputs:
+      - text
+      - normalized_text
+      - security_pattern_hits
+    outputs:
+      - injection_probability
+      - threat_family
+
+  - id: confidence_calibrator
+    task: calibration
+    purpose: Recalibrate combined regex, lexicon, and ONNX results into a final review or redact decision score.
+    runs_after: [all]
+    preferred_inputs:
+      - regex_confidence
+      - lexicon_counts
+      - onnx_scores
+      - jurisdiction_hint
+    outputs:
+      - calibrated_confidence
+      - review_required

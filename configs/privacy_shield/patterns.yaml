@@ -1,0 +1,133 @@
+version: 1
+policy:
+  high_confidence_default: redact
+  medium_confidence_default: redact
+  low_confidence_default: review
+  label_matching_mode: contextual_window_only
+  never_match_labels_as_findings: true
+  label_window_characters: 48
+
+rules:
+  - id: email_basic
+    type: email
+    method: regex
+    confidence: high
+    jurisdictions: [global]
+    pattern: "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"
+    flags: [IGNORECASE]
+
+  - id: phone_international
+    type: phone
+    method: regex
+    confidence: high
+    jurisdictions: [global]
+    pattern: "\\b(?:\\+?\\d{1,3}[\\s.-]?)?\\(?\\d{2,4}\\)?[\\s.-]?\\d{3,4}[\\s.-]?\\d{3,4}\\b"
+    flags: [IGNORECASE]
+
+  - id: iban_eu
+    type: iban
+    method: regex
+    confidence: high
+    jurisdictions: [eu, uk]
+    pattern: "\\b[A-Z]{2}\\d{2}[\\sA-Z0-9]{10,30}\\b"
+    flags: [IGNORECASE]
+
+  - id: payment_card_major
+    type: credit_card
+    method: regex
+    confidence: high
+    jurisdictions: [global]
+    pattern: "\\b(?:4\\d{3}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}|5[1-5]\\d{2}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}|3[47]\\d{2}[\\s-]?\\d{6}[\\s-]?\\d{5}|6(?:011|5\\d{2})[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4})\\b"
+    flags: [IGNORECASE]
+
+  - id: ipv4
+    type: ip_address
+    method: regex
+    confidence: high
+    jurisdictions: [global]
+    pattern: "\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b"
+    flags: [IGNORECASE]
+
+  - id: de_steuer_id
+    type: steuer_id
+    method: regex
+    confidence: medium
+    jurisdictions: [de, at]
+    pattern: "\\b\\d{2}\\s?\\d{3}\\s?\\d{3}\\s?\\d{3}\\b"
+    flags: [IGNORECASE]
+
+  - id: de_svnr
+    type: svnr
+    method: regex
+    confidence: high
+    jurisdictions: [de, at]
+    pattern: "\\b\\d{2}[A-Z]\\d{6}[A-Z]\\d{3}\\b"
+    flags: [IGNORECASE]
+
+  - id: uk_nino
+    type: id_card
+    method: regex
+    confidence: medium
+    jurisdictions: [uk]
+    pattern: "\\b[A-CEGHJ-PR-TW-Z]{2}\\d{6}[A-D]\\b"
+    flags: [IGNORECASE]
+
+  - id: us_ssn_labelled
+    type: id_card
+    method: regex
+    confidence: high
+    jurisdictions: [us]
+    labels: ["ssn", "social security", "social security number"]
+    pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+    flags: [IGNORECASE]
+
+  - id: ca_sin_labelled
+    type: id_card
+    method: regex
+    confidence: high
+    jurisdictions: [ca]
+    labels: ["sin", "social insurance", "social insurance number"]
+    pattern: "\\b\\d{3}[ -]?\\d{3}[ -]?\\d{3}\\b"
+    flags: [IGNORECASE]
+
+  - id: br_cpf
+    type: id_card
+    method: regex
+    confidence: high
+    jurisdictions: [br]
+    labels: ["cpf", "cadastro de pessoas fisicas"]
+    pattern: "\\b\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}\\b"
+    flags: [IGNORECASE]
+
+  - id: fr_insee
+    type: id_card
+    method: regex
+    confidence: medium
+    jurisdictions: [fr]
+    labels: ["nir", "numero de securite sociale", "numero de sécurité sociale"]
+    pattern: "\\b[12]\\d{2}(?:0[1-9]|1[0-2])(?:2[AB]|\\d{2})\\d{6}\\d{2}\\b"
+    flags: [IGNORECASE]
+
+  - id: es_nif_nie
+    type: id_card
+    method: regex
+    confidence: medium
+    jurisdictions: [es]
+    labels: ["dni", "nif", "nie", "documento nacional de identidad"]
+    pattern: "\\b(?:\\d{8}[A-Z]|[XYZ]\\d{7}[A-Z])\\b"
+    flags: [IGNORECASE]
+
+  - id: person_name_after_label
+    type: name
+    method: heuristic
+    confidence: low
+    jurisdictions: [global]
+    labels: ["name", "full name", "vorname", "nachname", "nom", "nombre", "nome"]
+    pattern: "[A-Z][\\p{L}'-]+(?:\\s+[A-Z][\\p{L}'-]+){0,2}"
+
+  - id: health_labelled_terms
+    type: health_data
+    method: lexicon
+    confidence: medium
+    jurisdictions: [global]
+    labels: ["diagnosis", "condition", "medical", "patient", "diagnose", "krankheit", "tratamiento", "terapia"]

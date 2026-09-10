@@ -1,0 +1,42 @@
+pack_id: apac_en
+jurisdictions: [sg, au, nz, in]
+languages: [en]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["name", "full name", "legal name", "contact person"]
+  email: ["email", "e-mail"]
+  phone: ["phone", "mobile", "contact number"]
+  address: ["address", "postal code", "postcode", "residential address"]
+  date_of_birth: ["date of birth", "dob"]
+  health: ["medical", "diagnosis", "patient", "treatment"]
+  tax_id: ["national id", "tax file number", "fin", "nric", "aadhaar"]
+
+honorifics:
+  - mr
+  - mrs
+  - ms
+  - dr
+  - prof
+
+weak_name_context:
+  - "my name is"
+  - "signed by"
+  - "contact person"
+
+sensitive_terms:
+  health: ["diagnosis", "patient", "prescription", "medical certificate", "medical leave"]
+  religion: ["religion", "faith", "church", "mosque", "synagogue", "temple"]
+  politics: ["political party", "campaign", "political affiliation"]
+  union: ["trade union", "union member", "industrial action"]
+  biometric: ["fingerprint", "facial recognition", "iris", "voiceprint"]
+  criminal: ["criminal record", "conviction", "court order", "probation"]
+
+region_specific_ids:
+  - apac_local_ids_require_custom_rule
+
+negative_terms:
+  - horse
+  - tiger
+  - project
+  - release

@@ -1,0 +1,46 @@
+pack_id: en_us_ca
+jurisdictions: [us, ca]
+languages: [en]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["name", "full name", "legal name", "contact"]
+  email: ["email", "e-mail"]
+  phone: ["phone", "cell", "mobile", "contact number"]
+  address: ["address", "street address", "zip code", "postal code", "state", "province"]
+  date_of_birth: ["date of birth", "dob", "birthday"]
+  health: ["medical", "diagnosis", "patient", "treatment", "hipaa"]
+  tax_id: ["ssn", "social security number", "sin", "social insurance number", "tax id", "tin"]
+
+honorifics:
+  - mr
+  - mrs
+  - ms
+  - mx
+  - dr
+  - prof
+
+weak_name_context:
+  - "my name is"
+  - "signed by"
+  - "employee name"
+  - "customer name"
+
+sensitive_terms:
+  health: ["diagnosis", "patient", "prescription", "medical leave", "disability"]
+  religion: ["religion", "faith", "church", "mosque", "synagogue", "temple"]
+  politics: ["voter", "campaign", "political affiliation", "party registration"]
+  union: ["union member", "labor union", "collective bargaining", "shop steward"]
+  biometric: ["fingerprint", "face scan", "retina", "voice biometrics"]
+  criminal: ["criminal record", "felony", "misdemeanor", "parole", "probation"]
+
+region_specific_ids:
+  - us_ssn_labelled
+  - ca_sin_labelled
+
+negative_terms:
+  - horse
+  - cougar
+  - project
+  - roadmap
+  - sprint

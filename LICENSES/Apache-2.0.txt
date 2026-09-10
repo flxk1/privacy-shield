@@ -1,0 +1,2 @@
+PLACEHOLDER — full Apache-2.0 license text goes here (REUSE-compliant).
+Fetch from https://www.apache.org/licenses/LICENSE-2.0.txt

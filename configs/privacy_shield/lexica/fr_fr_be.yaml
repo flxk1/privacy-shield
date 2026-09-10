@@ -1,0 +1,42 @@
+pack_id: fr_fr_be
+jurisdictions: [fr, be]
+languages: [fr]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["nom", "nom complet", "prenom", "prénom", "nom de famille"]
+  email: ["e-mail", "email", "courriel"]
+  phone: ["telephone", "téléphone", "portable", "mobile"]
+  address: ["adresse", "code postal", "domicile", "rue"]
+  date_of_birth: ["date de naissance", "ne le", "née le"]
+  health: ["diagnostic", "traitement", "patient", "medical", "médical"]
+  tax_id: ["nir", "numero de securite sociale", "numéro de sécurité sociale"]
+
+honorifics:
+  - m
+  - mme
+  - mlle
+  - dr
+  - pr
+
+weak_name_context:
+  - "je m'appelle"
+  - "signe par"
+  - "contact principal"
+
+sensitive_terms:
+  health: ["diagnostic", "ordonnance", "hospitalisation", "patient", "arrêt maladie"]
+  religion: ["religion", "foi", "eglise", "église", "mosquée", "synagogue"]
+  politics: ["opinion politique", "parti", "campagne", "militant"]
+  union: ["syndicat", "représentant syndical", "convention collective"]
+  biometric: ["empreinte", "reconnaissance faciale", "iris", "voix"]
+  criminal: ["casier judiciaire", "condamnation", "mise en examen"]
+
+region_specific_ids:
+  - fr_insee
+
+negative_terms:
+  - cheval
+  - projet
+  - version
+  - contrat

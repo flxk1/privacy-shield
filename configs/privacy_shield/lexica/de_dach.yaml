@@ -1,0 +1,46 @@
+pack_id: de_dach
+jurisdictions: [de, at, ch]
+languages: [de]
+field_label_semantics: context_only
+
+field_labels:
+  name: ["name", "voller name", "vorname", "nachname", "ansprechpartner"]
+  email: ["e-mail", "email", "mail"]
+  phone: ["telefon", "telefonnummer", "handy", "mobil", "tel"]
+  address: ["adresse", "anschrift", "wohnort", "straße", "strasse"]
+  date_of_birth: ["geburtsdatum", "geb.", "geboren am"]
+  health: ["diagnose", "krankheit", "therapie", "behandlung", "patient"]
+  tax_id: ["steuer-id", "steuer id", "steueridentifikationsnummer", "steuernummer"]
+  insurance: ["versichertennummer", "sozialversicherungsnummer", "svnr"]
+
+honorifics:
+  - herr
+  - frau
+  - dr
+  - prof
+  - prof dr
+
+weak_name_context:
+  - "mein name ist"
+  - "ich heiße"
+  - "unterzeichnet von"
+  - "ansprechpartner ist"
+
+sensitive_terms:
+  health: ["diagnose", "medikation", "krankenhaus", "arbeitsunfähig", "au-bescheinigung"]
+  religion: ["religion", "konfession", "kirche", "moschee", "synagoge"]
+  politics: ["partei", "wahlkampf", "fraktion", "mitgliedschaft"]
+  union: ["gewerkschaft", "betriebsrat", "tarifvertrag"]
+  biometric: ["fingerabdruck", "gesichtserkennung", "iris", "stimmerkennung"]
+  criminal: ["vorstrafe", "ermittlungsverfahren", "haftbefehl", "strafregister"]
+
+region_specific_ids:
+  - steuer_id
+  - svnr
+
+negative_terms:
+  - pferd
+  - tiger
+  - projekt
+  - version
+  - vertrag
