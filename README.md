@@ -46,6 +46,51 @@ cloud LLM  ──►  response
 `shield.py` (`PrivacyShield`) is the orchestrator, with four modes:
 **STANDARD · LOCAL_ONLY · ANONYMOUS_JSON · REGEX_ONLY**.
 
+## RVND-optional
+
+The core is **RVND-optional**: it runs as a complete standalone artifact with
+**zero RVND present** — no `import rvnd`, no RVND call, no MCP `workspace_*`
+call on any core path. RVND governance is an **optional enrichment** behind a
+flag-gated adapter that no-ops when absent. (See `docs/adr/0001-rvnd-optional.md`.)
+
+The seam lives at the **egress guard** (`gate.py`). Every guard entry point
+behaves in both modes:
+
+- **Default (zero RVND):** the guard decides **locally** (privacy mode +
+  classification tiers + Art. 9, over the scanner's regex/embeddings/local-LLM
+  verdict) and records the decision to the standalone `audit_log`
+  (`AI_PRIVACY_SHIELD_DECISION`); `require_privacy_check` raises
+  `PermissionError` on an unsafe egress. Fully functional alone.
+- **Enriched (adapter attached):** the **same** decision is additionally
+  surfaced to an optional `EnforcementSink` (e.g. an RVND adapter → verdict +
+  signed-chain receipt). Enrichment is strictly additive and never overrides
+  the local decision.
+
+The seam (`brain.privacy_shield.enforcement`) is interface-only —
+`EnforcementSink` (Protocol), `EnforcementDecision` / `EnforcementVerdict`, the
+inert default `NoOpEnforcementSink`, and `RvndEnforcementAdapter`, an
+**interface-only stub** that documents the intended RVND bindings without
+importing or calling `rvnd.*`. Attach a real adapter (built outside this core)
+via `PrivacyGate.attach_enforcement_sink(...)`.
+
+```python
+from brain.privacy_shield.gate import PrivacyGate
+
+gate = PrivacyGate()                       # zero RVND — decides locally + audits
+# gate.attach_enforcement_sink(rvnd_sink)  # optional: add verdict + signed chain
+result = gate.check({"text": doc}, destination="external_llm")
+```
+
+**Advisory vs enforce (design note):** RVND's `decide_action` *appends to the
+signed chain* — gating is itself a mutating act — so an adapter distinguishes an
+advisory preview (pure `action_gate.gate`, no chain write) from an enforce call
+(`decide_action`, which writes the chain and yields an `audit_id`). The
+`enforce` flag on `EnforcementSink.gate` carries that distinction;
+`record_decision` is always advisory. The standalone `audit_log` is the default
+audit trail; the RVND signed-chain is the optional enrichment via the same seam.
+`compliance_evidence_export.py` (Brain-coupled) is an optional/enterprise export,
+not a core dependency.
+
 ## Module inventory
 
 | Stage | Module | Status |
@@ -59,6 +104,7 @@ cloud LLM  ──►  response
 | Document/media extraction | `privacy_shield/extractor.py`, `privacy_shield/media/*` | complete (PDF/img need optional extras) |
 | Clean overlay builder | `privacy_shield/anonymous_json.py` (`AnonymousEnvelope`, `anonymize_for_cloud`, `rehydrate_response`) | complete |
 | Egress guard | `privacy_shield/gate.py` (`PrivacyGate`, `require_privacy_check`), `scanner.is_safe_for_external_llm` | complete |
+| Optional enforcement/audit seam | `privacy_shield/enforcement.py` (`EnforcementSink`, `NoOpEnforcementSink`, `RvndEnforcementAdapter` stub) | complete (interface-only; RVND-optional) |
 | Anonymisation / pseudonymisation | `privacy_shield/anonymisation_skill.py` | complete |
 | Breach handling | `privacy_shield/breach.py` | complete |
 | Prompt-injection / threat scan | `privacy_shield/security_scanner.py` | complete |
@@ -96,9 +142,10 @@ tests run unmodified (no reimplementation). Distribution renaming is a later ste
 python3 -m pytest tests/ -q
 ```
 
-91 passed, 8 failed. Every privacy-shield **core** test file passes 100%
+100 passed, 8 failed. Every privacy-shield **core** test file passes 100%
 (regex-only, embeddings, semantic wiring, overlay, local-model runtime, config,
-onnx contextual PII, media inputs, review profiles). The 8 failures are all in
+onnx contextual PII, media inputs, review profiles, and the RVND-optional egress
+guard — `test_privacy_gate_rvnd_optional.py`). The 8 failures are all in
 `test_simplifier.py`'s LLM path, which patches `brain.services.llm_runtime` — the
 Brain LLM gateway chain that is intentionally out of scope here. Not weakened.
 

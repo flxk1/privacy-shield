@@ -68,6 +68,20 @@ from .privacy_skill_kg import (
     list_privacy_kg_facts,
     summarize_privacy_kg_facts,
 )
+from .gate import (
+    PrivacyGate,
+    PrivacyGateResult,
+    privacy_gate,
+    require_privacy_check,
+)
+from .enforcement import (
+    EnforcementSink,
+    EnforcementDecision,
+    EnforcementVerdict,
+    NoOpEnforcementSink,
+    RvndEnforcementAdapter,
+    NOOP_SINK,
+)
 
 __all__ = [
     # Main API
@@ -125,6 +139,18 @@ __all__ = [
     "record_privacy_kg_fact",
     "list_privacy_kg_facts",
     "summarize_privacy_kg_facts",
+    # Egress guard
+    "PrivacyGate",
+    "PrivacyGateResult",
+    "privacy_gate",
+    "require_privacy_check",
+    # Optional RVND enforcement/audit seam (RVND-optional)
+    "EnforcementSink",
+    "EnforcementDecision",
+    "EnforcementVerdict",
+    "NoOpEnforcementSink",
+    "RvndEnforcementAdapter",
+    "NOOP_SINK",
 ]
 
 __version__ = "1.0.0"

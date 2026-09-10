@@ -8,6 +8,25 @@ personal) MUST call ``privacy_gate.check()`` before:
 
 This module bridges the existing Privacy Shield (4 modes) with the
 data policy guard (4 classification tiers) into a single check point.
+
+RVND-optional
+-------------
+The gate is **RVND-optional**. Every entry point behaves in two modes:
+
+- **Default (zero RVND present):** the gate decides LOCALLY (mode + classification
+  + Art. 9 tiers, plus the scanner's regex/embeddings/local-LLM verdict upstream)
+  and records the decision to the standalone :mod:`brain.audit_log`. Fully
+  functional alone; ``require_privacy_check`` raises :class:`PermissionError` on
+  an unsafe egress exactly as before.
+- **Enriched (an enforcement sink is attached):** the SAME local decision is
+  ADDITIONALLY surfaced to the optional
+  :class:`~brain.privacy_shield.enforcement.EnforcementSink` (e.g. an RVND
+  adapter → verdict + signed-chain receipt). Enrichment is strictly additive and
+  never overrides the local decision. With no sink attached the default
+  :data:`~brain.privacy_shield.enforcement.NOOP_SINK` makes this path inert.
+
+No ``rvnd.*`` import lives here; the seam is defined in
+:mod:`brain.privacy_shield.enforcement`.
 """
 
 from __future__ import annotations
@@ -17,6 +36,14 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+
+from .enforcement import (
+    NOOP_SINK,
+    EnforcementDecision,
+    EnforcementSink,
+    EnforcementVerdict,
+    NoOpEnforcementSink,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +135,68 @@ class PrivacyGate:
     ANONYMOUS_JSON, REGEX_ONLY) with the data policy guard
     (4 classification tiers: public, internal, confidential,
     berufsgeheimnis) into one unified gate.
+
+    RVND-optional (both modes):
+
+    - **Default (no sink):** :meth:`check` decides locally and records to
+      :mod:`brain.audit_log`. This is the whole gate — no RVND required.
+    - **Enriched (sink attached):** the local decision is additionally handed to
+      the attached :class:`~brain.privacy_shield.enforcement.EnforcementSink`
+      via ``record_decision`` for governance/audit enrichment (verdict +
+      signed-chain receipt). Attach one with :meth:`attach_enforcement_sink`;
+      :meth:`plan_action` optionally consults the sink's ``gate`` for a
+      prospective action. With none attached the sink is inert.
     """
+
+    def __init__(self, enforcement_sink: Optional[EnforcementSink] = None) -> None:
+        # Capability flag: default is the inert no-op sink (zero RVND present).
+        self._sink: EnforcementSink = enforcement_sink or NOOP_SINK
+
+    # ------------------------------------------------------------------
+    # Optional enforcement seam (RVND-optional capability flag)
+    # ------------------------------------------------------------------
+    def attach_enforcement_sink(self, sink: EnforcementSink) -> None:
+        """Attach an optional enforcement / audit enrichment sink.
+
+        The core decision is unaffected; the sink only *adds* a governance
+        verdict + signed-chain receipt on top. Pass a real RVND-backed adapter
+        (built outside this core) to enrich; pass nothing to stay standalone.
+        """
+        self._sink = sink or NOOP_SINK
+
+    def detach_enforcement_sink(self) -> None:
+        """Detach any sink and revert to the standalone (default) behaviour."""
+        self._sink = NOOP_SINK
+
+    @property
+    def enforcement_enabled(self) -> bool:
+        """True iff a non-inert enforcement sink is attached.
+
+        Any :class:`~brain.privacy_shield.enforcement.NoOpEnforcementSink`
+        instance counts as inert (zero-RVND default), not just the shared
+        singleton.
+        """
+        return not isinstance(self._sink, NoOpEnforcementSink)
+
+    def plan_action(
+        self,
+        action: Dict[str, Any],
+        *,
+        enforce: bool = False,
+    ) -> Optional[EnforcementVerdict]:
+        """Optionally consult the attached sink about a prospective *action*.
+
+        Returns ``None`` when no sink is attached (caller proceeds on its own
+        local decision — the default, zero-RVND behaviour). With ``enforce=False``
+        an RVND-backed sink previews a verdict without writing the signed chain;
+        with ``enforce=True`` it MAY append to the chain (a mutating, governed
+        act) and populate ``audit_id``.
+        """
+        try:
+            return self._sink.gate(action, enforce=enforce)
+        except Exception as exc:  # never let enrichment break the core path
+            logger.debug("Enforcement sink gate() skipped: %s", exc)
+            return None
 
     def check(
         self,
@@ -118,6 +206,16 @@ class PrivacyGate:
         user_id: str = "",
     ) -> PrivacyGateResult:
         """Check whether *data* may be sent to *destination*.
+
+        Behaviour in both modes:
+
+        - **Default (zero RVND):** decides locally and records the decision to
+          :mod:`brain.audit_log`. Returns the local
+          :class:`PrivacyGateResult`.
+        - **Enriched (sink attached):** additionally surfaces the SAME decision
+          to the enforcement sink (``record_decision``) for a governance verdict
+          + signed-chain receipt. The returned result is unchanged — enrichment
+          is additive.
 
         Args:
             data: The payload to be transmitted (must contain a ``text``
@@ -129,6 +227,22 @@ class PrivacyGate:
 
         Returns:
             :class:`PrivacyGateResult` with the decision and reason.
+        """
+        result = self._decide_local(data, destination, tenant_id, user_id)
+        return self._finalize(result, destination, tenant_id, user_id, data)
+
+    def _decide_local(
+        self,
+        data: Dict[str, Any],
+        destination: str,
+        tenant_id: str = "",
+        user_id: str = "",
+    ) -> PrivacyGateResult:
+        """Pure LOCAL egress decision (mode + classification + Art. 9 tiers).
+
+        This is the zero-RVND core of the gate: it consults no sink and has no
+        audit side effects. :meth:`check` wraps it with the standalone audit
+        record and the optional enforcement-sink surface.
         """
         mode = self._get_privacy_mode(tenant_id)
         text = self._extract_text(data)
@@ -192,6 +306,69 @@ class PrivacyGate:
             mode=mode,
             classification=classification,
         )
+
+    def _finalize(
+        self,
+        result: PrivacyGateResult,
+        destination: str,
+        tenant_id: str,
+        user_id: str,
+        data: Dict[str, Any],
+    ) -> PrivacyGateResult:
+        """Record the local decision, then surface it to the optional sink.
+
+        Default (zero RVND): writes the decision to the standalone audit trail
+        and returns *result* unchanged. Enriched (sink attached): additionally
+        hands the SAME decision to the enforcement sink for a governance verdict
+        + signed-chain receipt. Both steps are defensive — enrichment or audit
+        failure never changes the egress decision.
+        """
+        self._record_audit(result, destination, tenant_id, user_id, data)
+        try:
+            self._sink.record_decision(
+                EnforcementDecision(
+                    allowed=result.allowed,
+                    destination=destination,
+                    mode=result.mode,
+                    classification=result.classification,
+                    blocked_reason=result.blocked_reason,
+                    redacted_fields=list(result.redacted_fields),
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
+            )
+        except Exception as exc:  # never let enrichment break the core path
+            logger.debug("Enforcement sink record_decision skipped: %s", exc)
+        return result
+
+    @staticmethod
+    def _record_audit(
+        result: PrivacyGateResult,
+        destination: str,
+        tenant_id: str,
+        user_id: str,
+        data: Dict[str, Any],
+    ) -> None:
+        """Write the egress decision to the standalone audit trail (default)."""
+        try:
+            from brain.audit_log import AuditEvent, log_audit_event
+
+            log_audit_event(
+                AuditEvent.AI_PRIVACY_SHIELD_DECISION,
+                user=user_id or None,
+                success=result.allowed,
+                tenant_id=tenant_id or None,
+                details={
+                    "destination": destination,
+                    "allowed": result.allowed,
+                    "mode": result.mode,
+                    "classification": result.classification,
+                    "blocked_reason": result.blocked_reason,
+                    "redacted_fields": list(result.redacted_fields),
+                },
+            )
+        except Exception as exc:  # audit is best-effort, never fatal
+            logger.debug("Privacy gate audit record skipped: %s", exc)
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -394,6 +571,14 @@ def require_privacy_check(
     ``data`` (or whatever *data_param* names), ``tenant_id``, and
     ``user_id``.  If the gate blocks the call a ``PermissionError``
     is raised with the blocked reason.
+
+    RVND-optional: enforcement runs through the module :data:`privacy_gate`
+    singleton, so behaviour follows :meth:`PrivacyGate.check` in both modes —
+    **default (zero RVND):** decision is local and recorded to the standalone
+    audit trail; an unsafe egress raises :class:`PermissionError`. **Enriched
+    (a sink is attached to the singleton):** the same decision is additionally
+    surfaced to the enforcement sink. Attaching a sink never changes whether
+    the call is blocked.
     """
     def decorator(fn: Callable) -> Callable:
         @functools.wraps(fn)
