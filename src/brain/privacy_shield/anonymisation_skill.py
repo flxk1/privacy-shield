@@ -1,7 +1,7 @@
 """
 Anonymisation & Pseudonymisation Skill
 
-Higher-level orchestration layer on top of Privacy Shield (Heart 4).
+Higher-level orchestration layer on top of Privacy Shield.
 Adds: persistent sessions, granular field-level control, batch processing,
 anonymisation quality assessment (k-anonymity), and rehydration workflows.
 """
