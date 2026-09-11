@@ -1,7 +1,8 @@
 ---
 name: privacy-shield
 description: >-
-  Scan a folder, file, or text span-by-span and produce a PII-cleaned overlay —
+  Local-first PII/PHI detection and clean-overlay pipeline for governed folders.
+  Scan a folder, file, or text span by span, produce the PII-cleaned overlay —
   the only thing meant to leave the machine — then decide whether egress to an
   external service is allowed, by source classification. Personal data is found
   with a regex/lexicon floor plus an optional local embedding/LLM layer; the
@@ -9,9 +10,10 @@ description: >-
   trail. Works fully standalone with ZERO loomground and ZERO RVND; RVND is an
   OPTIONAL enforcement skin (permit/hold/deny + signed chain) behind an adapter
   that no-ops when absent. "Cleared" means the source class is allowed to egress,
-  NOT a zero-residual certificate. Triggers on "redact this", "clean this before
-  I send it to the cloud", "is this safe for an external LLM", "scan this folder
-  for personal data", "make a privacy overlay", "lock this folder's egress".
+  NOT a zero-residual certificate. Use when the user says "redact this", "clean
+  this before I send it to the cloud", "is this safe for an external LLM", "scan
+  this folder for personal data", "make a privacy overlay", "lock this folder's
+  egress".
 governance:
   grade: L1
   actions:
@@ -43,7 +45,8 @@ The scan / overlay / egress engine lives in the `brain.privacy_shield` package
 (`scanner`, `redactor`, `anonymous_json`, `gate`, `audit_log`). The agent-facing
 entry is `brain.privacy_shield.scan(target) -> ScanReport` and the
 `privacy-shield` CLI. The four modes (STANDARD / LOCAL_ONLY / ANONYMOUS_JSON /
-REGEX_ONLY) and the RVND-optional enforcement seam are described in the README.
+REGEX_ONLY) are listed in the README, which links the repository's pipeline
+and RVND-optional notes.
 
 ## Notes
 - The egress verdict is on SOURCE CLASSIFICATION (privacy mode + confidential /
