@@ -28,7 +28,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Pattern, Tuple
 
-import yaml
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    yaml = None  # type: ignore[assignment]
+    HAS_YAML = False
 
 logger = logging.getLogger(__name__)
 
@@ -852,6 +857,14 @@ class SecurityScanner:
 
     def _load_config(self, config_path: Path) -> None:
         """Load configuration from YAML file."""
+        if not HAS_YAML:
+            logger.warning(
+                "Security scanner config load skipped (%s): PyYAML not "
+                "installed. Install the 'yaml' extra to enable YAML config "
+                "loading.",
+                config_path,
+            )
+            return
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
