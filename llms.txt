@@ -1,0 +1,56 @@
+# privacy-shield
+
+> Local-first PII/PHI detection and clean-overlay pipeline: scans a folder, file, or text span-by-span and produces a redacted overlay — the only artifact meant to leave the machine — while the value-to-placeholder map and every audit record stay local.
+
+## Problem
+Sending a document to a cloud LLM risks sending the PII/PHI inside it. privacy-shield scans a document through a deterministic regex/lexicon floor plus optional semantic layers, redacts it into a clean overlay, and gates egress on source classification (public / internal / confidential / berufsgeheimnis / Art. 9) before anything crosses the machine boundary. Detection runs 100% locally; the cloud side ever sees only the overlay.
+
+## Install
+```
+pip install "privacy-shield @ git+https://github.com/flxk1/privacy-shield@v1.0.0"
+```
+Import name `brain.privacy_shield` (also re-exported as `brain.privacy_shield.scan`); the `brain.*` namespace is preserved unmodified from the source platform this subset was extracted from. Base install has zero hard dependencies. Optional extras:
+- `.[semantic]` — `numpy` + `onnxruntime` (embeddings + shadow contextual-PII model)
+- `.[extract]` — `PyMuPDF` + `opencv-python-headless` (PDF/image extraction; PyMuPDF is AGPL)
+- `.[dev]` — `pyyaml` + `pytest`
+
+## Usage
+```python
+from brain.privacy_shield import scan
+from brain.privacy_shield.shield import PrivacyMode
+
+report = scan("/path/to/governed/folder", mode=PrivacyMode.STANDARD)
+report.all_allowed                 # aggregate egress verdict (bool)
+for doc in report.documents:
+    doc.overlay                    # the cleaned overlay — the ONLY thing that egresses
+    doc.spans                      # per-span findings (type/start/end/confidence/layer)
+    doc.egress_allowed             # this document's egress verdict
+    doc.classification             # public | internal | confidential | berufsgeheimnis
+```
+
+`scan()` signature: `scan(target, *, mode=PrivacyMode.STANDARD, destination="external_llm", redaction_mode=RedactionMode.REDACT, min_confidence=Confidence.MEDIUM, recursive=True, extensions=DEFAULT_EXTENSIONS, audit_log_path=None, tenant_id="", user_id="", force_text=False) -> ScanReport`.
+
+CLI (installed as `privacy-shield` by `pip install -e .`):
+```
+privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REGEX_ONLY]
+                                  [--destination external_llm] [--out DIR] [--json]
+                                  [--redaction-mode redact|pseudonymize|hash|detect_only|block]
+                                  [--min-confidence low|medium|high]
+                                  [--audit-log PATH] [--no-recursive] [--all-files] [--text]
+```
+Exits `0` when every overlay clears egress, `2` when any document is blocked. `-` reads text from stdin.
+
+## Contracts
+| Surface | Definition |
+|---|---|
+| Agent entry point | `brain.privacy_shield.runner.scan`, `brain.privacy_shield.cli` |
+| Orchestrator | `brain.privacy_shield.shield.PrivacyShield` — four modes: `STANDARD`, `LOCAL_ONLY`, `ANONYMOUS_JSON`, `REGEX_ONLY` |
+| Regex/lexicon floor | `brain.privacy_shield.scanner.PrivacyScanner.scan_text` |
+| Semantic + contextual layers | `brain.privacy_shield_embeddings.PIIContextMatcher`, `onnx_contextual_pii.py`, `onnx_shadow.py` (shadow-only) |
+| Clean overlay | `brain.privacy_shield.anonymous_json.AnonymousEnvelope` (`anonymize_for_cloud`, `rehydrate_response`) |
+| Egress guard | `brain.privacy_shield.gate.PrivacyGate`, `require_privacy_check`, `scanner.is_safe_for_external_llm` |
+| Optional enforcement seam | `brain.privacy_shield.enforcement.EnforcementSink` (Protocol), `NoOpEnforcementSink`, `RvndEnforcementAdapter` (interface-only stub; attach via `PrivacyGate.attach_enforcement_sink`) |
+| Audit trail | `brain.audit_log`, `brain.privacy_shield.privacy_skill_kg` |
+| Skill entry | `skills/privacy-shield/SKILL.md` |
+
+Every guard call records to the standalone `audit_log` regardless of whether an enforcement sink is attached; the sink is strictly additive and never overrides the local decision.
