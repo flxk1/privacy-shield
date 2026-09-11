@@ -1,6 +1,6 @@
 {
   "name": "privacy-shield",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Span-by-span PII-cleaned overlay maker and egress lock: scan a folder, file, or text, produce an overlay that is the only thing meant to leave the machine, and decide egress by source classification. Regex/lexicon floor plus an optional local embedding/LLM layer; the value<->placeholder map stays local; every decision is audited. Works standalone with zero loomground and zero RVND; RVND enforcement is an optional skin.",
   "author": {
     "name": "Loomground Contributors"
