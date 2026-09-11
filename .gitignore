@@ -7,6 +7,7 @@ dist/
 .venv/
 venv/
 .DS_Store
+work/
 # local model artifacts / on-disk embedding caches
 src/brain/data/privacy_shield/*.json
 *.onnx

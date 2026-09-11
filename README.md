@@ -220,7 +220,22 @@ in `test_simplifier.py`'s LLM path, which patches `brain.services.llm_runtime` �
 the Brain LLM gateway chain that is intentionally out of scope here. Pre-existing;
 not weakened by Phase 1.
 
-## Install extras
+## Install
+
+From the `loomground-plugins` marketplace (publication pending):
+
+```
+/plugin marketplace add flxk1/loomground-plugins
+/plugin install privacy-shield@loomground
+```
+
+Directly from GitHub, with pip:
+
+```
+pip install "git+https://github.com/flxk1/privacy-shield.git"
+```
+
+Base install has zero hard dependencies. Optional extras:
 
 - `pip install -e .[semantic]` — numpy + onnxruntime (embeddings + shadow model)
 - `pip install -e .[extract]` — PyMuPDF + opencv (document/image extraction; PyMuPDF is AGPL, optional)
