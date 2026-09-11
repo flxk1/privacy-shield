@@ -446,8 +446,8 @@ class VideoProcessor:
             video_filters = []
             audio_filters = []
 
-            # Face blur would require frame-by-frame processing
-            # For now, just strip metadata and optionally mute audio segments
+            # Face blur requires frame-by-frame processing (out of scope here);
+            # this strips metadata and optionally mutes audio segments.
             if redact_audio_segments:
                 for seg in sorted(redact_audio_segments, key=lambda s: s.start_time):
                     audio_filters.append(

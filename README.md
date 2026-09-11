@@ -12,9 +12,9 @@ audit trail.
 100% local execution on the detection path — zero external API calls to detect or
 redact. The cloud LLM only ever sees anonymised placeholders.
 
-> Extracted and consolidated from the internal **Brain** platform (Privacy Shield =
-> "Heart 4"). This repo is the standalone privacy-shield subset plus its direct
-> dependencies; the wider Brain application is intentionally not included.
+> Extracted and consolidated from the internal **Brain** platform. This repo is
+> the standalone privacy-shield subset plus its direct dependencies; the wider
+> Brain application is intentionally not included.
 
 ## Pipeline (end to end)
 
@@ -111,7 +111,7 @@ install, run it as `python -m brain.privacy_shield.cli scan ...`.
   floor only (the modules degrade gracefully). `[extract]` extras (PyMuPDF/opencv)
   are needed for PDF/image extraction; without them those documents surface an
   extraction error.
-- **MCP wrapper** is intentionally out of Phase 1 — `scan()` is the callable
+- **MCP wrapper** is intentionally out of scope here — `scan()` is the callable
   capability; wrap it in a tool server when needed.
 
 ## RVND-optional
@@ -163,7 +163,7 @@ not a core dependency.
 
 | Stage | Module | Status |
 |---|---|---|
-| Agent entry point (`scan()` + CLI) | `privacy_shield/runner.py`, `privacy_shield/cli.py` | complete (Phase 1) |
+| Agent entry point (`scan()` + CLI) | `privacy_shield/runner.py`, `privacy_shield/cli.py` | complete |
 | Orchestrator + 4 modes | `privacy_shield/shield.py` | complete |
 | Regex/lexicon filter (floor) | `privacy_shield/scanner.py` | complete |
 | Semantic PII (embeddings) | `privacy_shield_embeddings.py` (`PIIContextMatcher`) | complete |
@@ -217,8 +217,7 @@ onnx contextual PII, media inputs, review profiles, the RVND-optional egress
 guard — `test_privacy_gate_rvnd_optional.py` — and the runner + CLI on synthetic
 PII fixtures — `test_privacy_shield_runner.py`, 14 tests). The 8 failures are all
 in `test_simplifier.py`'s LLM path, which patches `brain.services.llm_runtime` —
-the Brain LLM gateway chain that is intentionally out of scope here. Pre-existing;
-not weakened by Phase 1.
+the Brain LLM gateway chain that is intentionally out of scope here.
 
 ## Install
 
@@ -241,10 +240,9 @@ Base install has zero hard dependencies. Optional extras:
 - `pip install -e .[extract]` — PyMuPDF + opencv (document/image extraction; PyMuPDF is AGPL, optional)
 - `pip install -e .[dev]` — pyyaml + pytest
 
-## Gaps (to be a product)
+## Known gaps
 
-See `GAPS` section below and the assembly report. Headlines: the compliance
-evidence export is still woven into the Brain service layer; the CLI entry point
-now ships (`privacy-shield scan`) but there is no MCP-tool wrapper in this subset;
-ONNX contextual model is shadow-only (no promotion); no bundled pre-embedded
-PII-context file.
+The compliance evidence export is still woven into the Brain service layer;
+the CLI entry point ships (`privacy-shield scan`) but there is no MCP-tool
+wrapper in this subset; the ONNX contextual model is shadow-only (no
+promotion); there is no bundled pre-embedded PII-context file.

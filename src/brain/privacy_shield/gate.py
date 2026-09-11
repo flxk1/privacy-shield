@@ -500,8 +500,8 @@ class PrivacyGate:
 
     @staticmethod
     def _get_tenant_config(tenant_id: str) -> Dict[str, Any]:
-        """Load tenant-level privacy config (stub for per-tenant settings)."""
-        # TODO: wire to real tenant config store once available
+        """Load tenant-level privacy config (stub for per-tenant settings, pending
+        a dedicated tenant config store)."""
         return {
             "art9_dismissible": False,  # conservative default
         }

@@ -548,8 +548,8 @@ class RoutingTraceSource:
         limit: int = 500,
     ) -> List[Dict[str, Any]]:
         """Get routing decision traces."""
-        # Routing traces are typically stored in session/conversation logs
-        # For now, return from governance activity log with routing events
+        # Routing traces live in session/conversation logs; derive them here from
+        # the governance activity log's routing-tagged events.
         gov = GovernanceLogSource()
         activities = gov.get_activity_log(tenant_id=tenant_id, start_date=start_date, end_date=end_date, limit=limit * 2)
 
