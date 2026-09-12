@@ -11,3 +11,7 @@ work/
 # local model artifacts / on-disk embedding caches
 src/brain/data/privacy_shield/*.json
 *.onnx
+# the licence texts live in LICENSES/ (REUSE); a bare duplicate is not tracked
+LICENSE
+# the package is installed for tests; a root conftest papering over that is not tracked
+conftest.py
