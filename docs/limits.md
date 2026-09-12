@@ -50,6 +50,6 @@ by name, so CI runs 114 passed, 8 deselected.
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
-review profiles, the RVND-optional egress guard
-(`tests/test_privacy_gate_rvnd_optional.py`), and the runner + CLI on synthetic
+review profiles, the optional external-enforcement seam
+(`tests/test_privacy_gate_external_enforcement.py`), and the runner + CLI on synthetic
 PII fixtures (`tests/test_privacy_shield_runner.py`, 14 tests).

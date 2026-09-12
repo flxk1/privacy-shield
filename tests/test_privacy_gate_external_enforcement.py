@@ -1,15 +1,14 @@
-"""Egress guard is RVND-optional.
+"""Egress guard supports an optional external enforcement sink.
 
 Proves the two-mode contract of the egress guard (``gate.py``):
 
-(a) **RVND-absent default** — the guard is fully functional with NO enforcement
+(a) **standalone default** — the guard is fully functional with no enforcement
     sink attached: an unsafe egress still raises / blocks, a safe egress passes,
     and the decision is recorded to the standalone ``audit_log``.
-(b) **RVND-present** — when a stub :class:`EnforcementSink` IS attached, it
+(b) **sink attached** — when a stub :class:`EnforcementSink` is attached, it
     receives the SAME decision, and the guard's own decision is unchanged.
 
-No RVND is imported or required anywhere; the stub stands in for any external
-enforcement plane.
+The stub stands in for any external enforcement plane.
 """
 
 import json
@@ -34,7 +33,7 @@ from brain.privacy_shield.gate import (
 # Helpers
 # ---------------------------------------------------------------------------
 class _RecordingSink:
-    """Stub enforcement sink standing in for an external (e.g. RVND) plane."""
+    """Stub enforcement sink standing in for an external plane."""
 
     def __init__(self) -> None:
         self.decisions = []
@@ -69,7 +68,7 @@ def temp_audit(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# (a) RVND-absent default — fully functional alone
+# (a) Standalone default — fully functional alone
 # ---------------------------------------------------------------------------
 def test_default_no_sink_is_inert() -> None:
     gate = PrivacyGate()
@@ -79,7 +78,7 @@ def test_default_no_sink_is_inert() -> None:
 
 
 def test_default_unsafe_egress_blocks_without_sink(temp_audit) -> None:
-    gate = PrivacyGate()  # zero RVND
+    gate = PrivacyGate()
     result = gate.check(
         {"text": "This document is strictly vertraulich / confidential."},
         destination="external_llm",
@@ -97,7 +96,7 @@ def test_default_unsafe_egress_blocks_without_sink(temp_audit) -> None:
 
 
 def test_default_safe_egress_passes_without_sink(temp_audit) -> None:
-    gate = PrivacyGate()  # zero RVND
+    gate = PrivacyGate()
     result = gate.check(
         {"text": "The weather is pleasant and the meeting went well."},
         destination="external_llm",
@@ -115,7 +114,7 @@ def test_default_require_privacy_check_raises_without_sink() -> None:
     def send(data, tenant_id="", user_id=""):
         return "sent"
 
-    # Unsafe payload -> PermissionError, no sink, no RVND.
+    # Unsafe payload -> PermissionError with no sink.
     with pytest.raises(PermissionError):
         send(data={"text": "streng vertraulich board minutes"})
     # Safe payload -> passes through.
@@ -130,7 +129,7 @@ def test_noop_sink_matches_no_sink() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (b) RVND-present — stub sink receives the decision, decision unchanged
+# (b) Stub sink receives the decision, decision unchanged
 # ---------------------------------------------------------------------------
 def test_attached_sink_receives_decision(temp_audit) -> None:
     sink = _RecordingSink()

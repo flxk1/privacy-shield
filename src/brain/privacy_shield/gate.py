@@ -9,23 +9,23 @@ personal) MUST call ``privacy_gate.check()`` before:
 This module bridges the existing Privacy Shield (4 modes) with the
 data policy guard (4 classification tiers) into a single check point.
 
-RVND-optional
--------------
-The gate is **RVND-optional**. Every entry point behaves in two modes:
+Optional external enforcement
+-----------------------------
+Every entry point behaves in two modes:
 
-- **Default (zero RVND present):** the gate decides LOCALLY (mode + classification
+- **Default (no host sink):** the gate decides locally (mode + classification
   + Art. 9 tiers, plus the scanner's regex/embeddings/local-LLM verdict upstream)
   and records the decision to the standalone :mod:`brain.audit_log`. Fully
   functional alone; ``require_privacy_check`` raises :class:`PermissionError` on
   an unsafe egress exactly as before.
 - **Enriched (an enforcement sink is attached):** the SAME local decision is
   ADDITIONALLY surfaced to the optional
-  :class:`~brain.privacy_shield.enforcement.EnforcementSink` (e.g. an RVND
-  adapter → verdict + signed-chain receipt). Enrichment is strictly additive and
+  :class:`~brain.privacy_shield.enforcement.EnforcementSink` (host verdict plus
+  signed-chain receipt). Enrichment is strictly additive and
   never overrides the local decision. With no sink attached the default
   :data:`~brain.privacy_shield.enforcement.NOOP_SINK` makes this path inert.
 
-No ``rvnd.*`` import lives here; the seam is defined in
+No host implementation is imported here; the seam is defined in
 :mod:`brain.privacy_shield.enforcement`.
 """
 
@@ -136,10 +136,10 @@ class PrivacyGate:
     (4 classification tiers: public, internal, confidential,
     berufsgeheimnis) into one unified gate.
 
-    RVND-optional (both modes):
+    Both modes are complete:
 
     - **Default (no sink):** :meth:`check` decides locally and records to
-      :mod:`brain.audit_log`. This is the whole gate — no RVND required.
+      :mod:`brain.audit_log`. This is the complete standalone gate.
     - **Enriched (sink attached):** the local decision is additionally handed to
       the attached :class:`~brain.privacy_shield.enforcement.EnforcementSink`
       via ``record_decision`` for governance/audit enrichment (verdict +
@@ -149,17 +149,17 @@ class PrivacyGate:
     """
 
     def __init__(self, enforcement_sink: Optional[EnforcementSink] = None) -> None:
-        # Capability flag: default is the inert no-op sink (zero RVND present).
+        # Capability flag: default is the inert no-op sink.
         self._sink: EnforcementSink = enforcement_sink or NOOP_SINK
 
     # ------------------------------------------------------------------
-    # Optional enforcement seam (RVND-optional capability flag)
+    # Optional enforcement seam
     # ------------------------------------------------------------------
     def attach_enforcement_sink(self, sink: EnforcementSink) -> None:
         """Attach an optional enforcement / audit enrichment sink.
 
         The core decision is unaffected; the sink only *adds* a governance
-        verdict + signed-chain receipt on top. Pass a real RVND-backed adapter
+        verdict + signed-chain receipt on top. Pass a real host adapter
         (built outside this core) to enrich; pass nothing to stay standalone.
         """
         self._sink = sink or NOOP_SINK
@@ -173,7 +173,7 @@ class PrivacyGate:
         """True iff a non-inert enforcement sink is attached.
 
         Any :class:`~brain.privacy_shield.enforcement.NoOpEnforcementSink`
-        instance counts as inert (zero-RVND default), not just the shared
+        instance counts as inert, not just the shared
         singleton.
         """
         return not isinstance(self._sink, NoOpEnforcementSink)
@@ -187,8 +187,8 @@ class PrivacyGate:
         """Optionally consult the attached sink about a prospective *action*.
 
         Returns ``None`` when no sink is attached (caller proceeds on its own
-        local decision — the default, zero-RVND behaviour). With ``enforce=False``
-        an RVND-backed sink previews a verdict without writing the signed chain;
+        local decision). With ``enforce=False`` a host sink previews a verdict
+        without writing the signed chain;
         with ``enforce=True`` it MAY append to the chain (a mutating, governed
         act) and populate ``audit_id``.
         """
@@ -209,7 +209,7 @@ class PrivacyGate:
 
         Behaviour in both modes:
 
-        - **Default (zero RVND):** decides locally and records the decision to
+        - **Default (no sink):** decides locally and records the decision to
           :mod:`brain.audit_log`. Returns the local
           :class:`PrivacyGateResult`.
         - **Enriched (sink attached):** additionally surfaces the SAME decision
@@ -240,7 +240,7 @@ class PrivacyGate:
     ) -> PrivacyGateResult:
         """Pure LOCAL egress decision (mode + classification + Art. 9 tiers).
 
-        This is the zero-RVND core of the gate: it consults no sink and has no
+        This is the standalone core of the gate: it consults no sink and has no
         audit side effects. :meth:`check` wraps it with the standalone audit
         record and the optional enforcement-sink surface.
         """
@@ -317,7 +317,7 @@ class PrivacyGate:
     ) -> PrivacyGateResult:
         """Record the local decision, then surface it to the optional sink.
 
-        Default (zero RVND): writes the decision to the standalone audit trail
+        Default: writes the decision to the standalone audit trail
         and returns *result* unchanged. Enriched (sink attached): additionally
         hands the SAME decision to the enforcement sink for a governance verdict
         + signed-chain receipt. Both steps are defensive — enrichment or audit
@@ -572,9 +572,9 @@ def require_privacy_check(
     ``user_id``.  If the gate blocks the call a ``PermissionError``
     is raised with the blocked reason.
 
-    RVND-optional: enforcement runs through the module :data:`privacy_gate`
+    Optional enforcement runs through the module :data:`privacy_gate`
     singleton, so behaviour follows :meth:`PrivacyGate.check` in both modes —
-    **default (zero RVND):** decision is local and recorded to the standalone
+    **default (no sink):** decision is local and recorded to the standalone
     audit trail; an unsafe egress raises :class:`PermissionError`. **Enriched
     (a sink is attached to the singleton):** the same decision is additionally
     surfaced to the enforcement sink. Attaching a sink never changes whether

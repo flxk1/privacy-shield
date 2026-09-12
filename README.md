@@ -2,9 +2,7 @@
 <!-- Copyright 2026 flxk1 -->
 # privacy-shield
 
-**What in this folder may reach a cloud model?**
-
-Local-first PII/PHI detection and clean-overlay pipeline for governed folders.
+Detect PII and PHI locally, produce a clean overlay, and block unsafe egress before content reaches an external model.
 
 ## Problem
 
@@ -22,7 +20,7 @@ opencv-python-headless>=4.8 (PDF, image; PyMuPDF is AGPL), `[dev]` pyyaml>=6 +
 pytest>=7 (config layer, tests).
 
 State lands outside the package in `<user-state>/privacy-shield/`:
-`logs/audit.jsonl` and `privacy_skill_kg/`, created on demand. User-state is
+`logs/audit.jsonl` and `privacy_skill_kg/`, created lazily. User-state is
 `$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
 Support`, Windows `%LOCALAPPDATA%`. `BRAIN_PRIVACY_AUDIT_LOG` and
 `BRAIN_PRIVACY_KG_DIR` override them verbatim.
@@ -60,23 +58,23 @@ egress. Input is invented placeholder data.
 - `PrivacyMode`: `STANDARD` · `LOCAL_ONLY` · `ANONYMOUS_JSON` · `REGEX_ONLY`. `RedactionMode`: `DETECT_ONLY` · `REDACT` · `PSEUDONYMIZE` · `HASH` · `BLOCK`.
 - egress guard: `PrivacyGate.check(data, destination) -> PrivacyGateResult` · `require_privacy_check` · `PrivacyGate.attach_enforcement_sink(sink)`
 - overlay: `anonymize_for_cloud` · `rehydrate_response` · `AnonymousEnvelope` — the value↔placeholder map stays local.
-- enforcement seam: `EnforcementSink` · `EnforcementDecision` · `EnforcementVerdict` · `NoOpEnforcementSink` · `RvndEnforcementAdapter`
+- enforcement seam: `EnforcementSink` · `EnforcementDecision` · `EnforcementVerdict` · `NoOpEnforcementSink` · `ExternalEnforcementAdapter`
 - Stages, module map, layout: [docs/pipeline.md](docs/pipeline.md).
 
 ## Family
 
 Runtime controls: the PII-cleaned overlay and egress guard; only the overlay
-leaves. An empty `dependencies` list keeps every loomground plane and RVND
-optional here and downstream. Absent the `[semantic]` and `[extract]` extras,
-detection degrades to the deterministic regex/lexicon floor. Absent an enforcement sink, the guard
-decides locally and writes the standalone audit trail; RVND attaches through
-`EnforcementSink` as an additive skin —
-[docs/adr/0001-rvnd-optional.md](docs/adr/0001-rvnd-optional.md). The
+leaves. An empty `dependencies` list keeps every Loomground plane and external
+enforcement host optional. Absent the `[semantic]` and `[extract]` extras,
+detection degrades to the deterministic regex/lexicon floor. Without a sink,
+the guard decides locally and writes the standalone audit trail. A host can
+attach through the neutral `EnforcementSink` contract; see
+[ADR 0001](docs/adr/0001-external-enforcement.md). The
 `privacy-shield` skill wraps the same capability for agents.
 
 ## Status
 
-1.0.0 · 131 tests, 123 passing · Python >=3.10 · limits and gaps:
+1.0.0 · 130 tests, 122 passing · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License

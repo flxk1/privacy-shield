@@ -34,7 +34,7 @@ cloud LLM  ──►  response
 
 The egress guard decides on the source classification (privacy mode +
 confidential / berufsgeheimnis tiers + Art. 9) — see
-[adr/0001-rvnd-optional.md](adr/0001-rvnd-optional.md) for the guard's two modes
+[adr/0001-external-enforcement.md](adr/0001-external-enforcement.md) for the guard's two modes
 and the optional enforcement seam.
 
 ## Module inventory
@@ -51,7 +51,7 @@ and the optional enforcement seam.
 | Document/media extraction | `privacy_shield/extractor.py`, `privacy_shield/media/*` | complete (PDF/img need optional extras) |
 | Clean overlay builder | `privacy_shield/anonymous_json.py` (`AnonymousEnvelope`, `anonymize_for_cloud`, `rehydrate_response`) | complete |
 | Egress guard | `privacy_shield/gate.py` (`PrivacyGate`, `require_privacy_check`), `scanner.is_safe_for_external_llm` | complete |
-| Optional enforcement/audit seam | `privacy_shield/enforcement.py` (`EnforcementSink`, `NoOpEnforcementSink`, `RvndEnforcementAdapter` stub) | complete (interface-only; RVND-optional) |
+| Optional enforcement/audit seam | `privacy_shield/enforcement.py` (`EnforcementSink`, `NoOpEnforcementSink`, `ExternalEnforcementAdapter` stub) | complete; interface-only |
 | Anonymisation / pseudonymisation | `privacy_shield/anonymisation_skill.py` | complete |
 | Breach handling | `privacy_shield/breach.py` | complete |
 | Prompt-injection / threat scan | `privacy_shield/security_scanner.py` | complete |

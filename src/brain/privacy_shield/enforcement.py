@@ -1,17 +1,9 @@
-"""Optional enforcement / audit enrichment seam for the egress guard.
+"""Optional enforcement and audit-enrichment seam for the egress guard.
 
-Privacy Shield is **RVND-optional**. The core egress guard (``gate.py``) makes
-its decision LOCALLY — regex + lexicon floor, embeddings / local-LLM verdict,
-classification tiers — and records to the standalone ``audit_log``. That path is
-**fully functional with zero RVND present**.
-
-This module defines the ONE optional seam through which an external
-enforcement / audit plane (e.g. RVND) may be attached to *add* a governance
-verdict and a signed-chain receipt on top of the local decision. It is
-**interface-only**: no ``rvnd.*`` import lives here (or anywhere on the core
-path). RVND is hands-off and optional; :class:`RvndEnforcementAdapter` below is
-a named STUB that documents the intended bindings without importing or calling
-RVND.
+The core guard makes its decision locally from the privacy mode, classification
+tiers, and scanner result, then records it to the standalone audit log. This
+module defines the interface through which a host may add a verdict and signed
+receipt. The core imports no host implementation.
 
 Contract
 --------
@@ -26,15 +18,11 @@ Contract
   strictly additive: it never replaces the local decision that already blocked
   or allowed the egress.
 
-Advisory vs enforce (design consequence inherited from the ctrl-desk spec)
---------------------------------------------------------------------------
-RVND's ``governance.decide_action`` **APPENDS to the signed chain** — gating is
-itself a mutating, governed act. So an adapter MUST distinguish:
-
-- an **advisory preview** — a pure, chain-read gate (``rvnd.action_gate.gate``
-  → GO / CONDITIONAL / NO-GO) that does not write the chain; and
-- an **enforce** call — ``rvnd.governance.decide_action`` (permit/hold/deny),
-  which writes the chain and yields an ``audit_id``.
+Advisory vs enforce
+-------------------
+Writing a signed-chain receipt is a mutating act. An adapter therefore
+distinguishes a pure advisory preview from an enforcing call that may append a
+receipt and return its ``audit_id``.
 
 The ``enforce`` flag on :meth:`EnforcementSink.gate` carries that distinction.
 ``record_decision`` is always advisory (audit enrichment only).
@@ -50,7 +38,7 @@ __all__ = [
     "EnforcementVerdict",
     "EnforcementSink",
     "NoOpEnforcementSink",
-    "RvndEnforcementAdapter",
+    "ExternalEnforcementAdapter",
     "NOOP_SINK",
 ]
 
@@ -78,7 +66,7 @@ class EnforcementDecision:
 class EnforcementVerdict:
     """Verdict an attached enforcement plane returns for a prospective action.
 
-    ``verdict`` mirrors RVND's permit/hold/deny; ``gate_verdict`` mirrors the
+    ``verdict`` uses permit/hold/deny; ``gate_verdict`` uses the
     structural GO / CONDITIONAL / NO-GO. ``audit_id`` is populated only by an
     ``enforce`` call that wrote the signed chain (``None`` for an advisory
     preview).
@@ -98,7 +86,7 @@ class EnforcementSink(Protocol):
 
     A sink is injected into :class:`~brain.privacy_shield.gate.PrivacyGate` via
     the capability flag. The default sink is :class:`NoOpEnforcementSink`; a
-    real deployment MAY attach an adapter over RVND. All methods must tolerate
+    real deployment may attach a host adapter. All methods must tolerate
     being called on every egress decision and must never raise into the core
     path (the guard wraps calls defensively regardless).
     """
@@ -106,8 +94,8 @@ class EnforcementSink(Protocol):
     def record_decision(self, decision: EnforcementDecision) -> None:
         """Observe a local egress decision (advisory / audit enrichment).
 
-        Always advisory. An RVND-backed sink would append a signed-chain
-        receipt for the decision here. A no-op sink does nothing.
+        Always advisory. A host sink may append a receipt. A no-op sink does
+        nothing.
         """
         ...
 
@@ -127,7 +115,7 @@ class EnforcementSink(Protocol):
 
 
 class NoOpEnforcementSink:
-    """Default sink: fully inert. This is what "zero RVND present" means.
+    """Default sink: fully inert.
 
     ``record_decision`` does nothing; ``gate`` returns ``None`` so the guard's
     own local decision is authoritative. Attaching this sink is
@@ -150,33 +138,29 @@ class NoOpEnforcementSink:
 NOOP_SINK = NoOpEnforcementSink()
 
 
-class RvndEnforcementAdapter:
-    """Interface-only STUB of an RVND-backed enforcement sink.
+class ExternalEnforcementAdapter:
+    """Interface-only stub for a host-owned enforcement sink.
 
-    Ships the *shape* of the seam without importing or calling RVND (RVND is
-    hands-off and optional). A real adapter — built and owned elsewhere — would
-    bind:
+    A real adapter, built and owned by the consuming host, would bind:
 
     - :meth:`record_decision` → append an advisory receipt for the egress
       decision to the workspace's signed chain (audit enrichment).
-    - :meth:`gate` with ``enforce=False`` → ``rvnd.action_gate.gate(...)``
-      (pure GO / CONDITIONAL / NO-GO preview, no chain write).
-    - :meth:`gate` with ``enforce=True`` → ``rvnd.governance.decide_action(...)``
-      which **APPENDS to the signed chain** and yields an ``audit_id``.
+    - :meth:`gate` with ``enforce=False`` to a pure preview with no chain write.
+    - :meth:`gate` with ``enforce=True`` to a decision that may append to the
+      signed chain and return an ``audit_id``.
 
     It is a named stub, not a build: its methods raise :class:`NotImplementedError`
     so that an accidental attach fails loudly rather than silently pretending to
-    govern. Do not implement RVND here — attach a real adapter from outside this
-    core.
+    govern. Attach a real adapter from outside this core.
     """
 
-    #: Capability marker so callers can detect the stub without importing rvnd.
+    #: Capability marker so callers can detect the interface-only stub.
     is_stub = True
 
     def record_decision(self, decision: EnforcementDecision) -> None:
         raise NotImplementedError(
-            "RvndEnforcementAdapter is an interface-only stub; attach a real "
-            "RVND-backed EnforcementSink implemented outside privacy-shield."
+            "ExternalEnforcementAdapter is an interface-only stub; attach a real "
+            "host EnforcementSink implemented outside privacy-shield."
         )
 
     def gate(
@@ -186,6 +170,6 @@ class RvndEnforcementAdapter:
         enforce: bool = False,
     ) -> Optional[EnforcementVerdict]:
         raise NotImplementedError(
-            "RvndEnforcementAdapter is an interface-only stub; attach a real "
-            "RVND-backed EnforcementSink implemented outside privacy-shield."
+            "ExternalEnforcementAdapter is an interface-only stub; attach a real "
+            "host EnforcementSink implemented outside privacy-shield."
         )

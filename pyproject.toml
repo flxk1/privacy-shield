@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "privacy-shield"
 version = "1.0.0"
-description = "Local-first PII/PHI detection and clean-overlay pipeline: only a cleaned overlay ever leaves the machine to a cloud LLM."
+description = "Detect PII and PHI locally, produce a clean overlay, and block unsafe egress before content reaches an external model."
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "flxk1" }]

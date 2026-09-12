@@ -7,8 +7,8 @@ description: >-
   external service is allowed, by source classification. Personal data is found
   with a regex/lexicon floor plus an optional local embedding/LLM layer; the
   value<->placeholder map stays local; every decision is written to a local audit
-  trail. Works fully standalone with ZERO loomground and ZERO RVND; RVND is an
-  OPTIONAL enforcement skin (permit/hold/deny + signed chain) behind an adapter
+  trail. Works standalone with every Loomground plane optional. An external
+  enforcement host can attach behind the neutral sink interface
   that no-ops when absent. "Cleared" means the source class is allowed to egress,
   NOT a zero-residual certificate. Use when the user says "redact this", "clean
   this before I send it to the cloud", "is this safe for an external LLM", "scan
@@ -26,7 +26,7 @@ governance:
     - egress_original_unredacted_text
     - present_cleared_as_a_zero_residual_guarantee
     - leak_the_value_placeholder_map
-    - require_rvnd_on_default_path
+    - require_external_enforcement_on_default_path
   obligations:
     - only_the_overlay_egresses
     - value_placeholder_map_stays_local
@@ -46,7 +46,7 @@ The scan / overlay / egress engine lives in the `brain.privacy_shield` package
 entry is `brain.privacy_shield.scan(target) -> ScanReport` and the
 `privacy-shield` CLI. The four modes (STANDARD / LOCAL_ONLY / ANONYMOUS_JSON /
 REGEX_ONLY) are listed in the README, which links the repository's pipeline
-and RVND-optional notes.
+and external-enforcement notes.
 
 ## Notes
 - The egress verdict is on SOURCE CLASSIFICATION (privacy mode + confidential /

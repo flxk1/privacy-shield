@@ -17,7 +17,7 @@ engine. Per document it drives the real pipeline —
 and returns a structured :class:`ScanReport`: the clean overlay (the only thing
 meant to leave the machine), the per-span findings, and the egress verdict.
 
-RVND-optional: no ``rvnd.*`` import, no enforcement sink attached. The gate
+No external enforcement sink is attached. The gate
 decides locally and records to the standalone :mod:`brain.audit_log`.
 """
 
@@ -288,7 +288,7 @@ def scan(
     The result carries, per document, the clean overlay, the per-span findings,
     and the egress verdict; and, in aggregate, ``all_allowed``.
 
-    RVND is never imported and no enforcement sink is attached — the gate decides
+    No host implementation is imported and no enforcement sink is attached; the gate decides
     locally. Honours the four privacy modes (STANDARD, LOCAL_ONLY,
     ANONYMOUS_JSON, REGEX_ONLY): LOCAL_ONLY blocks every external egress, and the
     global privacy mode is set for the duration so the gate honours it, then
@@ -301,7 +301,7 @@ def scan(
         privacy_mode=mode,
         audit_log_path=audit_log_path,
     )
-    gate = PrivacyGate()  # zero RVND — decides locally + audits
+    gate = PrivacyGate()  # standalone local decision and audit
 
     # The gate reads the *global* privacy mode; align it with this call so
     # LOCAL_ONLY (and friends) are honoured, then restore.

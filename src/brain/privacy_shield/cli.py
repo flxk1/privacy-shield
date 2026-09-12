@@ -143,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="privacy-shield",
         description=(
             "Local-first PII scan + clean-overlay runner. Only the cleaned "
-            "overlay is meant to leave the machine; RVND is not required."
+            "overlay is meant to leave the machine; enforcement hosts are optional."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

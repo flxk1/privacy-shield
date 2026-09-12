@@ -10,8 +10,7 @@ document (extract → regex → semantic → local-LLM → redact → overlay), 
 **egress guard** decides — on the source classification (privacy mode +
 confidential / berufsgeheimnis tiers + Art. 9) — whether the payload may leave.
 Only when it may does the clean overlay go out. Every decision is recorded to
-the standalone `audit_log`. RVND is left unimported and no enforcement sink is
-attached.
+the standalone `audit_log`. No external enforcement sink is attached.
 
 Keyword-only signature:
 

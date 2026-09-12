@@ -8,13 +8,11 @@ prove:
 - the egress verdict is correct (LOCAL_ONLY / berufsgeheimnis / Art. 9 block;
   a non-confidential PII doc passes);
 - every decision is recorded to the standalone ``audit_log``;
-- the whole path runs with ZERO RVND present (no ``rvnd`` import anywhere);
+- the runner attaches no external enforcement adapter;
 - the CLI writes overlays and reports the right exit code.
 """
 
 import json
-import sys
-
 import pytest
 
 from brain.audit_log import AuditEvent
@@ -169,24 +167,17 @@ def test_anonymous_json_mode_builds_placeholder_overlay(temp_audit):
 
 
 # ---------------------------------------------------------------------------
-# Zero RVND on the path
+# No host adapter on the runner path
 # ---------------------------------------------------------------------------
-def test_runner_runs_with_zero_rvnd(pii_folder, temp_audit):
-    # Nothing named rvnd may be imported by exercising the runner.
-    scan(pii_folder, mode=PrivacyMode.STANDARD)
-    rvnd_modules = [m for m in sys.modules if m == "rvnd" or m.startswith("rvnd.")]
-    assert rvnd_modules == []
-
-
-def test_runner_sources_have_no_rvnd_import():
+def test_runner_sources_attach_no_external_adapter():
     import pathlib
 
     from brain.privacy_shield import runner as runner_mod
 
     for mod_file in ("runner.py", "cli.py"):
         text = (pathlib.Path(runner_mod.__file__).parent / mod_file).read_text()
-        assert "import rvnd" not in text
-        assert "from rvnd" not in text
+        assert "ExternalEnforcementAdapter" not in text
+        assert "attach_enforcement_sink" not in text
 
 
 # ---------------------------------------------------------------------------

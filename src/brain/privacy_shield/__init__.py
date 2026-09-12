@@ -79,7 +79,7 @@ from .enforcement import (
     EnforcementDecision,
     EnforcementVerdict,
     NoOpEnforcementSink,
-    RvndEnforcementAdapter,
+    ExternalEnforcementAdapter,
     NOOP_SINK,
 )
 from .runner import (
@@ -150,12 +150,12 @@ __all__ = [
     "PrivacyGateResult",
     "privacy_gate",
     "require_privacy_check",
-    # Optional RVND enforcement/audit seam (RVND-optional)
+    # Optional external enforcement and audit seam
     "EnforcementSink",
     "EnforcementDecision",
     "EnforcementVerdict",
     "NoOpEnforcementSink",
-    "RvndEnforcementAdapter",
+    "ExternalEnforcementAdapter",
     "NOOP_SINK",
     # Governed-folder runner (agent-invokable capability + CLI)
     "scan",
