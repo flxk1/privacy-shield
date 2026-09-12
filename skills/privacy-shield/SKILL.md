@@ -14,6 +14,7 @@ description: >-
   this before I send it to the cloud", "is this safe for an external LLM", "scan
   this folder for personal data", "make a privacy overlay", "lock this folder's
   egress".
+allowed-tools: privacy_scan
 governance:
   grade: L1
   actions:
@@ -41,7 +42,12 @@ governance:
 
 # privacy-shield
 
-The scan / overlay / egress engine lives in the `brain.privacy_shield` package
+Primary path: call `privacy_scan` with raw text, the privacy mode, redaction
+mode, confidence floor and source classification. The result includes the clean
+overlay, span findings and egress verdict; only the overlay may be used for a
+subsequent external call.
+
+The same scan / overlay / egress engine lives in the `brain.privacy_shield` package
 (`scanner`, `redactor`, `anonymous_json`, `gate`, `audit_log`). The agent-facing
 entry is `brain.privacy_shield.scan(target) -> ScanReport` and the
 `privacy-shield` CLI. The four modes (STANDARD / LOCAL_ONLY / ANONYMOUS_JSON /

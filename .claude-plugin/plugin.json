@@ -14,5 +14,15 @@
     "data-protection",
     "local-first",
     "governance"
-  ]
+  ],
+  "mcpServers": {
+    "loomground": {
+      "command": "loomground-mcp",
+      "args": [
+        "serve",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
 }
