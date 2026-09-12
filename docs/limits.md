@@ -20,7 +20,7 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
 - **Semantic and local-LLM passes are optional.** With neither the `[semantic]`
   extras nor a local model present, detection is the deterministic regex/lexicon
   floor only (the modules degrade gracefully). `[extract]` extras
-  (PyMuPDF/opencv) are needed for PDF/image extraction; without them those
+  (PyMuPDF, which is AGPL, and opencv) are needed for PDF/image extraction; without them those
   documents surface an extraction error.
 - **The local-LLM layer talks to local HTTP endpoints.** `user_credentials.py`
   discovers providers on `http://localhost:11434` (Ollama), `:1234` (LM Studio),
