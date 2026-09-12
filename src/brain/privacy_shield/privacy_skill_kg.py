@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,11 +31,22 @@ def _normalize_tenant_id(tenant_id: str) -> str:
     return cleaned[:80] or "default"
 
 
+def _user_state_home() -> Path:
+    """XDG_STATE_HOME and its documented macOS / Windows equivalents."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    if os.name == "nt":
+        local = str(os.environ.get("LOCALAPPDATA", "")).strip()
+        return Path(local) if local else Path.home() / "AppData" / "Local"
+    xdg = str(os.environ.get("XDG_STATE_HOME", "")).strip()
+    return Path(xdg) if xdg else Path.home() / ".local" / "state"
+
+
 def _kg_dir() -> Path:
     override = str(os.environ.get("BRAIN_PRIVACY_KG_DIR", "")).strip()
     if override:
         return Path(override)
-    return Path(__file__).resolve().parent.parent / "user" / "privacy_skill_kg"
+    return _user_state_home() / "privacy-shield" / "privacy_skill_kg"
 
 
 def privacy_kg_path(tenant_id: str) -> Path:

@@ -5,6 +5,8 @@ such as login attempts, permission changes, and suspicious activities.
 """
 import json
 import logging
+import os
+import sys
 import time
 from enum import Enum
 from pathlib import Path
@@ -12,7 +14,46 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-AUDIT_LOG_PATH = Path(__file__).parent / "logs" / "audit.jsonl"
+AUDIT_LOG_ENV = "BRAIN_PRIVACY_AUDIT_LOG"
+_STATE_APP_DIR = "privacy-shield"
+_LAZY_HANDOUT: Optional[Path] = None
+
+
+def _user_state_home() -> Path:
+    """XDG_STATE_HOME and its documented macOS / Windows equivalents."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    if os.name == "nt":
+        local = str(os.environ.get("LOCALAPPDATA", "")).strip()
+        return Path(local) if local else Path.home() / "AppData" / "Local"
+    xdg = str(os.environ.get("XDG_STATE_HOME", "")).strip()
+    return Path(xdg) if xdg else Path.home() / ".local" / "state"
+
+
+def audit_log_path() -> Path:
+    """Resolve the audit log file at call time; BRAIN_PRIVACY_AUDIT_LOG wins verbatim."""
+    override = str(os.environ.get(AUDIT_LOG_ENV, "")).strip()
+    if override:
+        return Path(override)
+    return _user_state_home() / _STATE_APP_DIR / "logs" / "audit.jsonl"
+
+
+def _resolved_audit_log_path() -> Path:
+    # An assignment to AUDIT_LOG_PATH still wins, but the object __getattr__ handed out
+    # is exempt: pytest's monkeypatch undo writes it back into the module dict, which
+    # would otherwise pin the lazy default for the rest of the process.
+    pinned = globals().get("AUDIT_LOG_PATH")
+    if pinned is None or pinned is _LAZY_HANDOUT:
+        return audit_log_path()
+    return Path(pinned)
+
+
+def __getattr__(name: str) -> Any:
+    global _LAZY_HANDOUT
+    if name == "AUDIT_LOG_PATH":
+        _LAZY_HANDOUT = audit_log_path()
+        return _LAZY_HANDOUT
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class AuditEvent(Enum):
@@ -74,7 +115,8 @@ def log_audit_event(
         details: Additional event-specific details
         success: Whether the action was successful
     """
-    AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = _resolved_audit_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -87,7 +129,7 @@ def log_audit_event(
     }
 
     try:
-        with AUDIT_LOG_PATH.open("a", encoding="utf-8") as f:
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as exc:
         logger.error("Failed to write audit log: %s", exc)
@@ -209,7 +251,8 @@ def get_recent_audit_events(
     Returns:
         List of audit event dictionaries, most recent first
     """
-    if not AUDIT_LOG_PATH.exists():
+    path = _resolved_audit_log_path()
+    if not path.exists():
         return []
 
     def _tenant_for_username(username: str) -> str:
@@ -227,7 +270,7 @@ def get_recent_audit_events(
 
     events = []
     try:
-        with AUDIT_LOG_PATH.open("r", encoding="utf-8") as f:
+        with path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

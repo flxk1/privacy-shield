@@ -17,9 +17,15 @@ pip install "git+https://github.com/flxk1/privacy-shield.git@v1.0.0"
 ```
 
 Zero required dependencies. Extras: `[semantic]` numpy>=1.24 +
-onnxruntime>=1.16 (embedding and shadow-ONNX layer), `[extract]` PyMuPDF>=1.23 +
-opencv-python-headless>=4.8 (PDF, image extraction; PyMuPDF is AGPL), `[dev]` pyyaml>=6 +
+onnxruntime>=1.16 (embeddings, shadow ONNX), `[extract]` PyMuPDF>=1.23 +
+opencv-python-headless>=4.8 (PDF, image; PyMuPDF is AGPL), `[dev]` pyyaml>=6 +
 pytest>=7 (config layer, tests).
+
+State lands outside the package in `<user-state>/privacy-shield/`:
+`logs/audit.jsonl` and `privacy_skill_kg/`, created on demand. User-state is
+`$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
+Support`, Windows `%LOCALAPPDATA%`. `BRAIN_PRIVACY_AUDIT_LOG` and
+`BRAIN_PRIVACY_KG_DIR` override them verbatim.
 
 ## Usage
 
@@ -27,13 +33,13 @@ pytest>=7 (config layer, tests).
 from brain.privacy_shield import scan
 
 doc = scan("/path/to/governed/folder").documents[0]
-doc.overlay            # the cleaned overlay — the one payload cleared to leave
+doc.overlay            # the one payload cleared to leave
 doc.classification     # public | internal | confidential | berufsgeheimnis
-doc.egress_allowed     # the guard's verdict for this document
+doc.egress_allowed     # the guard's verdict
 ```
 
 `privacy-shield scan <path|-|text>` is the same capability as a console script;
-it exits `0` when every overlay clears and `2` when a document is blocked. Full
+it exits `0` when every overlay clears, `2` when a document is blocked. Full
 signature, flags and stdin handling: [docs/cli.md](docs/cli.md).
 
 ## Example
@@ -59,11 +65,10 @@ egress. Input is invented placeholder data.
 
 ## Family
 
-Runtime controls: the span-by-span PII-cleaned overlay and egress guard; only
-the overlay leaves the machine. `pyproject.toml` declares an empty
-`dependencies` list, so every loomground plane and RVND stay optional here and
-downstream. Absent the `[semantic]` and `[extract]` extras, detection degrades
-to the deterministic regex/lexicon floor. Absent an enforcement sink, the guard
+Runtime controls: the PII-cleaned overlay and egress guard; only the overlay
+leaves. An empty `dependencies` list keeps every loomground plane and RVND
+optional here and downstream. Absent the `[semantic]` and `[extract]` extras,
+detection degrades to the deterministic regex/lexicon floor. Absent an enforcement sink, the guard
 decides locally and writes the standalone audit trail; RVND attaches through
 `EnforcementSink` as an additive skin —
 [docs/adr/0001-rvnd-optional.md](docs/adr/0001-rvnd-optional.md). The
@@ -71,8 +76,8 @@ decides locally and writes the standalone audit trail; RVND attaches through
 
 ## Status
 
-1.0.0 · 122 tests, 114 passing · Python >=3.10 · zero required dependencies ·
-limits, gaps and the test split: [docs/limits.md](docs/limits.md).
+1.0.0 · 131 tests, 123 passing · Python >=3.10 · limits and gaps:
+[docs/limits.md](docs/limits.md).
 
 ## License
 
