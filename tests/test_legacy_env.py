@@ -79,7 +79,15 @@ def test_importing_with_a_legacy_name_set_does_not_raise(tmp_path):
         "PYTHONPATH": str(PKG.parent),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    code = "import privacy_shield, privacy_shield.cli, privacy_shield.gate, privacy_shield.runner, privacy_shield.audit_log"
+    code = (
+        "import pathlib\n"
+        "made = []\n"
+        "real = pathlib.Path.mkdir\n"
+        "pathlib.Path.mkdir = lambda self, *a, **k: (made.append(str(self)), real(self, *a, **k))[1]\n"
+        "import privacy_shield, privacy_shield.cli, privacy_shield.gate, privacy_shield.runner\n"
+        "import privacy_shield.audit_log, privacy_shield.privacy_shield_embeddings\n"
+        "assert made == [], made\n"
+    )
     done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert not (tmp_path / "legacy.jsonl").exists()

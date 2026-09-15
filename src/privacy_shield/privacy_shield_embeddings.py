@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(__file__).resolve().parent / "data" / "privacy_shield"
-_DATA_DIR.mkdir(parents=True, exist_ok=True)
 _CONTEXT_EMBEDDINGS_FILE = _DATA_DIR / "pii_context_embeddings.json"
 
 
@@ -229,6 +228,7 @@ class PIIContextMatcher:
 
     def _save_context_embeddings(self) -> None:
         """Persist PII context embeddings to disk."""
+        _CONTEXT_EMBEDDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
         _CONTEXT_EMBEDDINGS_FILE.write_text(
             json.dumps(self._context_embeddings, ensure_ascii=False),
             encoding="utf-8",
