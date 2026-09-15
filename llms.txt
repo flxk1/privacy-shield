@@ -18,12 +18,12 @@ pytest>=7 (config layer, tests).
 State lands outside the package in `<user-state>/privacy-shield/`:
 `logs/audit.jsonl` and `privacy_skill_kg/`, created lazily. User-state is
 `$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
-Support`, Windows `%LOCALAPPDATA%`. `BRAIN_PRIVACY_AUDIT_LOG` and
-`BRAIN_PRIVACY_KG_DIR` override them verbatim.
+Support`, Windows `%LOCALAPPDATA%`. `PRIVACY_SHIELD_AUDIT_LOG` and
+`PRIVACY_SHIELD_KG_DIR` override them verbatim.
 
 ## Usage
 ```python
-from brain.privacy_shield import scan
+from privacy_shield import scan
 
 doc = scan("/path/to/governed/folder").documents[0]
 doc.overlay            # the one payload cleared to leave
@@ -56,3 +56,4 @@ attach through the neutral `EnforcementSink` contract; see
 
 Language: loomground — guide https://github.com/flxk1/loomground/blob/main/llms.txt (the .lg language an agent reads, emits, validates); catalogue https://github.com/flxk1/loomground/blob/main/CATALOGUE.json
 Skills: privacy-shield
+MCP tools: privacy_scan

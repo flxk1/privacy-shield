@@ -1,8 +1,18 @@
 Privacy Shield
-Extracted and consolidated from the Brain platform (internal, unpublished).
+Copyright 2026 flxk1
 
-Third-party derived components (to be verified/attributed before publication):
-  - Document/media extraction: PyMuPDF (AGPL-3.0 / commercial) — OPTIONAL extra,
-    must not be a core dependency. opencv (Apache-2.0).
-  - Contextual PII: onnxruntime (MIT), numpy (BSD-3-Clause).
-See the Brain compliance/ SBOM + THIRD_PARTY_CODE_REGISTRY for provenance.
+This product includes materials developed for the Loomground project.
+
+The Python implementation, tests, and repository tooling are licensed under the
+Apache License, Version 2.0 (see LICENSES/Apache-2.0.txt).
+
+Optional third-party dependencies, installed by pip from their own distributions
+and not bundled here:
+  - [semantic] numpy (BSD-3-Clause), onnxruntime (MIT).
+  - [extract] PyMuPDF (AGPL-3.0 or Artifex commercial licence),
+    opencv-python-headless (Apache-2.0). PyMuPDF is never a core dependency.
+
+Authorship: all code and documentation are authored by the project's human
+author(s), who hold the copyright. Generative AI tools assisted with development.
+An AI system is a tool: it is not an author or a contributor, holds no copyright
+and makes no copyright claim.

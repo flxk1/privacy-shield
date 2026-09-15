@@ -22,13 +22,13 @@ pytest>=7 (config layer, tests).
 State lands outside the package in `<user-state>/privacy-shield/`:
 `logs/audit.jsonl` and `privacy_skill_kg/`, created lazily. User-state is
 `$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
-Support`, Windows `%LOCALAPPDATA%`. `BRAIN_PRIVACY_AUDIT_LOG` and
-`BRAIN_PRIVACY_KG_DIR` override them verbatim.
+Support`, Windows `%LOCALAPPDATA%`. `PRIVACY_SHIELD_AUDIT_LOG` and
+`PRIVACY_SHIELD_KG_DIR` override them verbatim.
 
 ## Usage
 
 ```python
-from brain.privacy_shield import scan
+from privacy_shield import scan
 
 doc = scan("/path/to/governed/folder").documents[0]
 doc.overlay            # the one payload cleared to leave
@@ -74,7 +74,7 @@ attach through the neutral `EnforcementSink` contract; see
 
 ## Status
 
-1.0.0 · 130 tests, 122 passing · Python >=3.10 · limits and gaps:
+1.0.0 · 219 tests, 211 passing · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License

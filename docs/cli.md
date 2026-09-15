@@ -4,7 +4,7 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
 
 ## `scan()`
 
-`brain.privacy_shield.runner.scan` (re-exported as `brain.privacy_shield.scan`)
+`privacy_shield.runner.scan` (re-exported as `privacy_shield.scan`)
 walks a **folder**, a **single file**, or **raw text**, runs the pipeline per
 document (extract → regex → semantic → local-LLM → redact → overlay), then the
 **egress guard** decides — on the source classification (privacy mode +
@@ -21,12 +21,12 @@ scan(target, *, mode=PrivacyMode.STANDARD, destination="external_llm",
      tenant_id="", user_id="", force_text=False) -> ScanReport
 ```
 
-`Confidence` comes from `brain.privacy_shield.scanner`; `DEFAULT_EXTENSIONS`
-from `brain.privacy_shield.runner`.
+`Confidence` comes from `privacy_shield.scanner`; `DEFAULT_EXTENSIONS`
+from `privacy_shield.runner`.
 
 ```python
-from brain.privacy_shield import scan
-from brain.privacy_shield.shield import PrivacyMode
+from privacy_shield import scan
+from privacy_shield.shield import PrivacyMode
 
 report = scan("/path/to/governed/folder", mode=PrivacyMode.STANDARD)
 report.all_allowed                 # aggregate egress verdict (bool)
@@ -53,7 +53,7 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
 It prints the verdict, writes the clean overlays with `--out`, and **exits `0`
 when every overlay is cleared for egress, `2` when any document is blocked** (so
 an agent or a shell can gate on it). `-` reads text from stdin. Without an
-install, run it as `python -m brain.privacy_shield.cli scan ...`.
+install, run it as `python -m privacy_shield.cli scan ...`.
 
 The CLI prints a per-document `audit_id` (`ps-<UTC timestamp>-<random>`), which
 differs on every run.

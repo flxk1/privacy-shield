@@ -47,9 +47,9 @@ mode, confidence floor and source classification. The result includes the clean
 overlay, span findings and egress verdict; only the overlay may be used for a
 subsequent external call.
 
-The same scan / overlay / egress engine lives in the `brain.privacy_shield` package
+The same scan / overlay / egress engine lives in the `privacy_shield` package
 (`scanner`, `redactor`, `anonymous_json`, `gate`, `audit_log`). The agent-facing
-entry is `brain.privacy_shield.scan(target) -> ScanReport` and the
+entry is `privacy_shield.scan(target) -> ScanReport` and the
 `privacy-shield` CLI. The four modes (STANDARD / LOCAL_ONLY / ANONYMOUS_JSON /
 REGEX_ONLY) are listed in the README, which links the repository's pipeline
 and external-enforcement notes.
