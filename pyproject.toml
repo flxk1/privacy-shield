@@ -12,7 +12,7 @@ authors = [{ name = "flxk1" }]
 dependencies = []
 
 [project.scripts]
-privacy-shield = "brain.privacy_shield.cli:main"
+privacy-shield = "privacy_shield.cli:main"
 
 [project.optional-dependencies]
 # Semantic / contextual PII layer (embeddings + shadow ONNX model)
@@ -27,7 +27,7 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["brain*"]
+include = ["privacy_shield*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

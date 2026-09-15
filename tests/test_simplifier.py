@@ -10,21 +10,21 @@ class TestShouldSimplify:
 
     def test_direct_override_true(self):
         """Direct override should take precedence."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         result = should_simplify(plain_language_mode=True)
         assert result is True
 
     def test_direct_override_false(self):
         """Direct override of False should return False."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         result = should_simplify(plain_language_mode=False)
         assert result is False
 
     def test_user_settings_enabled(self):
         """User settings with plain_language_mode enabled."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         settings = {"plain_language_mode": True}
         result = should_simplify(user_settings=settings)
@@ -32,7 +32,7 @@ class TestShouldSimplify:
 
     def test_user_settings_disabled(self):
         """User settings with plain_language_mode disabled."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         settings = {"plain_language_mode": False}
         result = should_simplify(user_settings=settings)
@@ -40,7 +40,7 @@ class TestShouldSimplify:
 
     def test_user_settings_missing_key(self):
         """User settings without the key should return False."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         settings = {"other_setting": True}
         result = should_simplify(user_settings=settings)
@@ -48,14 +48,14 @@ class TestShouldSimplify:
 
     def test_no_arguments(self):
         """No arguments should return False."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         result = should_simplify()
         assert result is False
 
     def test_direct_override_beats_settings(self):
         """Direct override should beat user settings."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         settings = {"plain_language_mode": True}
         result = should_simplify(user_settings=settings, plain_language_mode=False)
@@ -63,7 +63,7 @@ class TestShouldSimplify:
 
     def test_none_settings(self):
         """None settings should return False."""
-        from brain.simplifier import should_simplify
+        from privacy_shield.simplifier import should_simplify
 
         result = should_simplify(user_settings=None)
         assert result is False
@@ -74,19 +74,19 @@ class TestQuickSimplify:
 
     def test_empty_string(self):
         """Empty string should return empty."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         assert quick_simplify("") == ""
 
     def test_none_input(self):
         """None input should return None."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         assert quick_simplify(None) is None
 
     def test_pursuant_to(self):
         """Replace 'pursuant to' with 'according to'."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "Pursuant to Article 6, the data controller must..."
         result = quick_simplify(text)
@@ -95,7 +95,7 @@ class TestQuickSimplify:
 
     def test_notwithstanding(self):
         """Replace 'notwithstanding' with 'despite'."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "Notwithstanding the above provisions..."
         result = quick_simplify(text)
@@ -104,7 +104,7 @@ class TestQuickSimplify:
 
     def test_inter_alia(self):
         """Replace 'inter alia' with 'among other things'."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "The regulation covers, inter alia, personal data."
         result = quick_simplify(text)
@@ -112,7 +112,7 @@ class TestQuickSimplify:
 
     def test_force_majeure(self):
         """Replace 'force majeure' with explanation."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "In case of force majeure, the contract..."
         result = quick_simplify(text)
@@ -120,7 +120,7 @@ class TestQuickSimplify:
 
     def test_data_controller_explanation(self):
         """Replace 'data controller' with explanation."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "The data controller is responsible for..."
         result = quick_simplify(text)
@@ -128,7 +128,7 @@ class TestQuickSimplify:
 
     def test_case_insensitive(self):
         """Substitutions should be case insensitive."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "PURSUANT TO the regulations..."
         result = quick_simplify(text)
@@ -136,7 +136,7 @@ class TestQuickSimplify:
 
     def test_german_term_aufgrund(self):
         """Replace German 'aufgrund' with 'wegen'."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "Aufgrund der Verordnung muss..."
         result = quick_simplify(text)
@@ -144,7 +144,7 @@ class TestQuickSimplify:
 
     def test_no_changes_needed(self):
         """Text without jargon should remain unchanged."""
-        from brain.simplifier import quick_simplify
+        from privacy_shield.simplifier import quick_simplify
 
         text = "This is a simple sentence about everyday things."
         result = quick_simplify(text)
@@ -156,19 +156,19 @@ class TestEstimateComplexity:
 
     def test_empty_string(self):
         """Empty string should have 0 complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         assert estimate_complexity("") == 0.0
 
     def test_none_input(self):
         """None input should have 0 complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         assert estimate_complexity(None) == 0.0
 
     def test_simple_text(self):
         """Simple everyday text should have low complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         text = "I bought a car. It is blue. I like it."
         score = estimate_complexity(text)
@@ -176,7 +176,7 @@ class TestEstimateComplexity:
 
     def test_long_sentences(self):
         """Long sentences increase complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         text = (
             "The comprehensive regulatory framework established by the European Union "
@@ -189,7 +189,7 @@ class TestEstimateComplexity:
 
     def test_legal_terms_increase_complexity(self):
         """Text with legal terms should have higher complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         text = "Pursuant to the aforementioned provisions, notwithstanding any inter alia considerations."
         score = estimate_complexity(text)
@@ -197,7 +197,7 @@ class TestEstimateComplexity:
 
     def test_latin_phrases(self):
         """Latin phrases should increase complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         text = "The court ruled per se that the defendant acted in a prima facie manner."
         score = estimate_complexity(text)
@@ -205,7 +205,7 @@ class TestEstimateComplexity:
 
     def test_passive_voice(self):
         """Passive voice should increase complexity."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         text = (
             "The document was reviewed. The data was processed. "
@@ -217,7 +217,7 @@ class TestEstimateComplexity:
 
     def test_max_complexity_capped(self):
         """Complexity should be capped at 1.0."""
-        from brain.simplifier import estimate_complexity
+        from privacy_shield.simplifier import estimate_complexity
 
         text = (
             "Pursuant to the aforementioned provisions, notwithstanding any "
@@ -235,14 +235,14 @@ class TestNeedsSimplification:
 
     def test_simple_text_below_threshold(self):
         """Simple text should not need simplification."""
-        from brain.simplifier import needs_simplification
+        from privacy_shield.simplifier import needs_simplification
 
         text = "Hello. How are you? I am fine."
         assert needs_simplification(text) is False
 
     def test_complex_text_above_threshold(self):
         """Complex legal text should need simplification."""
-        from brain.simplifier import needs_simplification
+        from privacy_shield.simplifier import needs_simplification
 
         text = (
             "Pursuant to the aforementioned provisions established under the "
@@ -253,7 +253,7 @@ class TestNeedsSimplification:
 
     def test_custom_threshold(self):
         """Custom threshold should be respected."""
-        from brain.simplifier import needs_simplification
+        from privacy_shield.simplifier import needs_simplification
 
         text = "This is moderately complex text with some legal terminology."
         # With high threshold, should not need simplification
@@ -267,22 +267,22 @@ class TestSimplifyResponseSync:
 
     def test_empty_response(self):
         """Empty response should return unchanged."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         assert simplify_response_sync("") == ""
         assert simplify_response_sync("   ") == "   "
 
     def test_short_response_skipped(self):
         """Short responses (< 100 chars) should be returned unchanged."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         text = "This is a short response."
         assert simplify_response_sync(text) == text
 
-    @patch("brain.runtime.llm_gateway.call_smart")
+    @patch("privacy_shield.runtime.llm_gateway.call_smart")
     def test_llm_simplification_success(self, mock_call_smart):
         """Successful LLM simplification."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -295,10 +295,10 @@ class TestSimplifyResponseSync:
         assert result == mock_result.text.strip()
         mock_call_smart.assert_called_once()
 
-    @patch("brain.runtime.llm_gateway.call_smart")
+    @patch("privacy_shield.runtime.llm_gateway.call_smart")
     def test_llm_failure_returns_original(self, mock_call_smart):
         """LLM failure should return original text."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         mock_result = MagicMock()
         mock_result.success = False
@@ -310,10 +310,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("brain.runtime.llm_gateway.call_smart")
+    @patch("privacy_shield.runtime.llm_gateway.call_smart")
     def test_llm_empty_result_returns_original(self, mock_call_smart):
         """Empty LLM result should return original text."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -325,10 +325,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("brain.runtime.llm_gateway.call_smart")
+    @patch("privacy_shield.runtime.llm_gateway.call_smart")
     def test_llm_short_result_returns_original(self, mock_call_smart):
         """Very short LLM result (< 50 chars) should return original."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -340,10 +340,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("brain.runtime.llm_gateway.call_smart")
+    @patch("privacy_shield.runtime.llm_gateway.call_smart")
     def test_llm_exception_returns_original(self, mock_call_smart):
         """LLM exception should return original text."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         mock_call_smart.side_effect = Exception("Network error")
 
@@ -352,10 +352,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("brain.runtime.llm_gateway.call_smart")
+    @patch("privacy_shield.runtime.llm_gateway.call_smart")
     def test_german_language(self, mock_call_smart):
         """German language should use German prompt."""
-        from brain.simplifier import simplify_response_sync
+        from privacy_shield.simplifier import simplify_response_sync
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -374,10 +374,10 @@ class TestSimplifyResponseSync:
 class TestSimplifyResponseAsync:
     """Tests for simplify_response async path."""
 
-    @patch("brain.services.llm_runtime.call_smart_async")
+    @patch("privacy_shield.services.llm_runtime.call_smart_async")
     def test_async_simplification_success(self, mock_call_smart_async):
         """Async simplification should return rewritten text when successful."""
-        from brain.simplifier import simplify_response
+        from privacy_shield.simplifier import simplify_response
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -396,10 +396,10 @@ class TestSimplifyResponseAsync:
         assert result == mock_result.text.strip()
         mock_call_smart_async.assert_called_once()
 
-    @patch("brain.services.llm_runtime.call_smart_async")
+    @patch("privacy_shield.services.llm_runtime.call_smart_async")
     def test_async_failure_returns_original(self, mock_call_smart_async):
         """Async simplification failure should preserve original text."""
-        from brain.simplifier import simplify_response
+        from privacy_shield.simplifier import simplify_response
 
         mock_call_smart_async.side_effect = RuntimeError("timeout")
         original = (
@@ -416,35 +416,35 @@ class TestGetSimplifyPrompt:
 
     def test_english_default(self):
         """Default should return English prompt."""
-        from brain.simplifier import _get_simplify_prompt
+        from privacy_shield.simplifier import _get_simplify_prompt
 
         prompt = _get_simplify_prompt()
         assert "Simplified response:" in prompt
 
     def test_english_explicit(self):
         """Explicit 'en' should return English prompt."""
-        from brain.simplifier import _get_simplify_prompt
+        from privacy_shield.simplifier import _get_simplify_prompt
 
         prompt = _get_simplify_prompt("en")
         assert "Simplified response:" in prompt
 
     def test_german(self):
         """'de' should return German prompt."""
-        from brain.simplifier import _get_simplify_prompt
+        from privacy_shield.simplifier import _get_simplify_prompt
 
         prompt = _get_simplify_prompt("de")
         assert "Vereinfachte Antwort:" in prompt
 
     def test_unknown_defaults_to_english(self):
         """Unknown language should default to English."""
-        from brain.simplifier import _get_simplify_prompt
+        from privacy_shield.simplifier import _get_simplify_prompt
 
         prompt = _get_simplify_prompt("fr")
         assert "Simplified response:" in prompt
 
     def test_none_defaults_to_english(self):
         """None should default to English."""
-        from brain.simplifier import _get_simplify_prompt
+        from privacy_shield.simplifier import _get_simplify_prompt
 
         prompt = _get_simplify_prompt(None)
         assert "Simplified response:" in prompt
@@ -455,7 +455,7 @@ class TestQuickSimplificationsDict:
 
     def test_contains_legal_terms(self):
         """Should contain common legal terms."""
-        from brain.simplifier import QUICK_SIMPLIFICATIONS
+        from privacy_shield.simplifier import QUICK_SIMPLIFICATIONS
 
         assert "pursuant to" in QUICK_SIMPLIFICATIONS
         assert "notwithstanding" in QUICK_SIMPLIFICATIONS
@@ -463,7 +463,7 @@ class TestQuickSimplificationsDict:
 
     def test_contains_latin_phrases(self):
         """Should contain Latin legal phrases."""
-        from brain.simplifier import QUICK_SIMPLIFICATIONS
+        from privacy_shield.simplifier import QUICK_SIMPLIFICATIONS
 
         assert "inter alia" in QUICK_SIMPLIFICATIONS
         assert "prima facie" in QUICK_SIMPLIFICATIONS
@@ -471,14 +471,14 @@ class TestQuickSimplificationsDict:
 
     def test_contains_german_terms(self):
         """Should contain German legal terms."""
-        from brain.simplifier import QUICK_SIMPLIFICATIONS
+        from privacy_shield.simplifier import QUICK_SIMPLIFICATIONS
 
         assert "gemäß" in QUICK_SIMPLIFICATIONS
         assert "aufgrund" in QUICK_SIMPLIFICATIONS
 
     def test_contains_technical_terms(self):
         """Should contain technical/compliance terms."""
-        from brain.simplifier import QUICK_SIMPLIFICATIONS
+        from privacy_shield.simplifier import QUICK_SIMPLIFICATIONS
 
         assert "data subject" in QUICK_SIMPLIFICATIONS
         assert "data controller" in QUICK_SIMPLIFICATIONS
@@ -490,7 +490,7 @@ class TestIntegration:
 
     def test_full_pipeline_with_quick_simplify(self):
         """Quick simplify followed by complexity check."""
-        from brain.simplifier import quick_simplify, needs_simplification
+        from privacy_shield.simplifier import quick_simplify, needs_simplification
 
         text = "Pursuant to the GDPR, the data controller must implement measures."
         quick_result = quick_simplify(text)
@@ -501,7 +501,7 @@ class TestIntegration:
 
     def test_complexity_after_quick_simplify(self):
         """Complexity should decrease after quick simplify."""
-        from brain.simplifier import quick_simplify, estimate_complexity
+        from privacy_shield.simplifier import quick_simplify, estimate_complexity
 
         text = (
             "Pursuant to the aforementioned provisions, notwithstanding any "

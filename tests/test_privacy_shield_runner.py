@@ -15,10 +15,10 @@ prove:
 import json
 import pytest
 
-from brain.audit_log import AuditEvent
-from brain.privacy_shield import cli
-from brain.privacy_shield.runner import DocumentScan, ScanReport, scan
-from brain.privacy_shield.shield import PrivacyMode
+from privacy_shield.audit_log import AuditEvent
+from privacy_shield import cli
+from privacy_shield.runner import DocumentScan, ScanReport, scan
+from privacy_shield.shield import PrivacyMode
 
 # Synthetic (fake) PII tokens used across the fixtures.
 FAKE_EMAIL = "jane.roe@example.org"
@@ -35,11 +35,11 @@ def temp_audit(tmp_path, monkeypatch):
     blocking paths that notify the breach detector.
     """
     audit_file = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("brain.audit_log.AUDIT_LOG_PATH", audit_file)
+    monkeypatch.setattr("privacy_shield.audit_log.AUDIT_LOG_PATH", audit_file)
 
     # The gate's block path lazily notifies the breach detector, which otherwise
-    # writes under src/brain/data/. Redirect that singleton's log dir to temp.
-    import brain.privacy_shield.breach as breach_mod
+    # writes under src/privacy_shield/data/. Redirect that singleton's log dir to temp.
+    import privacy_shield.breach as breach_mod
 
     monkeypatch.setattr(
         breach_mod.breach_detector, "_BREACH_LOG_DIR", tmp_path / "breach", raising=False
@@ -172,7 +172,7 @@ def test_anonymous_json_mode_builds_placeholder_overlay(temp_audit):
 def test_runner_sources_attach_no_external_adapter():
     import pathlib
 
-    from brain.privacy_shield import runner as runner_mod
+    from privacy_shield import runner as runner_mod
 
     for mod_file in ("runner.py", "cli.py"):
         text = (pathlib.Path(runner_mod.__file__).parent / mod_file).read_text()
@@ -184,7 +184,7 @@ def test_runner_sources_attach_no_external_adapter():
 # Global privacy mode is restored after a scan
 # ---------------------------------------------------------------------------
 def test_global_privacy_mode_restored(temp_audit):
-    from brain.privacy_shield.shield import get_global_privacy_mode
+    from privacy_shield.shield import get_global_privacy_mode
 
     before = get_global_privacy_mode()
     scan("hello", mode=PrivacyMode.LOCAL_ONLY)

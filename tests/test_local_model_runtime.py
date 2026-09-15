@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 
 def test_local_model_status_payload_prefers_embedded(monkeypatch) -> None:
-    from brain.services import local_model_runtime as runtime
+    from privacy_shield.services import local_model_runtime as runtime
 
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_AVAILABLE", "1")
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_NAME", "Apple Foundation Models")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_AVAILABLE", "1")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_NAME", "Apple Foundation Models")
     monkeypatch.setattr(runtime, "discover_local_providers", lambda timeout=1.5: [])
     monkeypatch.setattr(runtime, "_DISCOVERY_CACHE", {"timestamp": 0.0, "providers": []})
 
@@ -22,7 +22,7 @@ def test_local_model_status_payload_prefers_embedded(monkeypatch) -> None:
 
 
 def test_detect_pii_with_local_model_unavailable() -> None:
-    from brain.services import local_model_runtime as runtime
+    from privacy_shield.services import local_model_runtime as runtime
 
     result = runtime.detect_pii_with_local_model("hello", timeout=0.1, preferred_provider="missing")
 
@@ -32,7 +32,7 @@ def test_detect_pii_with_local_model_unavailable() -> None:
 
 
 def test_analyze_security_threats_uses_local_json_response(monkeypatch) -> None:
-    from brain.services import local_model_runtime as runtime
+    from privacy_shield.services import local_model_runtime as runtime
 
     monkeypatch.setattr(
         runtime,
@@ -59,12 +59,12 @@ def test_analyze_security_threats_uses_local_json_response(monkeypatch) -> None:
 
 
 def test_detect_pii_with_embedded_command_runtime(monkeypatch) -> None:
-    from brain.services import local_model_runtime as runtime
+    from privacy_shield.services import local_model_runtime as runtime
 
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_AVAILABLE", "1")
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_COMMAND", "embedded-bridge --json")
-    monkeypatch.delenv("BRAIN_EMBEDDED_LOCAL_MODEL_ENDPOINT", raising=False)
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_AVAILABLE", "1")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_COMMAND", "embedded-bridge --json")
+    monkeypatch.delenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT", raising=False)
     monkeypatch.setattr(runtime, "discover_local_providers", lambda timeout=1.5: [])
     monkeypatch.setattr(runtime, "_DISCOVERY_CACHE", {"timestamp": 0.0, "providers": []})
 
@@ -106,14 +106,14 @@ def test_detect_pii_with_embedded_command_runtime(monkeypatch) -> None:
 
 
 def test_detect_pii_with_embedded_runtime_not_configured(monkeypatch) -> None:
-    from brain.services import local_model_runtime as runtime
+    from privacy_shield.services import local_model_runtime as runtime
 
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_AVAILABLE", "1")
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
-    monkeypatch.delenv("BRAIN_EMBEDDED_LOCAL_MODEL_COMMAND", raising=False)
-    monkeypatch.delenv("BRAIN_EMBEDDED_LOCAL_MODEL_ENDPOINT", raising=False)
-    monkeypatch.delenv("BRAIN_NATIVE_LOCAL_MODEL_COMMAND", raising=False)
-    monkeypatch.delenv("BRAIN_NATIVE_LOCAL_MODEL_ENDPOINT", raising=False)
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_AVAILABLE", "1")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
+    monkeypatch.delenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_COMMAND", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_COMMAND", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT", raising=False)
     monkeypatch.setattr(runtime, "discover_local_providers", lambda timeout=1.5: [])
     monkeypatch.setattr(runtime, "_DISCOVERY_CACHE", {"timestamp": 0.0, "providers": []})
 
@@ -125,12 +125,12 @@ def test_detect_pii_with_embedded_runtime_not_configured(monkeypatch) -> None:
 
 
 def test_embedded_provider_auto_available_with_command(monkeypatch) -> None:
-    from brain.services import local_model_runtime as runtime
+    from privacy_shield.services import local_model_runtime as runtime
 
-    monkeypatch.delenv("BRAIN_EMBEDDED_LOCAL_MODEL_AVAILABLE", raising=False)
-    monkeypatch.delenv("BRAIN_NATIVE_LOCAL_MODEL_AVAILABLE", raising=False)
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_COMMAND", "embedded-bridge --json")
-    monkeypatch.setenv("BRAIN_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
+    monkeypatch.delenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_AVAILABLE", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_AVAILABLE", raising=False)
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_COMMAND", "embedded-bridge --json")
+    monkeypatch.setenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ID", "apple-foundation")
     monkeypatch.setattr(runtime, "discover_local_providers", lambda timeout=1.5: [])
     monkeypatch.setattr(runtime, "_DISCOVERY_CACHE", {"timestamp": 0.0, "providers": []})
 

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 
 def test_privacy_shield_process_image_input(monkeypatch, tmp_path) -> None:
-    from brain.privacy_shield.shield import MediaType, PrivacyShield
+    from privacy_shield.shield import MediaType, PrivacyShield
 
     image_path = tmp_path / "sample.jpg"
     image_path.write_bytes(b"\xff\xd8\xff\xe0")
@@ -31,7 +31,7 @@ def test_privacy_shield_process_image_input(monkeypatch, tmp_path) -> None:
 
 
 def test_privacy_shield_process_audio_input(monkeypatch, tmp_path) -> None:
-    from brain.privacy_shield.shield import MediaType, PrivacyShield
+    from privacy_shield.shield import MediaType, PrivacyShield
 
     audio_path = tmp_path / "sample.wav"
     audio_path.write_bytes(b"RIFF....WAVEfmt ")
@@ -58,7 +58,7 @@ def test_privacy_shield_process_audio_input(monkeypatch, tmp_path) -> None:
 
 
 def test_privacy_shield_process_video_input(monkeypatch, tmp_path) -> None:
-    from brain.privacy_shield.shield import MediaType, PrivacyShield
+    from privacy_shield.shield import MediaType, PrivacyShield
 
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"\x00\x00\x00\x18ftypmp42")

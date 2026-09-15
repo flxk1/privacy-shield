@@ -26,20 +26,20 @@ import pytest
 
 class TestChunkText:
     def test_short_text_single_chunk(self):
-        from brain.privacy_shield_embeddings import _chunk_text
+        from privacy_shield.privacy_shield_embeddings import _chunk_text
 
         chunks = _chunk_text("Hello world", chunk_size=200)
         assert len(chunks) == 1
         assert chunks[0] == "Hello world"
 
     def test_empty_text(self):
-        from brain.privacy_shield_embeddings import _chunk_text
+        from privacy_shield.privacy_shield_embeddings import _chunk_text
 
         assert _chunk_text("") == []
         assert _chunk_text("   ") == []
 
     def test_long_text_multiple_chunks(self):
-        from brain.privacy_shield_embeddings import _chunk_text
+        from privacy_shield.privacy_shield_embeddings import _chunk_text
 
         text = "A" * 500
         chunks = _chunk_text(text, chunk_size=200, overlap=50)
@@ -49,7 +49,7 @@ class TestChunkText:
             assert len(chunk) <= 200
 
     def test_overlap_creates_redundancy(self):
-        from brain.privacy_shield_embeddings import _chunk_text
+        from privacy_shield.privacy_shield_embeddings import _chunk_text
 
         text = "word " * 100  # 500 chars
         chunks = _chunk_text(text, chunk_size=100, overlap=20)
@@ -60,14 +60,14 @@ class TestChunkText:
 
 class TestCosineSimilarity:
     def test_identical_vectors(self):
-        from brain.privacy_shield_embeddings import _compute_cosine_similarity
+        from privacy_shield.privacy_shield_embeddings import _compute_cosine_similarity
 
         vec = [1.0, 2.0, 3.0]
         sim = _compute_cosine_similarity(vec, vec)
         assert abs(sim - 1.0) < 0.001
 
     def test_orthogonal_vectors(self):
-        from brain.privacy_shield_embeddings import _compute_cosine_similarity
+        from privacy_shield.privacy_shield_embeddings import _compute_cosine_similarity
 
         a = [1.0, 0.0, 0.0]
         b = [0.0, 1.0, 0.0]
@@ -75,7 +75,7 @@ class TestCosineSimilarity:
         assert abs(sim) < 0.001
 
     def test_opposite_vectors(self):
-        from brain.privacy_shield_embeddings import _compute_cosine_similarity
+        from privacy_shield.privacy_shield_embeddings import _compute_cosine_similarity
 
         a = [1.0, 2.0, 3.0]
         b = [-1.0, -2.0, -3.0]
@@ -83,7 +83,7 @@ class TestCosineSimilarity:
         assert abs(sim + 1.0) < 0.001
 
     def test_zero_vector(self):
-        from brain.privacy_shield_embeddings import _compute_cosine_similarity
+        from privacy_shield.privacy_shield_embeddings import _compute_cosine_similarity
 
         a = [0.0, 0.0, 0.0]
         b = [1.0, 2.0, 3.0]
@@ -97,7 +97,7 @@ class TestCosineSimilarity:
 
 class TestPIIMatch:
     def test_to_dict(self):
-        from brain.privacy_shield_embeddings import PIIMatch
+        from privacy_shield.privacy_shield_embeddings import PIIMatch
 
         m = PIIMatch(
             chunk_text="employee named John Smith",
@@ -119,9 +119,9 @@ class TestPIIMatch:
 
 class TestPIIContextMatcher:
     def test_is_ready_false_without_embeddings(self):
-        from brain.privacy_shield_embeddings import PIIContextMatcher
+        from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
 
-        with patch("brain.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE",
+        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE",
                     Path("/nonexistent/file.json")):
             matcher = PIIContextMatcher()
             assert matcher.is_ready is False
@@ -132,15 +132,15 @@ class TestPIIContextMatcher:
             "name": [{"phrase": "employee named", "embedding": [0.1, 0.2, 0.3]}],
         }))
 
-        with patch("brain.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
-            from brain.privacy_shield_embeddings import PIIContextMatcher
+        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
+            from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
             matcher = PIIContextMatcher()
             assert matcher.is_ready is True
 
     def test_scan_returns_empty_without_embeddings(self):
-        from brain.privacy_shield_embeddings import PIIContextMatcher
+        from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
 
-        with patch("brain.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE",
+        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE",
                     Path("/nonexistent/file.json")):
             matcher = PIIContextMatcher()
             results = matcher.scan_for_pii_contexts("Some text with employee named John")
@@ -156,8 +156,8 @@ class TestPIIContextMatcher:
         mock_client = MagicMock()
         mock_client.embeddings.create.return_value = mock_response
 
-        with patch("brain.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
-            from brain.privacy_shield_embeddings import PIIContextMatcher
+        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
+            from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
             matcher = PIIContextMatcher()
             matcher._client = mock_client
 
@@ -194,8 +194,8 @@ class TestPIIContextMatcher:
         # Mock the embed function to return vectors similar to "name" category
         mock_response = MagicMock()
 
-        with patch("brain.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
-            from brain.privacy_shield_embeddings import PIIContextMatcher
+        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
+            from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
             matcher = PIIContextMatcher()
 
             # Mock _embed to return a vector very close to the "name" pattern
@@ -220,8 +220,8 @@ class TestPIIContextMatcher:
         embeddings_file = tmp_path / "pii_embeddings.json"
         embeddings_file.write_text(json.dumps({}))
 
-        with patch("brain.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
-            from brain.privacy_shield_embeddings import PIIContextMatcher
+        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file):
+            from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
             matcher = PIIContextMatcher()
             # With empty embeddings, both should return empty
             assert matcher.scan_quick("test") == []
@@ -233,20 +233,20 @@ class TestPIIContextMatcher:
 
 class TestPIIContextPatterns:
     def test_all_categories_present(self):
-        from brain.privacy_shield_embeddings import PII_CONTEXT_PATTERNS
+        from privacy_shield.privacy_shield_embeddings import PII_CONTEXT_PATTERNS
 
         expected = {"name", "email", "phone", "address", "financial",
                     "health", "id_document", "date_of_birth", "location"}
         assert set(PII_CONTEXT_PATTERNS.keys()) == expected
 
     def test_each_category_has_patterns(self):
-        from brain.privacy_shield_embeddings import PII_CONTEXT_PATTERNS
+        from privacy_shield.privacy_shield_embeddings import PII_CONTEXT_PATTERNS
 
         for category, patterns in PII_CONTEXT_PATTERNS.items():
             assert len(patterns) >= 3, f"Category {category} should have at least 3 patterns"
 
     def test_redaction_map_covers_all_categories(self):
-        from brain.privacy_shield_embeddings import PII_CONTEXT_PATTERNS, REDACTION_MAP
+        from privacy_shield.privacy_shield_embeddings import PII_CONTEXT_PATTERNS, REDACTION_MAP
 
         for category in PII_CONTEXT_PATTERNS:
             assert category in REDACTION_MAP, f"Missing redaction for {category}"

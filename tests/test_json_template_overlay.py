@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from brain.audit_log import AuditEvent
-from brain.helpers.json_template_overlay import maybe_apply_json_template_overlay
+from privacy_shield.audit_log import AuditEvent
+from privacy_shield.helpers.json_template_overlay import maybe_apply_json_template_overlay
 
 
 def _approved_review() -> dict:
@@ -16,7 +16,7 @@ def test_contract_overlay_applies_at_or_above_threshold(monkeypatch) -> None:
     def _force_high(*args, **kwargs):
         return 0.95
 
-    monkeypatch.setattr("brain.helpers.json_template_overlay._estimate_template_confidence", _force_high)
+    monkeypatch.setattr("privacy_shield.helpers.json_template_overlay._estimate_template_confidence", _force_high)
     record = {
         "filename": "service_agreement.txt",
         "text_preview": (
@@ -43,7 +43,7 @@ def test_contract_overlay_noop_below_threshold(monkeypatch) -> None:
     def _force_low(*args, **kwargs):
         return 0.89
 
-    monkeypatch.setattr("brain.helpers.json_template_overlay._estimate_template_confidence", _force_low)
+    monkeypatch.setattr("privacy_shield.helpers.json_template_overlay._estimate_template_confidence", _force_low)
     record = {
         "filename": "service_agreement.txt",
         "text_preview": (
@@ -71,12 +71,12 @@ def test_controlled_decision_event_logged_for_apply_and_fail(monkeypatch) -> Non
             }
         )
 
-    monkeypatch.setattr("brain.helpers.json_template_overlay.log_audit_event", _capture)
+    monkeypatch.setattr("privacy_shield.helpers.json_template_overlay.log_audit_event", _capture)
 
     def _force_high(*args, **kwargs):
         return 0.95
 
-    monkeypatch.setattr("brain.helpers.json_template_overlay._estimate_template_confidence", _force_high)
+    monkeypatch.setattr("privacy_shield.helpers.json_template_overlay._estimate_template_confidence", _force_high)
     applied = maybe_apply_json_template_overlay(
         {
             "filename": "service_agreement.txt",
@@ -92,7 +92,7 @@ def test_controlled_decision_event_logged_for_apply_and_fail(monkeypatch) -> Non
     def _force_low(*args, **kwargs):
         return 0.4
 
-    monkeypatch.setattr("brain.helpers.json_template_overlay._estimate_template_confidence", _force_low)
+    monkeypatch.setattr("privacy_shield.helpers.json_template_overlay._estimate_template_confidence", _force_low)
     not_applied = maybe_apply_json_template_overlay(
         {
             "filename": "service_agreement.txt",

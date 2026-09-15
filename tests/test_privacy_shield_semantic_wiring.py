@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 
 def test_standard_mode_adds_semantic_context_findings(monkeypatch) -> None:
-    from brain.privacy_shield import PrivacyMode, PrivacyShield
+    from privacy_shield import PrivacyMode, PrivacyShield
 
     calls = {"count": 0}
 
@@ -22,9 +22,9 @@ def test_standard_mode_adds_semantic_context_findings(monkeypatch) -> None:
                 )
             ]
 
-    monkeypatch.setattr("brain.privacy_shield.shield._get_semantic_context_matcher", lambda: _Matcher())
+    monkeypatch.setattr("privacy_shield.shield._get_semantic_context_matcher", lambda: _Matcher())
     monkeypatch.setattr(PrivacyShield, "check_local_model_available", lambda self: False)
-    monkeypatch.delenv("BRAIN_PRIVACY_SHIELD_SEMANTIC_ENABLED", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_SEMANTIC_ENABLED", raising=False)
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.STANDARD)
     result = shield.process_text("zxqk")
@@ -34,7 +34,7 @@ def test_standard_mode_adds_semantic_context_findings(monkeypatch) -> None:
 
 
 def test_local_only_mode_skips_semantic_context_scan(monkeypatch) -> None:
-    from brain.privacy_shield import PrivacyMode, PrivacyShield
+    from privacy_shield import PrivacyMode, PrivacyShield
 
     calls = {"count": 0}
 
@@ -42,9 +42,9 @@ def test_local_only_mode_skips_semantic_context_scan(monkeypatch) -> None:
         calls["count"] += 1
         return None
 
-    monkeypatch.setattr("brain.privacy_shield.shield._get_semantic_context_matcher", _matcher_factory)
+    monkeypatch.setattr("privacy_shield.shield._get_semantic_context_matcher", _matcher_factory)
     monkeypatch.setattr(PrivacyShield, "check_local_model_available", lambda self: False)
-    monkeypatch.delenv("BRAIN_PRIVACY_SHIELD_SEMANTIC_ENABLED", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_SEMANTIC_ENABLED", raising=False)
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.LOCAL_ONLY)
     result = shield.process_text("employee named jxqk requested account access")
@@ -54,7 +54,7 @@ def test_local_only_mode_skips_semantic_context_scan(monkeypatch) -> None:
 
 
 def test_regex_only_mode_skips_semantic_context_scan(monkeypatch) -> None:
-    from brain.privacy_shield import PrivacyMode, PrivacyShield
+    from privacy_shield import PrivacyMode, PrivacyShield
 
     calls = {"count": 0}
 
@@ -62,9 +62,9 @@ def test_regex_only_mode_skips_semantic_context_scan(monkeypatch) -> None:
         calls["count"] += 1
         return None
 
-    monkeypatch.setattr("brain.privacy_shield.shield._get_semantic_context_matcher", _matcher_factory)
+    monkeypatch.setattr("privacy_shield.shield._get_semantic_context_matcher", _matcher_factory)
     monkeypatch.setattr(PrivacyShield, "check_local_model_available", lambda self: False)
-    monkeypatch.delenv("BRAIN_PRIVACY_SHIELD_SEMANTIC_ENABLED", raising=False)
+    monkeypatch.delenv("PRIVACY_SHIELD_SEMANTIC_ENABLED", raising=False)
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.REGEX_ONLY)
     result = shield.process_text("employee named jxqk requested account access")

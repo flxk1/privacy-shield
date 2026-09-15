@@ -15,14 +15,14 @@ import json
 
 import pytest
 
-from brain.audit_log import AuditEvent
-from brain.privacy_shield.enforcement import (
+from privacy_shield.audit_log import AuditEvent
+from privacy_shield.enforcement import (
     EnforcementDecision,
     EnforcementSink,
     EnforcementVerdict,
     NoOpEnforcementSink,
 )
-from brain.privacy_shield.gate import (
+from privacy_shield.gate import (
     PrivacyGate,
     PrivacyGateResult,
     require_privacy_check,
@@ -53,7 +53,7 @@ class _RecordingSink:
 def temp_audit(tmp_path, monkeypatch):
     """Redirect the standalone audit trail to a temp file (no tree pollution)."""
     audit_file = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("brain.audit_log.AUDIT_LOG_PATH", audit_file)
+    monkeypatch.setattr("privacy_shield.audit_log.AUDIT_LOG_PATH", audit_file)
 
     def _read():
         if not audit_file.exists():

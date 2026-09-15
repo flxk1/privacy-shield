@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from brain.privacy_shield.scanner import PIIType
+from privacy_shield.scanner import PIIType
 
 
 CONFIG_ROOT = Path(__file__).resolve().parent.parent / "configs" / "privacy_shield"

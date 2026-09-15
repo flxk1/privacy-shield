@@ -5,7 +5,7 @@ from __future__ import annotations
 
 def test_privacy_mode_enum_has_regex_only() -> None:
     """REGEX_ONLY is a valid privacy mode."""
-    from brain.privacy_shield.shield import PrivacyMode
+    from privacy_shield.shield import PrivacyMode
 
     assert PrivacyMode.REGEX_ONLY.value == "regex_only"
     # All four modes exist
@@ -19,7 +19,7 @@ def test_privacy_mode_enum_has_regex_only() -> None:
 
 def test_regex_only_mode_routing_config() -> None:
     """regex_only mode returns correct routing config."""
-    from brain.privacy_shield import PrivacyShield, PrivacyMode
+    from privacy_shield import PrivacyShield, PrivacyMode
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.REGEX_ONLY)
     config = shield.get_model_routing_config()
@@ -33,7 +33,7 @@ def test_regex_only_mode_routing_config() -> None:
 
 def test_regex_only_requires_method() -> None:
     """requires_regex_only() works correctly."""
-    from brain.privacy_shield import PrivacyShield, PrivacyMode
+    from privacy_shield import PrivacyShield, PrivacyMode
 
     shield_regex = PrivacyShield(privacy_mode=PrivacyMode.REGEX_ONLY)
     assert shield_regex.requires_regex_only() is True
@@ -45,7 +45,7 @@ def test_regex_only_requires_method() -> None:
 
 def test_regex_only_scanner_detects_pii_without_llm() -> None:
     """Pattern-based scan detects PII without Ollama."""
-    from brain.privacy_shield.scanner import scan_text_with_local_llm
+    from privacy_shield.scanner import scan_text_with_local_llm
 
     text = "Contact john.doe@example.com or call 0172-1234567 about IBAN DE89370400440532013000"
     result = scan_text_with_local_llm(text, use_llm_enhancement=False)
@@ -60,8 +60,8 @@ def test_regex_only_scanner_detects_pii_without_llm() -> None:
 
 def test_standard_mode_uses_local_enhancement_when_available(monkeypatch) -> None:
     """Standard Privacy Shield uses the local enhancement layer whenever available."""
-    from brain.privacy_shield import PrivacyShield, PrivacyMode
-    from brain.privacy_shield.scanner import ScanResult
+    from privacy_shield import PrivacyShield, PrivacyMode
+    from privacy_shield.scanner import ScanResult
 
     calls = {"count": 0}
 
@@ -70,7 +70,7 @@ def test_standard_mode_uses_local_enhancement_when_available(monkeypatch) -> Non
         return ScanResult(text=text, findings=[], scan_time_ms=1.0, layers_used=[1, 5])
 
     monkeypatch.setattr(PrivacyShield, "check_local_model_available", lambda self: True)
-    monkeypatch.setattr("brain.privacy_shield.shield.scan_text_with_local_llm", _fake_local_scan)
+    monkeypatch.setattr("privacy_shield.shield.scan_text_with_local_llm", _fake_local_scan)
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.STANDARD)
     result = shield.process_text("Project Horse is handled by Max Muller.")
@@ -83,13 +83,13 @@ def test_standard_mode_uses_local_enhancement_when_available(monkeypatch) -> Non
 
 def test_regex_only_mode_skips_local_enhancement_even_if_available(monkeypatch) -> None:
     """regex_only must keep deterministic scanning even when a local model exists."""
-    from brain.privacy_shield import PrivacyShield, PrivacyMode
+    from privacy_shield import PrivacyShield, PrivacyMode
 
     def _fail_local_scan(*args, **kwargs):
         raise AssertionError("regex_only should not call local enhancement")
 
     monkeypatch.setattr(PrivacyShield, "check_local_model_available", lambda self: True)
-    monkeypatch.setattr("brain.privacy_shield.shield.scan_text_with_local_llm", _fail_local_scan)
+    monkeypatch.setattr("privacy_shield.shield.scan_text_with_local_llm", _fail_local_scan)
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.REGEX_ONLY)
     result = shield.process_text("Contact john.doe@example.com")
@@ -100,11 +100,11 @@ def test_regex_only_mode_skips_local_enhancement_even_if_available(monkeypatch) 
 
 def test_onnx_shadow_metadata_does_not_change_live_findings(monkeypatch) -> None:
     """ONNX shadow mode is metadata-only and must not alter live regex findings."""
-    from brain.privacy_shield import PrivacyShield, PrivacyMode
+    from privacy_shield import PrivacyShield, PrivacyMode
 
-    monkeypatch.setenv("BRAIN_PRIVACY_SHIELD_ONNX_MODE", "shadow")
-    monkeypatch.setenv("BRAIN_PRIVACY_SHIELD_ONNX_AVAILABLE", "1")
-    monkeypatch.setenv("BRAIN_PRIVACY_SHIELD_ONNX_MODEL_ID", "privacy-ner-shadow-v1")
+    monkeypatch.setenv("PRIVACY_SHIELD_ONNX_MODE", "shadow")
+    monkeypatch.setenv("PRIVACY_SHIELD_ONNX_AVAILABLE", "1")
+    monkeypatch.setenv("PRIVACY_SHIELD_ONNX_MODEL_ID", "privacy-ner-shadow-v1")
     monkeypatch.setattr(PrivacyShield, "check_local_model_available", lambda self: False)
 
     shield = PrivacyShield(privacy_mode=PrivacyMode.REGEX_ONLY)

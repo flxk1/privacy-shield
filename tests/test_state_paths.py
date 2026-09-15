@@ -1,7 +1,7 @@
 """Runtime state lands outside the installed package.
 
-Both surfaces — the standalone audit trail (``brain.audit_log``) and the privacy
-skill KG (``brain.privacy_shield.privacy_skill_kg``) — resolve their paths at call
+Both surfaces — the standalone audit trail (``privacy_shield.audit_log``) and the privacy
+skill KG (``privacy_shield.privacy_skill_kg``) — resolve their paths at call
 time, default to the platform user-state directory, honour an environment override
 verbatim, and create the directory on demand. Every path here is under ``tmp_path``;
 nothing is written into the repository tree.
@@ -12,19 +12,19 @@ from pathlib import Path
 
 import pytest
 
-import brain.audit_log as audit_log
-from brain.audit_log import AuditEvent, audit_log_path, log_audit_event
-from brain.privacy_shield import privacy_skill_kg as kg
+import privacy_shield.audit_log as audit_log
+from privacy_shield.audit_log import AuditEvent, audit_log_path, log_audit_event
+from privacy_shield import privacy_skill_kg as kg
 
 PKG_ROOT = Path(audit_log.__file__).resolve().parent
-AUDIT_ENV = "BRAIN_PRIVACY_AUDIT_LOG"
-KG_ENV = "BRAIN_PRIVACY_KG_DIR"
+AUDIT_ENV = "PRIVACY_SHIELD_AUDIT_LOG"
+KG_ENV = "PRIVACY_SHIELD_KG_DIR"
 _MISSING = object()
 
 
 @pytest.fixture(autouse=True)
 def _unpinned():
-    # An earlier test module monkeypatches brain.audit_log.AUDIT_LOG_PATH; pytest's
+    # An earlier test module monkeypatches privacy_shield.audit_log.AUDIT_LOG_PATH; pytest's
     # undo writes the resolved value back into the module dict. Drop it for the
     # duration of this module so lazy resolution is what is under test.
     pinned = audit_log.__dict__.pop("AUDIT_LOG_PATH", _MISSING)
@@ -88,7 +88,7 @@ def test_audit_log_path_import_stays_compatible(tmp_path, monkeypatch):
     target = tmp_path / "imported.jsonl"
     monkeypatch.setenv(AUDIT_ENV, str(target))
 
-    from brain.audit_log import AUDIT_LOG_PATH
+    from privacy_shield.audit_log import AUDIT_LOG_PATH
 
     assert AUDIT_LOG_PATH == target
 

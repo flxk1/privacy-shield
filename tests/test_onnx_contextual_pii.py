@@ -5,8 +5,8 @@ import pytest
 
 
 def test_extract_contextual_pii_features_shape() -> None:
-    from brain.privacy_shield.onnx_contextual_pii import FEATURE_NAMES, extract_contextual_pii_features
-    from brain.privacy_shield.scanner import ScanResult, scan_text
+    from privacy_shield.onnx_contextual_pii import FEATURE_NAMES, extract_contextual_pii_features
+    from privacy_shield.scanner import ScanResult, scan_text
 
     text = "Name: Max Muller works in Berlin. Project Horse is internal draft v2."
     regex_result = scan_text(text)
@@ -17,7 +17,7 @@ def test_extract_contextual_pii_features_shape() -> None:
 
 
 def test_run_contextual_pii_session_parses_score_and_label() -> None:
-    from brain.privacy_shield.onnx_contextual_pii import run_contextual_pii_session
+    from privacy_shield.onnx_contextual_pii import run_contextual_pii_session
 
     class _Input:
         name = "float_input"
