@@ -12,7 +12,7 @@ work/
 src/privacy_shield/data/privacy_shield/*.json
 *.onnx
 # the package is installed for tests; a root conftest papering over that is not tracked
-conftest.py
+/conftest.py
 # runtime output written by the package at run time, never part of the distribution
 src/privacy_shield/logs/
 src/privacy_shield/user/privacy_skill_kg/*.jsonl

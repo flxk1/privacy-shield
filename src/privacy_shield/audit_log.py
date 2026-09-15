@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 AUDIT_LOG_ENV = "PRIVACY_SHIELD_AUDIT_LOG"
 _STATE_APP_DIR = "privacy-shield"
-_LAZY_HANDOUT: Optional[Path] = None
+AUDIT_LOG_PATH: Optional[Path] = None
 
 
 def _user_state_home() -> Path:
@@ -39,21 +39,7 @@ def audit_log_path() -> Path:
 
 
 def _resolved_audit_log_path() -> Path:
-    # An assignment to AUDIT_LOG_PATH still wins, but the object __getattr__ handed out
-    # is exempt: pytest's monkeypatch undo writes it back into the module dict, which
-    # would otherwise pin the lazy default for the rest of the process.
-    pinned = globals().get("AUDIT_LOG_PATH")
-    if pinned is None or pinned is _LAZY_HANDOUT:
-        return audit_log_path()
-    return Path(pinned)
-
-
-def __getattr__(name: str) -> Any:
-    global _LAZY_HANDOUT
-    if name == "AUDIT_LOG_PATH":
-        _LAZY_HANDOUT = audit_log_path()
-        return _LAZY_HANDOUT
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return Path(AUDIT_LOG_PATH) if AUDIT_LOG_PATH else audit_log_path()
 
 
 class AuditEvent(Enum):

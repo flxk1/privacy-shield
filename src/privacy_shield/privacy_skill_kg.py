@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from privacy_shield.audit_log import _STATE_APP_DIR, _user_state_home
 from privacy_shield.utils.file_io import append_jsonl, load_jsonl
 
 PRIVACY_SKILL_ID = "privacy_shield"
@@ -31,22 +31,11 @@ def _normalize_tenant_id(tenant_id: str) -> str:
     return cleaned[:80] or "default"
 
 
-def _user_state_home() -> Path:
-    """XDG_STATE_HOME and its documented macOS / Windows equivalents."""
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support"
-    if os.name == "nt":
-        local = str(os.environ.get("LOCALAPPDATA", "")).strip()
-        return Path(local) if local else Path.home() / "AppData" / "Local"
-    xdg = str(os.environ.get("XDG_STATE_HOME", "")).strip()
-    return Path(xdg) if xdg else Path.home() / ".local" / "state"
-
-
 def _kg_dir() -> Path:
     override = str(os.environ.get("PRIVACY_SHIELD_KG_DIR", "")).strip()
     if override:
         return Path(override)
-    return _user_state_home() / "privacy-shield" / "privacy_skill_kg"
+    return _user_state_home() / _STATE_APP_DIR / "privacy_skill_kg"
 
 
 def privacy_kg_path(tenant_id: str) -> Path:
