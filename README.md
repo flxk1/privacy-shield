@@ -11,7 +11,7 @@ Sending a document to a cloud model sends every personal value in it. Detection 
 ## Install
 
 ```
-pip install "git+https://github.com/flxk1/privacy-shield.git@v1.0.0"
+pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
 ```
 
 Zero required dependencies. Extras: `[semantic]` numpy>=1.24 +
@@ -74,7 +74,7 @@ attach through the neutral `EnforcementSink` contract; see
 
 ## Status
 
-1.0.0 · 219 tests, 211 passing · Python >=3.10 · limits and gaps:
+2.0.0 · 247 tests, 239 passing · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License
