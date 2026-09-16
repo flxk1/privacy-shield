@@ -10,7 +10,12 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from privacy_shield.llm_client import get_local_client
-from privacy_shield.utils.network import is_loopback_or_unix_endpoint, safe_hostname
+from privacy_shield.utils.network import (
+    is_loopback_or_unix_endpoint,
+    no_proxy_http_client,
+    no_proxy_url_opener,
+    safe_hostname,
+)
 
 try:
     import httpx
@@ -90,15 +95,20 @@ def _check_local_provider(provider_id: str, timeout: float = 2.0) -> Dict[str, A
     if not test_url:
         return {"provider": provider_id, "running": False, "endpoint": endpoint, "models": [], "error": "No test URL configured"}
 
+    # Both probes are pinned off the environment's proxy settings. The probe
+    # decides which "local" provider the send path then talks to, and
+    # `urlopen` / `httpx.get` would otherwise resolve HTTP_PROXY and report a
+    # corporate proxy as a running local provider. See utils.network.
     try:
         if httpx is None:
             import urllib.request
 
             req = urllib.request.Request(test_url, method="GET")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with no_proxy_url_opener().open(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         else:
-            resp = httpx.get(test_url, timeout=timeout)
+            with no_proxy_http_client(timeout=timeout) as client:
+                resp = client.get(test_url)
             resp.raise_for_status()
             data = resp.json()
         return {
@@ -429,7 +439,14 @@ def _call_embedded_local_json_response(
             or os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_API_KEY")
             or "not-needed"
         )
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        # trust_env=False: this send path carries the raw scan text. See
+        # utils.network - an approved loopback base_url means nothing if
+        # the transport routes through the environment's HTTP_PROXY.
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=no_proxy_http_client(),
+        )
         try:
             response = client.chat.completions.create(
                 model=model_used,

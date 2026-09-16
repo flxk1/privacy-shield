@@ -21,7 +21,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from privacy_shield.utils.network import is_loopback_or_unix_endpoint
+from privacy_shield.utils.network import (
+    is_loopback_or_unix_endpoint,
+    no_proxy_http_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,11 +148,15 @@ def get_local_client(
     else:
         base_url = endpoint_url.rstrip("/")
 
-    # Create OpenAI client pointing to local endpoint
-    # No API key needed, but OpenAI client requires one - use dummy
+    # Create OpenAI client pointing to local endpoint.
+    # No API key needed, but OpenAI client requires one - use dummy.
+    # trust_env=False on the transport: the endpoint guard above checks the
+    # address, which is worth nothing if the transport then routes the request
+    # through the environment's HTTP_PROXY. See utils.network.
     client = OpenAI(
         api_key="not-needed",
         base_url=base_url,
+        http_client=no_proxy_http_client(),
     )
 
     logger.debug(f"Created local client for {provider} at {base_url}")

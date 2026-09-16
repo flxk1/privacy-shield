@@ -39,6 +39,36 @@ def is_loopback_or_unix_endpoint(endpoint: str) -> bool:
     return False
 
 
+def no_proxy_http_client(timeout: float | None = None):
+    """An `httpx.Client` that ignores the environment's proxy settings.
+
+    Checking the endpoint STRING is only half the guard. `httpx` (and the
+    `openai` client built on it) default to `trust_env=True`, so with
+    `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` set the client's transport is an
+    `HTTPProxy` pointing at the remote proxy: an endpoint that passed
+    `is_loopback_or_unix_endpoint` still sends raw, un-redacted text to a
+    corporate proxy. A managed workstation with a proxy configured is exactly
+    the deployment this package targets, so no send path may trust the
+    environment. Returns None when httpx is not installed.
+    """
+    try:
+        import httpx
+    except ImportError:
+        return None
+    return httpx.Client(trust_env=False, timeout=timeout)
+
+
+def no_proxy_url_opener():
+    """A `urllib` opener with an empty `ProxyHandler` - no environment proxy.
+
+    `urllib.request.urlopen` consults `http_proxy` / `https_proxy` through the
+    default opener. An empty `ProxyHandler({})` disables that lookup entirely.
+    """
+    import urllib.request
+
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def safe_hostname(endpoint: str) -> str:
     """The host portion of `endpoint`, for a log message only — never
     raises, even on a malformed URL that makes `urlsplit`/`.hostname`
