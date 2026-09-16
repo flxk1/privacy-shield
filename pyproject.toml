@@ -19,6 +19,10 @@ privacy-shield = "privacy_shield.cli:main"
 semantic = ["numpy>=1.24", "onnxruntime>=1.16"]
 # Document/media extraction (PDF, images)
 extract = ["PyMuPDF>=1.23", "opencv-python-headless>=4.8"]
+# BYOK credential encryption at rest (Fernet). Without it, add_credential /
+# get_decrypted_key / revalidate_credential raise CredentialEncryptionUnavailable
+# rather than storing a secret unencrypted.
+credentials = ["cryptography>=42"]
 # Config layer + tests
 dev = ["pyyaml>=6", "pytest>=7"]
 
