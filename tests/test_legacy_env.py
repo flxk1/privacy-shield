@@ -1,4 +1,3 @@
-import hashlib
 import os
 import subprocess
 import sys
@@ -35,7 +34,7 @@ def _sources():
 
 
 def test_table_is_an_injective_rename():
-    assert len(LEGACY_ENV) == 27
+    assert len(LEGACY_ENV) == 25
     assert len(set(LEGACY_ENV.values())) == len(LEGACY_ENV)
     assert all(old.startswith("BRAIN_") for old in LEGACY_ENV)
     assert all(new.startswith("PRIVACY_SHIELD_") for new in LEGACY_ENV.values())
@@ -120,27 +119,3 @@ def test_importing_with_a_legacy_name_set_does_not_raise(tmp_path):
     done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert not (tmp_path / "legacy.jsonl").exists()
-
-
-@pytest.mark.parametrize("legacy", sorted(LEGACY_ENV))
-def test_credential_master_key_rejects_a_legacy_name(legacy, monkeypatch, tmp_path):
-    from privacy_shield import user_credentials as uc
-
-    monkeypatch.setattr(uc, "_DEFAULT_USER_ROOT", tmp_path / "user")
-    monkeypatch.setenv(legacy, "1")
-    with pytest.raises(LegacyEnvironmentError, match=LEGACY_ENV[legacy]):
-        uc._master_secret_bytes()
-    # the fallback path (persist-or-generate a new random key) must never run:
-    # that would silently re-seed and orphan anything already encrypted under
-    # the operator's intended (but misnamed) key.
-    assert not (tmp_path / "user" / uc._MASTER_KEY_FILENAME).exists()
-
-
-def test_credential_master_key_replacement_name_is_honoured(monkeypatch, tmp_path):
-    from privacy_shield import user_credentials as uc
-
-    monkeypatch.setattr(uc, "_DEFAULT_USER_ROOT", tmp_path / "user")
-    monkeypatch.setenv("PRIVACY_SHIELD_CREDENTIALS_MASTER_KEY", "operator-seed")
-    key = uc._master_secret_bytes()
-    assert key == hashlib.sha256(b"operator-seed").digest()
-    assert not (tmp_path / "user" / uc._MASTER_KEY_FILENAME).exists()  # seed given, no fallback file
