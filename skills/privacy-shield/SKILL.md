@@ -14,7 +14,7 @@ description: >-
   this before I send it to the cloud", "is this safe for an external LLM", "scan
   this folder for personal data", "make a privacy overlay", "lock this folder's
   egress".
-allowed-tools: privacy_scan
+allowed-tools: privacy_scan, Bash, Read
 governance:
   grade: L1
   actions:
@@ -42,17 +42,20 @@ governance:
 
 # privacy-shield
 
-Primary path: call `privacy_scan` with raw text, the privacy mode, redaction
-mode, confidence floor and source classification. The result includes the clean
-overlay, span findings and egress verdict; only the overlay may be used for a
-subsequent external call.
+Primary path, works standalone with nothing else installed: the
+`privacy_shield` package's scan / overlay / egress engine (`scanner`,
+`redactor`, `anonymous_json`, `gate`, `audit_log`). Call it as
+`privacy_shield.scan(target) -> ScanReport`, or via the `privacy-shield` CLI
+(`Bash`) over a file or folder (`Read`). The four modes (STANDARD /
+LOCAL_ONLY / ANONYMOUS_JSON / REGEX_ONLY) are listed in the README, which
+links the repository's pipeline and external-enforcement notes.
 
-The same scan / overlay / egress engine lives in the `privacy_shield` package
-(`scanner`, `redactor`, `anonymous_json`, `gate`, `audit_log`). The agent-facing
-entry is `privacy_shield.scan(target) -> ScanReport` and the
-`privacy-shield` CLI. The four modes (STANDARD / LOCAL_ONLY / ANONYMOUS_JSON /
-REGEX_ONLY) are listed in the README, which links the repository's pipeline
-and external-enforcement notes.
+Enriched path, when `loomground-mcp` is installed and running: call the
+`privacy_scan` tool with raw text, the privacy mode, redaction mode,
+confidence floor and source classification. The result includes the clean
+overlay, span findings and egress verdict; only the overlay may be used for a
+subsequent external call. Without `loomground-mcp`, fall back to the primary
+path above — see `degrade_gracefully_without_optional_extras` below.
 
 ## Notes
 - The egress verdict is on SOURCE CLASSIFICATION (privacy mode + confidential /
