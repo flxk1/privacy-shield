@@ -2,30 +2,50 @@
 <!-- Copyright 2026 flxk1 -->
 # Changelog
 
-## Unreleased
+## 2.0.0
 
-The import root is `privacy_shield` and the environment variables carry the
-`PRIVACY_SHIELD_` prefix. `scan`, the CLI `main` and `PrivacyGate.check` raise
-`LegacyEnvironmentError`, naming the replacement, while a pre-rename variable is set;
-importing the package never raises, and other names are not inspected.
+Breaking release: the import root, the console script and every environment
+variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
+`1.0.0` and `2.0.0` are incompatible trees — pin the major version.
 
-- `from privacy_shield.audit_log import AUDIT_LOG_PATH` yields `None` unless a caller
-  pinned it. The audit writer and reader resolve `AUDIT_LOG_PATH or audit_log_path()`
-  at call time, so a stale pin handed back by a test harness no longer redirects the
-  trail. One `_user_state_home` serves the audit trail and the privacy skill KG.
+### Breaking changes
+
+- Import root renamed `brain.privacy_shield` -> `privacy_shield`; every
+  submodule moves with it (`brain.<module>` -> `privacy_shield.<module>`).
+- Console script renamed `brain.privacy_shield.cli:main` -> `privacy_shield.cli:main`.
+- All 27 `BRAIN_*` environment variables are renamed to the `PRIVACY_SHIELD_*`
+  prefix (full table below). `scan`, the CLI `main` and `PrivacyGate.check`
+  raise `LegacyEnvironmentError`, naming the replacement, while a pre-rename
+  variable is set; importing the package never raises, and other names are
+  not inspected.
+- `AUDIT_LOG_PATH` semantics changed: `from privacy_shield.audit_log import
+  AUDIT_LOG_PATH` yields `None` unless a caller pinned it. The audit writer
+  and reader resolve `AUDIT_LOG_PATH or audit_log_path()` at call time, so a
+  stale pin handed back by a test harness no longer redirects the trail. One
+  `_user_state_home` serves the audit trail and the privacy skill KG.
+- The `brain_app` keyword parameter on ~15 helpers (e.g.
+  `privacy_shield.helpers.documents.documents_store_path`) is renamed to
+  `host_app`; calling with the old keyword now raises `TypeError`.
+
+### Other changes
+
 - `tests/conftest.py` points `HOME`, `XDG_STATE_HOME`, `LOCALAPPDATA` and `USERPROFILE`
   at each test's `tmp_path` and clears every `PRIVACY_SHIELD_*` and legacy variable.
 - Importing `privacy_shield.privacy_shield_embeddings` no longer creates `data/privacy_shield/`
   inside the installed package; the directory is made when the embeddings cache is written.
+- Importing `privacy_shield.compliance_evidence_export` and `privacy_shield.breach`
+  no longer create their evidence/log directories at import time; both are made
+  on first write (same shape as the embeddings cache).
 - NOTICE lists the optional third-party extras and states authorship.
 
 ### Migration
 
-| 1.0.0 | Unreleased |
+| 1.0.0 | 2.0.0 |
 |---|---|
 | `import brain.privacy_shield` | `import privacy_shield` |
 | `brain.<module>`, e.g. `brain.audit_log` | `privacy_shield.<module>` |
 | console script `brain.privacy_shield.cli:main` | `privacy_shield.cli:main` |
+| `documents_store_path(brain_app=app)` (and ~15 other helpers) | `documents_store_path(host_app=app)` |
 | `BRAIN_CREDENTIALS_MASTER_KEY` | `PRIVACY_SHIELD_CREDENTIALS_MASTER_KEY` |
 | `BRAIN_DEVICE_CLASS` | `PRIVACY_SHIELD_DEVICE_CLASS` |
 | `BRAIN_EMBEDDED_LOCAL_MODEL_API_KEY` | `PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_API_KEY` |
