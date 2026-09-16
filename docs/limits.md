@@ -40,16 +40,16 @@ bundled pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-211 passed, 8 failed
+267 passed, 8 failed
 ```
 
-219 tests collected. The 8 failures are all in `tests/test_simplifier.py`'s LLM
+275 tests collected. The 8 failures are all in `tests/test_simplifier.py`'s LLM
 path, which patches `privacy_shield.services.llm_runtime` — the upstream LLM gateway
 chain, out of scope in this subset. `.github/workflows/ci.yml` deselects those 8
-by name, so CI runs 211 passed, 8 deselected.
+by name, so CI runs 267 passed, 8 deselected.
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
 review profiles, the optional external-enforcement seam
 (`tests/test_privacy_gate_external_enforcement.py`), and the runner + CLI on synthetic
-PII fixtures (`tests/test_privacy_shield_runner.py`, 14 tests).
+PII fixtures (`tests/test_privacy_shield_runner.py`, 13 tests).
