@@ -74,7 +74,7 @@ attach through the neutral `EnforcementSink` contract; see
 
 ## Status
 
-2.0.0 · 275 tests, 267 passing · Python >=3.10 · limits and gaps:
+2.0.0 · 308 tests, 300 passing · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License
