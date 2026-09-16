@@ -205,10 +205,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    reject_legacy_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        reject_legacy_env()
         return args.func(args)
     except FileNotFoundError as exc:
         sys.stderr.write(f"error: {exc}\n")
