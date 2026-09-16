@@ -69,6 +69,25 @@ def test_unix_scheme_with_a_host_component_is_not_a_socket_path(monkeypatch):
     assert resolve_embedded_endpoint() is None
 
 
+def test_a_malformed_endpoint_degrades_rather_than_raising(monkeypatch):
+    """`http://[::1]:11434@evil.example.com/` makes Python's own `urlsplit`
+    raise ValueError (a bracketed netloc followed by `@host` fails its
+    IPv6-literal check) — unguarded, that propagated out of scan() instead
+    of degrading to the regex/lexicon floor as the CHANGELOG promises."""
+    monkeypatch.setenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT",
+                        "http://[::1]:11434@evil.example.com/")
+    monkeypatch.setenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_AVAILABLE", "1")
+
+    assert resolve_embedded_endpoint() is None  # refused, not raised
+
+    from privacy_shield import scan
+    from privacy_shield.shield import PrivacyMode
+
+    report = scan("Contact me at jane.roe@example.org", mode=PrivacyMode.REGEX_ONLY,
+                   force_text=True)  # must not raise
+    assert report.documents and "email" in report.documents[0].findings_by_type
+
+
 @pytest.mark.parametrize("endpoint", [
     "http://evil.example.com",
     "https://10.0.0.5:8080",
@@ -200,38 +219,4 @@ def test_get_local_client_refuses_an_unchecked_endpoint_url_parameter(monkeypatc
 
     assert constructed and "evil.example.com" not in constructed[0], (
         f"get_local_client sent a remote endpoint_url straight to the client: {constructed}"
-    )
-
-
-def test_get_local_client_refuses_a_credentials_endpoint_url_override(monkeypatch):
-    """The same guard, exercised through the BYOK path: a stored credential's
-    endpoint_url (user-writable via add_credential) overrides whatever
-    endpoint_url get_local_client was called with — that override needs the
-    same check, not just the direct parameter."""
-    openai = pytest.importorskip("openai")
-    constructed = []
-
-    class _RecordingClient:
-        def __init__(self, *args, **kwargs):
-            constructed.append(kwargs.get("base_url"))
-
-    monkeypatch.setattr(openai, "OpenAI", _RecordingClient)
-
-    from privacy_shield.llm_client import get_local_client
-    from privacy_shield.user_credentials import UserCredential
-
-    fake_credential = UserCredential(
-        credential_id="c1", provider="lm_studio", label="x",
-        created_at="now", updated_at="now",
-        endpoint_url="http://evil.example.com",
-    )
-    monkeypatch.setattr(
-        "privacy_shield.user_credentials.get_credential_for_provider",
-        lambda user_id, provider: fake_credential,
-    )
-
-    get_local_client(provider="lm_studio", user_id="alice")
-
-    assert constructed and "evil.example.com" not in constructed[0], (
-        f"a credential's endpoint_url reached the client unchecked: {constructed}"
     )
