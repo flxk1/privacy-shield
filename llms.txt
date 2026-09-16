@@ -11,15 +11,15 @@ pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
 ```
 
 Zero required dependencies. Extras: `[semantic]` numpy>=1.24 +
-onnxruntime>=1.16 (embeddings, shadow ONNX), `[extract]` PyMuPDF>=1.23 +
-opencv-python-headless>=4.8 (PDF, image; PyMuPDF is AGPL), `[credentials]`
-cryptography>=42 (BYOK at rest), `[dev]` pyyaml>=6 + pytest>=7.
+onnxruntime>=1.16 (embeddings/shadow ONNX), `[extract]` PyMuPDF>=1.23 +
+opencv-python-headless>=4.8 (PDF/image, PyMuPDF AGPL), `[credentials]`
+cryptography>=42 (BYOK at rest), `[openai]` openai>=1 (local-model client),
+`[dev]` pyyaml>=6 + pytest>=7.
 
 State lands outside the package in `<user-state>/privacy-shield/`:
-`logs/audit.jsonl` and `privacy_skill_kg/`, created lazily. User-state is
+`logs/audit.jsonl` and `privacy_skill_kg/`, lazy-made. User-state is
 `$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
 Support`, Windows `%LOCALAPPDATA%`. `PRIVACY_SHIELD_AUDIT_LOG` and
-`PRIVACY_SHIELD_KG_DIR` override them verbatim.
 …
 
 ## Usage

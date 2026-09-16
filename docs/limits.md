@@ -40,19 +40,26 @@ bundled pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-316 passed, 8 failed, 3 skipped
+323 passed, 8 failed, 1 skipped
 ```
 
-327 tests collected. The 8 failures are all in `tests/test_simplifier.py`'s LLM
-path, which patches `privacy_shield.services.llm_runtime` — the upstream LLM gateway
-chain, out of scope in this subset. The 3 skips need packages this install does
-not have: `cryptography` (the `credentials` extra; CI's dedicated `credentials`
-job installs it) and `openai` (not required by any extra; guarded by
-`pytest.importorskip` in `tests/test_local_model_endpoint_guard.py`, so it is
-honest about not running there rather than silently passing).
+332 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+failures are all in `tests/test_simplifier.py`'s LLM path, which patches
+`privacy_shield.services.llm_runtime` — the upstream LLM gateway chain, out
+of scope in this subset. The 1 skip needs `cryptography` (the `credentials`
+extra), genuinely absent from this install on purpose — that absence is what
+`tests/test_user_credentials.py::test_add_credential_raises_when_cryptography_is_unavailable`
+and friends assert against; CI's dedicated `credentials` job installs
+`cryptography` and re-runs that file, catching a different class of bug (one
+inside real Fernet's own error surface) that installing `cryptography` there
+would not, and did not, catch — see CHANGELOG for why those two jobs are not
+interchangeable. `openai` is installed here (and by CI's `tests` job) so
+`tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
+than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 316 passed, 8 deselected, 3 skipped; the `credentials` job
-runs `tests/test_user_credentials.py` again with `cryptography` installed.
+`tests` job runs 323 passed, 8 deselected, 1 skipped; the `credentials` job
+runs `tests/test_user_credentials.py` again with `cryptography` installed
+(39 passed, 0 skipped there).
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
