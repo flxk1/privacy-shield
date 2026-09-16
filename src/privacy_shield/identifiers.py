@@ -45,6 +45,7 @@ contain no payment identifiers at all, so every hit is a false positive:
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Dict, Iterator, List, Optional, Tuple
 
 # ISO 13616 registered IBAN length by country code.
@@ -69,8 +70,33 @@ MAX_IBAN_LENGTH = 34
 MIN_CARD_LENGTH = 13
 MAX_CARD_LENGTH = 19
 
-# Separators people write INSIDE an identifier. A newline is not one of them.
-_SEPARATORS = " \t-"
+# What may sit inside an identifier, by CHARACTER PROPERTY rather than by a
+# list someone remembered. The first version of this module enumerated
+# " \t-", and an adversarial pass walked straight through it: a no-break space
+# between the groups of an IBAN, a soft hyphen from a justified paragraph, a
+# zero-width space from an HTML paste. All three ended the run early, and the
+# identifier behind a glued prefix went out again. Enumerating separators from
+# memory is the same mistake as enumerating leak inputs from memory.
+#
+# Cf is the invisible class - soft hyphen, zero-width space and joiners, BOM.
+# These are not separators at all: they are not there, so they are skipped
+# without interrupting the run and without using up its one separator.
+#
+# Zs is every horizontal space, which is what a PDF or DOCX extractor actually
+# emits between the groups of a printed account number - no-break, thin, narrow
+# and figure spaces included. Pd is every hyphen, including the non-breaking
+# one. A line break is never either.
+_LINE_BREAKS = "\n\r\v\f  "
+
+
+def _is_transparent(char: str) -> bool:
+    return unicodedata.category(char) == "Cf"
+
+
+def _is_inline_separator(char: str) -> bool:
+    if char in _LINE_BREAKS:
+        return False
+    return char == "\t" or unicodedata.category(char) in ("Zs", "Pd")
 
 _LOCAL_PART_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
@@ -135,33 +161,39 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
     Non-ASCII letters end a run: an IBAN is ASCII, and letting an umlaut
     continue the run would only glue unrelated words to it.
     """
+    # Invisible characters are dropped first, so nothing downstream has to know
+    # they exist. The offsets still point into the ORIGINAL text, so a claimed
+    # span covers them and they are redacted along with the identifier.
+    visible = [
+        (char, index)
+        for index, char in enumerate(text)
+        if not _is_transparent(char)
+    ]
+
     compact: List[str] = []
     offsets: List[int] = []
-    index = 0
-    length = len(text)
-    while index < length:
-        char = text[index]
+    position = 0
+    count = len(visible)
+    while position < count:
+        char, origin = visible[position]
         if char.isascii() and char.isalnum():
             compact.append(char)
-            offsets.append(index)
-            index += 1
+            offsets.append(origin)
+            position += 1
             continue
-        if compact and char in _SEPARATORS:
-            ahead = index
-            while ahead < length and text[ahead] in _SEPARATORS:
+        if compact and _is_inline_separator(char):
+            ahead = position
+            while ahead < count and _is_inline_separator(visible[ahead][0]):
                 ahead += 1
-            if (
-                ahead - index == 1
-                and ahead < length
-                and text[ahead].isascii()
-                and text[ahead].isalnum()
-            ):
-                index = ahead
-                continue
+            if ahead - position == 1 and ahead < count:
+                following = visible[ahead][0]
+                if following.isascii() and following.isalnum():
+                    position = ahead
+                    continue
         if compact:
             yield "".join(compact), offsets
             compact, offsets = [], []
-        index += 1
+        position += 1
     if compact:
         yield "".join(compact), offsets
 

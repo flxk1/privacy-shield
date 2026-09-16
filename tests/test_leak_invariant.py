@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import random
 import re
+import unicodedata
 
 import pytest
 
@@ -80,7 +81,19 @@ _IBAN_LENGTHS = {
     "VA": 22, "VG": 24, "XK": 20,
 }
 
-_ORACLE_SEPARATORS = " \t-"
+_ORACLE_LINE_BREAKS = "\n\r\v\f  "
+
+
+def _oracle_transparent(char: str) -> bool:
+    """Invisible: soft hyphen, zero-width space, joiners, BOM."""
+    return unicodedata.category(char) == "Cf"
+
+
+def _oracle_separator(char: str) -> bool:
+    """Any horizontal space or hyphen a document extractor might emit."""
+    if char in _ORACLE_LINE_BREAKS:
+        return False
+    return char == "\t" or unicodedata.category(char) in ("Zs", "Pd")
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -120,28 +133,35 @@ def _oracle_runs(text: str) -> list[tuple[str, list[int]]]:
     sits in *text*.
     """
     runs: list[tuple[str, list[int]]] = []
+    visible = [
+        (char, index)
+        for index, char in enumerate(text)
+        if not _oracle_transparent(char)
+    ]
     compact: list[str] = []
     offsets: list[int] = []
-    index = 0
-    length = len(text)
-    while index < length:
-        char = text[index]
+    position = 0
+    count = len(visible)
+    while position < count:
+        char, origin = visible[position]
         if char.isascii() and char.isalnum():
             compact.append(char)
-            offsets.append(index)
-            index += 1
+            offsets.append(origin)
+            position += 1
             continue
-        if compact and char in _ORACLE_SEPARATORS:
-            ahead = index
-            while ahead < length and text[ahead] in _ORACLE_SEPARATORS:
+        if compact and _oracle_separator(char):
+            ahead = position
+            while ahead < count and _oracle_separator(visible[ahead][0]):
                 ahead += 1
-            if ahead - index == 1 and ahead < length and text[ahead].isascii() and text[ahead].isalnum():
-                index = ahead
-                continue
+            if ahead - position == 1 and ahead < count:
+                following = visible[ahead][0]
+                if following.isascii() and following.isalnum():
+                    position = ahead
+                    continue
         if compact:
             runs.append(("".join(compact), offsets))
             compact, offsets = [], []
-        index += 1
+        position += 1
     if compact:
         runs.append(("".join(compact), offsets))
     return runs
@@ -769,3 +789,70 @@ def test_placeholder_addresses_are_reported_rather_than_allowlisted():
     document = scan("Schreiben Sie an test@example.com").documents[0]
     assert document.pii_detected
     assert "test@example.com" not in document.overlay
+
+
+# ---------------------------------------------------------------------------
+# Separators, by property rather than by a remembered list
+# ---------------------------------------------------------------------------
+#
+# The first version of the run scan enumerated " \t-". An adversarial pass went
+# straight through it: a no-break space between the groups of an IBAN, a soft
+# hyphen out of a justified paragraph, a zero-width space out of an HTML paste.
+# Each ended the run early and the identifier behind a glued prefix went out
+# again, pii_detected False. Enumerating separators from memory is the same
+# mistake as enumerating leak inputs from memory, so the rule is now a
+# character property - Cf is invisible, Zs is a space, Pd is a hyphen.
+
+INVISIBLE_CHARACTERS = [
+    pytest.param("­", id="soft_hyphen"),
+    pytest.param("​", id="zero_width_space"),
+    pytest.param("‌", id="zero_width_non_joiner"),
+    pytest.param("‍", id="zero_width_joiner"),
+    pytest.param("﻿", id="byte_order_mark"),
+]
+
+INLINE_SPACES = [
+    pytest.param(" ", id="no_break_space"),
+    pytest.param(" ", id="figure_space"),
+    pytest.param(" ", id="thin_space"),
+    pytest.param(" ", id="narrow_no_break_space"),
+    pytest.param("‑", id="non_breaking_hyphen"),
+    pytest.param("\t", id="tab"),
+]
+
+
+@pytest.mark.parametrize("filler", INVISIBLE_CHARACTERS + INLINE_SPACES)
+@pytest.mark.parametrize("identifier", [EXAMPLE_IBAN, EXAMPLE_CARD], ids=["iban", "card"])
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_separator_inside_an_identifier_does_not_hide_it(filler, identifier, mode):
+    """Split the identifier with the character AND glue a prefix to it.
+
+    Either alone was survivable - the boundary-anchored pattern still caught a
+    spaced identifier standing on its own. It is the combination that got
+    through both.
+    """
+    text = "acct_" + identifier[:4] + filler + identifier[4:]
+    assert_no_leak(text, mode=mode)
+
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+@pytest.mark.parametrize("filler", INVISIBLE_CHARACTERS)
+def test_an_invisible_character_does_not_split_a_run(filler):
+    """Cf characters are not there. They must not use up the run's separator."""
+    from privacy_shield import identifiers
+
+    runs = list(identifiers.identifier_runs(f"DE89{filler}3704"))
+    assert len(runs) == 1, runs
+    assert runs[0][0] == "DE893704"
+
+
+def test_a_line_break_is_never_an_inline_separator():
+    """The bound on all of this: a run still stops at the end of a line."""
+    from privacy_shield import identifiers
+
+    for line_break in "\n\r  ":
+        runs = list(identifiers.identifier_runs(f"DE89{line_break}3704"))
+        assert len(runs) == 2, (line_break.encode("unicode_escape"), runs)
