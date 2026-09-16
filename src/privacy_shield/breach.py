@@ -321,12 +321,9 @@ class BreachDetector:
         #
         # The write itself (open + write, below) IS swallowed and logged —
         # that part is inherited, unchanged, from the pre-rename code, and is
-        # the same shape as every other write path in this package
-        # (audit_log, compliance_evidence_export): a failure there is a real
-        # compliance gap (the durable Art. 33(2) record is lost with no
-        # signal beyond the log line), not fixed here — see the deferred
-        # three-module write-contract decision this comment used to conflate
-        # with the directory precondition above.
+        # the same shape as audit_log.py's own write path: a failure there
+        # is a real compliance gap (the durable Art. 33(2) record is lost
+        # with no signal beyond the log line), not fixed here.
         now = datetime.now(timezone.utc)
         self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
         log_file = self._BREACH_LOG_DIR / f"breaches_{now.strftime('%Y_%m')}.jsonl"

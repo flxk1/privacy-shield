@@ -8,16 +8,118 @@ import shlex
 import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlsplit
 
 from privacy_shield.llm_client import get_local_client
-from privacy_shield.user_credentials import discover_local_providers
-from privacy_shield.utils.network import is_loopback_or_unix_endpoint
+from privacy_shield.utils.network import is_loopback_or_unix_endpoint, safe_hostname
+
+try:
+    import httpx
+except Exception:
+    httpx = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL_SECONDS = 2.0
 _DISCOVERY_CACHE: Dict[str, Any] = {"timestamp": 0.0, "providers": []}
+
+# Local-only providers this module can discover on the machine's own
+# loopback interface (relocated from the now-removed user_credentials.py,
+# which also held unrelated cloud-provider BYOK metadata — this subset was
+# never BYOK-specific and belongs here, not reimplemented).
+LOCAL_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "ollama": {
+        "name": "Ollama (Local - CLI)",
+        "test_url": "http://localhost:11434/api/tags",
+        "default_endpoint": "http://localhost:11434",
+        "setup_instructions": "Install via: brew install ollama (Mac) or https://ollama.ai",
+        "openai_compatible": False,
+    },
+    "lm_studio": {
+        "name": "LM Studio (Local - GUI)",
+        "test_url": "http://localhost:1234/v1/models",
+        "default_endpoint": "http://localhost:1234/v1",
+        "setup_url": "https://lmstudio.ai",
+        "setup_instructions": "Download from lmstudio.ai, pick a model, click 'Start Server'",
+        "openai_compatible": True,
+    },
+    "jan": {
+        "name": "Jan (Local - GUI)",
+        "test_url": "http://localhost:1337/v1/models",
+        "default_endpoint": "http://localhost:1337/v1",
+        "setup_url": "https://jan.ai",
+        "setup_instructions": "Download from jan.ai, install a model, enable API server in settings",
+        "openai_compatible": True,
+    },
+    "gpt4all": {
+        "name": "GPT4All (Local - GUI)",
+        "test_url": "http://localhost:4891/v1/models",
+        "default_endpoint": "http://localhost:4891/v1",
+        "setup_url": "https://gpt4all.io",
+        "setup_instructions": "Download from gpt4all.io, enable API server in settings",
+        "openai_compatible": True,
+    },
+}
+
+
+def _extract_models_from_response(provider_id: str, data: Any) -> List[str]:
+    """Extract model names from a local provider's API response."""
+    models: List[str] = []
+    if provider_id == "ollama":
+        # Ollama returns {"models": [{"name": "llama3.2:latest", ...}]}
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            if name:
+                models.append(name.replace(":latest", ""))
+    elif provider_id in ("lm_studio", "jan", "gpt4all"):
+        # OpenAI-compatible format: {"data": [{"id": "model-name"}]}
+        for m in data.get("data", []):
+            model_id = m.get("id", "")
+            if model_id:
+                models.append(model_id)
+    return models
+
+
+def _check_local_provider(provider_id: str, timeout: float = 2.0) -> Dict[str, Any]:
+    """Check if a local provider is running and get its models."""
+    config = LOCAL_PROVIDERS.get(provider_id)
+    if not config:
+        return {"provider": provider_id, "running": False, "endpoint": None, "models": [], "error": "Not a local provider"}
+
+    test_url = config.get("test_url", "")
+    endpoint = config.get("default_endpoint", "")
+    if not test_url:
+        return {"provider": provider_id, "running": False, "endpoint": endpoint, "models": [], "error": "No test URL configured"}
+
+    try:
+        if httpx is None:
+            import urllib.request
+
+            req = urllib.request.Request(test_url, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        else:
+            resp = httpx.get(test_url, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "provider": provider_id, "running": True, "endpoint": endpoint,
+            "models": _extract_models_from_response(provider_id, data), "error": None,
+        }
+    except Exception as e:
+        return {"provider": provider_id, "running": False, "endpoint": endpoint, "models": [], "error": str(e)}
+
+
+def discover_local_providers(timeout: float = 2.0) -> List[Dict[str, Any]]:
+    """Discover all running local LLM providers (Ollama, LM Studio, Jan, GPT4All)."""
+    results = []
+    for provider_id, config in LOCAL_PROVIDERS.items():
+        status = _check_local_provider(provider_id, timeout=timeout)
+        status["name"] = config.get("name", provider_id)
+        status["setup_url"] = config.get("setup_url", "")
+        status["setup_instructions"] = config.get("setup_instructions", "")
+        status["openai_compatible"] = config.get("openai_compatible", False)
+        results.append(status)
+    return results
 _PREFERRED_PROVIDER_ORDER = ["embedded", "lm_studio", "jan", "gpt4all", "ollama"]
 
 _ALLOW_REMOTE_VAR = "PRIVACY_SHIELD_MODEL_ENDPOINT_ALLOW_REMOTE"
@@ -57,7 +159,7 @@ def resolve_embedded_endpoint() -> Optional[str]:
     if is_loopback_or_unix_endpoint(endpoint):
         return endpoint
 
-    host = urlsplit(endpoint).hostname or endpoint
+    host = safe_hostname(endpoint)
     if _truthy(os.getenv(_ALLOW_REMOTE_VAR, "")):
         logger.warning(
             "%s=%r is not a loopback address; %s is set, so raw un-redacted "
