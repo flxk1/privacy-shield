@@ -289,20 +289,30 @@ def _compact(value: str) -> str:
     return "".join(char for char in value if char.isascii() and char.isalnum())
 
 
-def _residue_run(identifier: str, overlay: str) -> str:
-    """The longest contiguous stretch of *identifier* present in *overlay*.
+def _residue_run(identifier: str, overlay: str, text: str) -> str:
+    """The longest contiguous stretch of *identifier* that SURVIVED.
 
     Whole-value containment is not enough on its own: a spliced placeholder or
     a span applied at a stale offset leaves most of the number behind while the
     complete string is gone, and a check that only asks "is the whole value in
     there" calls that clean.
+
+    Survival is counted, not merely found. A stretch that occurs in the input
+    more often than it remains in the overlay has lost an occurrence, and the
+    identifier's own copy is the one that went. Hypothesis is what forced this:
+    given two identical UUIDs, the first allowlisted and kept, a Luhn-valid
+    window inside the second was correctly redacted and then "found" again in
+    the retained first copy. Nothing had leaked.
     """
     needle = _compact(identifier)
     haystack = _compact(overlay)
+    source = _compact(text)
     for size in range(len(needle), RESIDUE_RUN - 1, -1):
         for start in range(0, len(needle) - size + 1):
-            if needle[start:start + size] in haystack:
-                return needle[start:start + size]
+            fragment = needle[start:start + size]
+            remaining = haystack.count(fragment)
+            if remaining and remaining >= source.count(fragment):
+                return fragment
     return ""
 
 
@@ -314,10 +324,29 @@ def leaks_in(text: str, document) -> list[str]:
     overlay = document.overlay
     leaks: list[str] = []
 
+    # Was every DETECTED span's own occurrence actually removed?
+    #
+    # Counted, not tested for containment. A plain `value in overlay` conflates
+    # occurrences: hypothesis found two identical UUIDs run together, where the
+    # first is allowlisted and kept, the tail of the second is matched as a
+    # phone number and redacted, and the retained first copy then makes the
+    # redacted one look like a survivor. The finding's own occurrence had gone.
+    #
+    # So: the overlay may keep no more copies than the input had minus the ones
+    # that were claimed. Nothing is softened for a real leak - a value detected
+    # once and present once in the overlay still fails.
+    counted: dict[str, int] = {}
     for span in document.spans:
         value = (span.value or "").strip()
-        if value and value in overlay:
-            leaks.append(f"detected {span.pii_type} value survived whole in overlay")
+        if value:
+            counted[value] = counted.get(value, 0) + 1
+    for value, claimed in counted.items():
+        allowed = max(0, text.count(value) - claimed)
+        if overlay.count(value) > allowed:
+            leaks.append(
+                f"a detected span survived: overlay keeps "
+                f"{overlay.count(value)} copies, at most {allowed} expected"
+            )
 
     for kind, canonical, as_written in validated_identifiers(text):
         if canonical in overlay or as_written in overlay:
@@ -328,7 +357,7 @@ def leaks_in(text: str, document) -> list[str]:
             if len(local) >= 4 and local in overlay:
                 leaks.append(f"validated {kind} local part survived in overlay")
             continue
-        residue = _residue_run(canonical, overlay)
+        residue = _residue_run(canonical, overlay, text)
         if residue:
             leaks.append(
                 f"validated {kind} left {len(residue)} of {len(canonical)} "

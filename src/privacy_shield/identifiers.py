@@ -310,23 +310,34 @@ def find_emails(text: str) -> List[Span]:
     The longest valid address is claimed, not the shortest: a longer local part
     is still the same mailbox, and "acct_erika@example.com" IS the address
     rather than a prefix plus an address.
+
+    Addresses are claimed left to right and an address may not reach back into
+    one already claimed. Without that, two addresses written with nothing
+    between them defeated this: expanding left from the SECOND "@" ran back
+    through the first address's domain, and the longest thing that validated
+    from there started halfway through address one - so the claim covered the
+    join and left "abcdef1234@" standing in the overlay. The mailbox name of a
+    real address, which is usually the person's name.
     """
     spans: List[Span] = []
+    claimed_to = 0
     for at in (index for index, char in enumerate(text) if char == "@"):
         left = at
         while left > 0 and text[left - 1] in _LOCAL_PART_CHARS:
             left -= 1
+        left = max(left, claimed_to)
         right = at + 1
         while right < len(text) and text[right] in _DOMAIN_CHARS:
             right += 1
-        claimed = False
+        found = False
         for start in range(left, at):
             for end in range(right, at + 1, -1):
                 candidate = text[start:end]
                 if email_ok(candidate):
                     spans.append((start, end, candidate))
-                    claimed = True
+                    claimed_to = end
+                    found = True
                     break
-            if claimed:
+            if found:
                 break
     return spans
