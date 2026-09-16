@@ -26,6 +26,11 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
 - The `brain_app` keyword parameter on ~15 helpers (e.g.
   `privacy_shield.helpers.documents.documents_store_path`) is renamed to
   `host_app`; calling with the old keyword now raises `TypeError`.
+- `compliance_evidence_export`'s evidence-pack `section_id` values renamed:
+  `persistent_brain_objects` -> `persistent_objects` and
+  `persistent_brain_object_events` -> `persistent_object_events`. A downstream
+  tool keyed on the old `section_id` finds no matching section and reports
+  zero records rather than raising — check any consumer for the old strings.
 
 ### Other changes
 
