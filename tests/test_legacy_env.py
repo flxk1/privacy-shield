@@ -119,3 +119,73 @@ def test_importing_with_a_legacy_name_set_does_not_raise(tmp_path):
     done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert not (tmp_path / "legacy.jsonl").exists()
+
+
+# The CHANGELOG says reject_legacy_env() tests "presence, not value" — an
+# empty-valued legacy variable still raises. Nothing set "" until these.
+EMPTY_VALUES = ("", " ", "\t")
+
+
+@pytest.mark.parametrize("value", EMPTY_VALUES)
+@pytest.mark.parametrize("entry", sorted(_RAISING_ENTRY_POINTS))
+def test_an_empty_valued_legacy_name_still_raises(entry, value, monkeypatch):
+    monkeypatch.setenv("BRAIN_PRIVACY_AUDIT_LOG", value)
+    with pytest.raises(LegacyEnvironmentError, match="PRIVACY_SHIELD_AUDIT_LOG"):
+        _RAISING_ENTRY_POINTS[entry]()
+
+
+@pytest.mark.parametrize("value", EMPTY_VALUES)
+@pytest.mark.parametrize("legacy", sorted(LEGACY_ENV))
+def test_every_empty_valued_legacy_name_still_raises(legacy, value, monkeypatch):
+    monkeypatch.setenv(legacy, value)
+    with pytest.raises(LegacyEnvironmentError, match=LEGACY_ENV[legacy]):
+        scan("hello", mode=PrivacyMode.REGEX_ONLY)
+
+
+@pytest.mark.parametrize("value", EMPTY_VALUES)
+def test_cli_main_reports_an_empty_valued_legacy_name_too(value, monkeypatch, capsys):
+    monkeypatch.setenv("BRAIN_PRIVACY_AUDIT_LOG", value)
+    assert cli.main(["scan", "hello", "--text", "--mode", "REGEX_ONLY"]) == 1
+    assert "PRIVACY_SHIELD_AUDIT_LOG" in capsys.readouterr().err
+
+
+# The two entries dropped with user_credentials.py. 2.0.0 promises legacy names
+# are refused with an error naming the replacement; these two get silence
+# instead, because they are no longer in the table to be recognised. That is a
+# deliberate consequence, disclosed in the CHANGELOG — and asserted here so it
+# cannot quietly become something else.
+DROPPED_LEGACY_NAMES = ("BRAIN_CREDENTIALS_MASTER_KEY", "BRAIN_SKILL_INTAKE_MASTER_KEY")
+
+
+@pytest.mark.parametrize("dropped", DROPPED_LEGACY_NAMES)
+def test_dropped_legacy_names_are_not_in_the_rename_table(dropped):
+    assert dropped not in LEGACY_ENV
+    assert dropped not in LEGACY_ENV.values()
+
+
+@pytest.mark.parametrize("dropped", DROPPED_LEGACY_NAMES)
+@pytest.mark.parametrize("entry", sorted(_RAISING_ENTRY_POINTS))
+def test_dropped_legacy_names_yield_silence_not_the_promised_error(
+    entry, dropped, monkeypatch
+):
+    monkeypatch.setenv(dropped, "secret")
+    _RAISING_ENTRY_POINTS[entry]()  # no LegacyEnvironmentError: silence, by design
+
+
+def test_the_silence_of_the_dropped_names_is_disclosed():
+    """The consequence, not just the removal, has to be findable in the CHANGELOG.
+
+    Asserted on the paragraph that names them, so a generic "silently"
+    elsewhere in the file cannot satisfy it.
+    """
+    changelog = (PKG.parents[1] / "CHANGELOG.md").read_text(encoding="utf-8")
+    paragraphs = [
+        block
+        for block in changelog.split("\n\n")
+        if all(name in block for name in DROPPED_LEGACY_NAMES)
+    ]
+    assert paragraphs, "the two dropped legacy names are not disclosed together"
+    assert any(
+        "silence" in block.lower() or "silently" in block.lower()
+        for block in paragraphs
+    ), "the dropped names are disclosed, but not the silence they now produce"
