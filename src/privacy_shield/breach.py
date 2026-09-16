@@ -293,19 +293,29 @@ class BreachDetector:
         """
         self._breach_log.append(breach)
 
-        # Persist to append-only JSONL. A failure here (mkdir or write) is logged
-        # and swallowed, same as every other write path in this package
-        # (audit_log, compliance_evidence_export): the in-memory record above
-        # survives for this process, but the durable Art. 33(2) record is lost
-        # with no signal beyond the log line. That is a real compliance gap for
-        # this module specifically, not just a resilience trade-off; fixing it
-        # (raise, return a persisted flag, or a dead-letter fallback) changes
-        # report_breach's contract and belongs to a dedicated, reviewed change
-        # across all three write paths, not a drive-by here.
+        # The directory precondition is NOT swallowed: on 1.0.0 this same mkdir
+        # ran in __init__, outside any try, so a broken log directory failed
+        # loudly at construction (PermissionError on a read-only install). It
+        # cannot run at import/construction time any more (the module-level
+        # `breach_detector` singleton below is constructed on import, and
+        # ADR-0001 forbids import-time filesystem writes — that's why this
+        # method exists), so it now fails loudly here instead, on the first
+        # write attempt. report_breach's contract changes accordingly: a
+        # broken log directory now raises out of report_breach, same class of
+        # signal as 1.0.0 gave at construction, just later in the lifecycle.
+        #
+        # The write itself (open + write, below) IS swallowed and logged —
+        # that part is inherited, unchanged, from the pre-rename code, and is
+        # the same shape as every other write path in this package
+        # (audit_log, compliance_evidence_export): a failure there is a real
+        # compliance gap (the durable Art. 33(2) record is lost with no
+        # signal beyond the log line), not fixed here — see the deferred
+        # three-module write-contract decision this comment used to conflate
+        # with the directory precondition above.
+        now = datetime.now(timezone.utc)
+        self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = self._BREACH_LOG_DIR / f"breaches_{now.strftime('%Y_%m')}.jsonl"
         try:
-            now = datetime.now(timezone.utc)
-            self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
-            log_file = self._BREACH_LOG_DIR / f"breaches_{now.strftime('%Y_%m')}.jsonl"
             with open(log_file, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(asdict(breach), default=str) + "\n")
         except Exception as exc:
