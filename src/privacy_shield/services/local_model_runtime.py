@@ -1,19 +1,89 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from privacy_shield.llm_client import get_local_client
 from privacy_shield.user_credentials import discover_local_providers
 
+logger = logging.getLogger(__name__)
+
 _CACHE_TTL_SECONDS = 2.0
 _DISCOVERY_CACHE: Dict[str, Any] = {"timestamp": 0.0, "providers": []}
 _PREFERRED_PROVIDER_ORDER = ["embedded", "lm_studio", "jan", "gpt4all", "ollama"]
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_ALLOW_REMOTE_VAR = "PRIVACY_SHIELD_MODEL_ENDPOINT_ALLOW_REMOTE"
+
+
+def _embedded_endpoint_var_and_raw_value() -> Tuple[str, str]:
+    native = (os.getenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT") or "").strip()
+    if native:
+        return "PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT", native
+    return "PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT", (
+        os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT") or ""
+    ).strip()
+
+
+def _endpoint_is_local(endpoint: str) -> bool:
+    """A loopback http(s) address (127.0.0.1, ::1, localhost) or a unix-socket form."""
+    parsed = urlsplit(endpoint)
+    if parsed.scheme == "unix":
+        return True
+    if parsed.scheme in ("http", "https"):
+        return (parsed.hostname or "").lower() in _LOOPBACK_HOSTS
+    return False
+
+
+def resolve_embedded_endpoint() -> Optional[str]:
+    """The one choke point for the "local" model endpoint.
+
+    "Local-first" is a property this enforces, not a promise the README
+    makes: `PRIVACY_SHIELD_{NATIVE,EMBEDDED}_LOCAL_MODEL_ENDPOINT` is an
+    address a caller supplies, and nothing about the name "LOCAL" stops it
+    naming a host anywhere on the internet — which would carry raw,
+    un-redacted scan text off the machine while `is_local_model_available()`
+    and this module's send path both used to read it independently
+    (previously ~line 24 and ~line 185), so a guard placed at only one of
+    them would not have covered the other. Every caller in this module that
+    would use the embedded endpoint — status/discovery and the actual send
+    — must call this function, not read the env vars directly.
+
+    Returns the endpoint unchanged if it is unset, loopback, or a unix
+    socket. Returns None (refuse to use it) for anything else, unless
+    `PRIVACY_SHIELD_MODEL_ENDPOINT_ALLOW_REMOTE` is truthy, in which case it
+    is returned but every use logs a warning naming the destination.
+    """
+    var_name, endpoint = _embedded_endpoint_var_and_raw_value()
+    if not endpoint:
+        return None
+    if _endpoint_is_local(endpoint):
+        return endpoint
+
+    host = urlsplit(endpoint).hostname or endpoint
+    if _truthy(os.getenv(_ALLOW_REMOTE_VAR, "")):
+        logger.warning(
+            "%s=%r is not a loopback address; %s is set, so raw un-redacted "
+            "scan text will be sent to %s",
+            var_name, endpoint, _ALLOW_REMOTE_VAR, host,
+        )
+        return endpoint
+
+    logger.error(
+        "%s=%r resolves to %s, not a loopback address (127.0.0.1/::1/localhost) "
+        "or a unix socket; refusing to send scan text to it — the local-model "
+        "layer is unavailable for this scan. Set %s=1 to allow a remote "
+        "endpoint deliberately.",
+        var_name, endpoint, host, _ALLOW_REMOTE_VAR,
+    )
+    return None
 
 
 def _truthy(value: str) -> bool:
@@ -21,11 +91,7 @@ def _truthy(value: str) -> bool:
 
 
 def _embedded_provider_status() -> Optional[Dict[str, Any]]:
-    endpoint = (
-        os.getenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT")
-        or os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT")
-        or ""
-    ).strip()
+    endpoint = resolve_embedded_endpoint() or ""
     command = (
         os.getenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_COMMAND")
         or os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_COMMAND")
@@ -182,11 +248,12 @@ def _call_embedded_local_json_response(
         or os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_COMMAND")
         or ""
     ).strip()
-    endpoint = (
-        os.getenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT")
-        or os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT")
-        or str(runtime.get("endpoint", "") or "")
-    ).strip()
+    # The choke point, not a direct env read (and not `runtime["endpoint"]`,
+    # which is only ever a cached mirror of this same resolution): refuses
+    # a non-loopback address here exactly as it does in
+    # _embedded_provider_status, so this send path cannot be reached with
+    # an unchecked one even if some future caller skips the status check.
+    endpoint = resolve_embedded_endpoint() or ""
 
     if command:
         payload = {
