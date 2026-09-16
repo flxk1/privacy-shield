@@ -13,6 +13,11 @@ src/privacy_shield/data/privacy_shield/*.json
 *.onnx
 # the package is installed for tests; a root conftest papering over that is not tracked
 /conftest.py
-# runtime output written by the package at run time, never part of the distribution
-src/privacy_shield/logs/
-src/privacy_shield/user/privacy_skill_kg/*.jsonl
+# runtime state written by the package inside its own tree, never part of the distribution;
+# the audit log and the privacy-skill KG now live under the OS user-state home
+# (see audit_log._user_state_home / privacy_skill_kg), outside this tree entirely.
+src/privacy_shield/user/credentials/*.json
+src/privacy_shield/user/.credentials_master.key
+src/privacy_shield/user/pseudonymisation_sessions/
+src/privacy_shield/data/breach_log/
+src/privacy_shield/compliance_evidence/
