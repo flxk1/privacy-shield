@@ -127,7 +127,6 @@ from privacy_shield.utils import now_iso
 PACKAGE_DIR = Path(__file__).parent
 PROJECT_ROOT = PACKAGE_DIR.parent
 EVIDENCE_DIR = PACKAGE_DIR / "compliance_evidence"
-EVIDENCE_DIR.mkdir(exist_ok=True)
 
 # Alias for backward compatibility
 _now_iso = now_iso
@@ -2139,6 +2138,7 @@ class ComplianceEvidenceExporter:
         filename = f"{pack.pack_id}.json"
         filepath = EVIDENCE_DIR / filename
         try:
+            EVIDENCE_DIR.mkdir(exist_ok=True)
             filepath.write_text(json.dumps(pack.to_dict(), indent=2, default=str))
             logger.info(f"Evidence pack saved: {filepath}")
         except Exception as e:

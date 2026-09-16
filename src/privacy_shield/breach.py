@@ -85,8 +85,6 @@ class BreachDetector:
         # In-memory cache (populated from disk on first access)
         self._breach_log: List[BreachEvent] = []
         self._loaded = False
-        # Ensure log directory exists
-        self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     def detect_anomaly(
         self,
@@ -298,6 +296,7 @@ class BreachDetector:
         # Persist to append-only JSONL
         try:
             now = datetime.now(timezone.utc)
+            self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
             log_file = self._BREACH_LOG_DIR / f"breaches_{now.strftime('%Y_%m')}.jsonl"
             with open(log_file, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(asdict(breach), default=str) + "\n")

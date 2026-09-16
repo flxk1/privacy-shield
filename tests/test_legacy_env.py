@@ -20,6 +20,11 @@ ENTRY_POINTS = {
     "PrivacyGate.check": lambda: PrivacyGate().check({"text": "hello"}, "external_llm"),
 }
 
+# cli.main is a process boundary: it converts LegacyEnvironmentError into the
+# documented "error: <msg>" + exit 1 contract instead of raising, so it is
+# exercised separately below (test_cli_main_reports_legacy_name_as_error).
+_RAISING_ENTRY_POINTS = {k: v for k, v in ENTRY_POINTS.items() if k != "cli.main"}
+
 
 def _sources():
     return [p for p in PKG.rglob("*.py") if p.name != "_legacy_env.py"]
@@ -39,12 +44,31 @@ def test_the_package_reads_only_the_replacements():
     assert [new for new in LEGACY_ENV.values() if f'"{new}"' not in text] == []
 
 
-@pytest.mark.parametrize("entry", sorted(ENTRY_POINTS))
+@pytest.mark.parametrize("entry", sorted(_RAISING_ENTRY_POINTS))
 @pytest.mark.parametrize("legacy", sorted(LEGACY_ENV))
 def test_a_legacy_name_raises_naming_its_replacement(entry, legacy, monkeypatch):
     monkeypatch.setenv(legacy, "1")
     with pytest.raises(LegacyEnvironmentError, match=LEGACY_ENV[legacy]):
-        ENTRY_POINTS[entry]()
+        _RAISING_ENTRY_POINTS[entry]()
+
+
+@pytest.mark.parametrize("legacy", sorted(LEGACY_ENV))
+def test_cli_main_reports_legacy_name_as_error_exit_1(legacy, monkeypatch, capsys):
+    monkeypatch.setenv(legacy, "1")
+    code = cli.main(["scan", "hello", "--text", "--mode", "REGEX_ONLY"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ")
+    assert LEGACY_ENV[legacy] in err
+
+
+def test_cli_help_with_a_legacy_name_set_still_prints_help(monkeypatch, capsys):
+    monkeypatch.setenv("BRAIN_PRIVACY_AUDIT_LOG", "1")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "usage:" in out
 
 
 def test_replacement_names_are_honoured(tmp_path, monkeypatch):
@@ -80,12 +104,13 @@ def test_importing_with_a_legacy_name_set_does_not_raise(tmp_path):
         "PYTHONDONTWRITEBYTECODE": "1",
     }
     code = (
-        "import pathlib\n"
+        "import pathlib, pkgutil, importlib\n"
         "made = []\n"
         "real = pathlib.Path.mkdir\n"
         "pathlib.Path.mkdir = lambda self, *a, **k: (made.append(str(self)), real(self, *a, **k))[1]\n"
-        "import privacy_shield, privacy_shield.cli, privacy_shield.gate, privacy_shield.runner\n"
-        "import privacy_shield.audit_log, privacy_shield.privacy_shield_embeddings\n"
+        "import privacy_shield\n"
+        "for info in pkgutil.walk_packages(privacy_shield.__path__, privacy_shield.__name__ + '.'):\n"
+        "    importlib.import_module(info.name)\n"
         "assert made == [], made\n"
     )
     done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
