@@ -40,13 +40,19 @@ bundled pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-300 passed, 8 failed
+316 passed, 8 failed, 3 skipped
 ```
 
-308 tests collected. The 8 failures are all in `tests/test_simplifier.py`'s LLM
+327 tests collected. The 8 failures are all in `tests/test_simplifier.py`'s LLM
 path, which patches `privacy_shield.services.llm_runtime` — the upstream LLM gateway
-chain, out of scope in this subset. `.github/workflows/ci.yml` deselects those 8
-by name, so CI runs 300 passed, 8 deselected.
+chain, out of scope in this subset. The 3 skips need packages this install does
+not have: `cryptography` (the `credentials` extra; CI's dedicated `credentials`
+job installs it) and `openai` (not required by any extra; guarded by
+`pytest.importorskip` in `tests/test_local_model_endpoint_guard.py`, so it is
+honest about not running there rather than silently passing).
+`.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
+`tests` job runs 316 passed, 8 deselected, 3 skipped; the `credentials` job
+runs `tests/test_user_credentials.py` again with `cryptography` installed.
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
