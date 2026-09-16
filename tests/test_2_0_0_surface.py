@@ -76,3 +76,64 @@ def test_the_removed_public_names_are_disclosed_in_the_changelog():
         assert attribute in changelog, f"{attribute} removed but never disclosed"
     for module in REMOVED_MODULES:
         assert module.rsplit(".", 1)[-1] in changelog, module
+
+
+# ---------------------------------------------------------------------------
+# Every test the CHANGELOG cites has to exist
+# ---------------------------------------------------------------------------
+#
+# The CHANGELOG backs each claim with a "Tested: path::name" citation. A
+# citation that names a test which does not exist is worse than no citation:
+# it reads as evidence and is not. This round found the CHANGELOG declaring the
+# overlapping-span defect fixed while the ANONYMOUS_JSON copy of it was
+# untouched, so the prose has to be checkable too.
+
+import ast
+import re as _re
+
+
+def _cited_tests():
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    cited = set()
+    for match in _re.finditer(
+        r"`(tests/[A-Za-z0-9_./]+\.py)((?:::(?:Test|test)[A-Za-z0-9_]*)*)`", changelog
+    ):
+        path, trailer = match.group(1), match.group(2)
+        cited.add((path, tuple(trailer.split("::")[1:])))
+    # Bare "::name" continuation citations inherit the file above them.
+    current = None
+    for line in changelog.splitlines():
+        for match in _re.finditer(r"`(tests/[A-Za-z0-9_./]+\.py)", line):
+            current = match.group(1)
+        if current:
+            # "::1" is the IPv6 loopback address in the endpoint-guard prose,
+            # not a citation - names must look like tests.
+            for match in _re.finditer(r"`((?:::(?:Test|test)[A-Za-z0-9_]*)+)`", line):
+                cited.add((current, tuple(match.group(1).split("::")[1:])))
+    return cited
+
+
+def _names_defined_in(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+    return names
+
+
+def test_every_test_the_changelog_cites_exists():
+    missing = []
+    for path, names in sorted(_cited_tests()):
+        target = REPO_ROOT / path
+        if not target.exists():
+            missing.append(path)
+            continue
+        defined = _names_defined_in(target)
+        for name in names:
+            if name not in defined:
+                missing.append(f"{path}::{name}")
+    assert not missing, (
+        "the CHANGELOG cites tests that do not exist, so those claims are "
+        f"unbacked prose: {missing}"
+    )

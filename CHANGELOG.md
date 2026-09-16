@@ -125,6 +125,43 @@ trees — pin the major version.
   RFC-shaped email — is reinstated over the allowlist. The over-broad
   generic-ID pattern was narrowed as depth, not as the fix. Tested:
   `tests/test_leak_invariant.py`.
+- **That fix addressed five inputs, not the class they belong to.** Every
+  Layer-1 pattern begins with `\b`, which does not find an identifier — it
+  finds a place one is allowed to start. A single word character glued in front
+  means no boundary exists at the identifier's first character, and because the
+  rest of it is word characters too, none exists inside it either: the pattern
+  matches nothing, the validator is never offered the candidate, and the caller
+  gets `pii_detected=False` with the account number verbatim in the payload.
+  `Ref ` was one instance; `acct_`, a document number run together with the
+  number, `id-` plus hex, a CSV field with no delimiter and the `=20`
+  quoted-printable writes for a space were all still open, in every
+  egress-capable mode at every confidence floor. For the three types that have
+  a validator, detection now walks every maximal run of identifier characters
+  and tests every candidate substring, consulting no word boundary
+  (`privacy_shield/identifiers.py`). Tested:
+  `tests/test_leak_invariant.py::test_release_gate_glued_prefix_class`,
+  `::test_glued_prefix_is_reported_not_merely_removed`,
+  `::test_umlaut_glued_to_an_email_does_not_hide_it`,
+  `tests/test_identifier_runs.py`.
+  - **Precision cost, measured**: on twenty realistic German business documents
+    containing no payment identifier, IBAN detection produces **no** false
+    positives (candidates are held to the ISO 13616 registered length for their
+    country code) and card detection produces **six** — always a Luhn-valid
+    window inside a longer digit run, on tracking numbers, an IMEI and long
+    internal references. That over-redaction is deliberate: an issuer-prefix
+    table would cut it to one, at the price of putting a stale BIN range
+    between a real card and the gate. A false positive can only consume digits
+    and the separators written inside a number, never prose. Tested:
+    `tests/test_identifier_runs.py::test_iban_precision_on_clean_business_text`,
+    `::test_card_precision_on_clean_business_text`,
+    `::test_over_redaction_never_eats_a_word`.
+  - What may sit *inside* an identifier is decided by character property, not
+    by an enumerated list: `Cf` is invisible and skipped (soft hyphen,
+    zero-width space, BOM), `Zs` is a space (no-break, thin, narrow, figure)
+    and `Pd` is a hyphen. A line break is never either. Tested:
+    `tests/test_leak_invariant.py::test_a_separator_inside_an_identifier_does_not_hide_it`,
+    `::test_an_invisible_character_does_not_split_a_run`,
+    `::test_a_line_break_is_never_an_inline_separator`.
 - **Overlapping findings corrupted the overlay and let PII survive.** The
   redactor computed replacements on original offsets and applied overlapping
   ones to an already-mutated string, producing output like `[NAME]L]ME]
@@ -132,14 +169,76 @@ trees — pin the major version.
   merged into disjoint ones covering the union before being applied
   right-to-left. Tested:
   `tests/test_leak_invariant.py::test_overlay_is_not_corrupted_by_overlapping_spans`.
+- **The same defect was still live in ANONYMOUS_JSON mode**, which the entry
+  above did not cover and should not have implied. `anonymous_json.anonymize_text`
+  kept its own copy of the broken loop, so the mode whose entire purpose is
+  cloud egress spliced the tail of an account number back in behind its own
+  placeholder (`[ANON_IBAN_1]30 00, Karte …`). It now shares the redactor's
+  `merge_replacements`, which is public for that reason. Tested:
+  `tests/test_leak_invariant.py::test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans`.
 - **The local-endpoint guard checked the address but not the transport.**
   `httpx` and the `openai` client built on it default to `trust_env=True`, so
   with `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` set, an endpoint that passed the
   loopback check still built a proxy transport and sent raw un-redacted text to
-  the configured proxy. Both send paths now build their client with
+  the configured proxy. The send paths now build their client with
   `trust_env=False`, and both local-provider probes (`httpx` and the `urllib`
   fallback) run without the environment's proxy. Tested:
   `tests/test_proxy_transport_guard.py`.
+- **A fourth client was missed by that fix**, because the list of sites was
+  drawn from memory. `privacy_shield_embeddings` built its OpenAI client with
+  no `http_client` at all. Worse than the transport: `PIIContextMatcher._embed`
+  sends the first 8000 characters of raw, pre-redaction document text, it is
+  reachable from the main scan path, and `PRIVACY_SHIELD_SEMANTIC_ENABLED`
+  defaults to `"1"` — silent only because the context store ships empty. Run
+  the documented `embed_pii_contexts()` setup once and every chunk of every
+  scanned document leaves the machine, which is the
+  `egress_original_unredacted_text` this skill's governance block prohibits.
+  The client is now built off the environment proxy, and document chunks go
+  through the same loopback/unix-socket endpoint guard as every other send
+  path. Tested:
+  `tests/test_privacy_shield_embeddings.py::TestEmbeddingEgressGuard`.
+  The set of HTTP client constructions is now enumerated from the AST on every
+  run, each with a written justification, so a fifth fails the build until it
+  is accounted for. Tested:
+  `tests/test_proxy_transport_guard.py::test_every_http_client_construction_is_accounted_for`,
+  `::test_every_client_site_passes_an_explicit_http_client`.
+- **Layer-2 patterns ran off the end of a line and destroyed the overlay.**
+  `\s` matches a newline, so a four-line German sign-off collapsed to
+  `[NAME][NAME] 12\nAnlage` — the closing formula, the street name, the
+  trailing word and every line break gone. The overlay is what the cloud model
+  receives, so this was fail-closed on confidentiality and fail-open on the
+  product's reason to exist. Every pattern whose tokens are separate *fields* —
+  both name patterns, both street patterns, postal-code-and-city,
+  date-of-birth, age, and both phone patterns — now matches per line.
+  Signature-block detection is unaffected. Layer 3 and Layer 4 deliberately
+  keep `\s`, because a keyword phrase broken by word wrap is still that phrase.
+  Tested: `tests/test_overlay_structure.py`.
+- Letter closings and name-free salutations (`Mit freundlichen Grüßen`,
+  `Sehr geehrte Damen und Herren`, `Best regards`, …) joined the allowlist;
+  they are fixed formulas, and the name pattern was redacting them. Formulas
+  that *precede* a name were deliberately left out. Tested:
+  `tests/test_overlay_structure.py::test_a_four_line_sign_off_survives_redaction`,
+  `::test_the_name_is_still_found_on_its_own_line`.
+
+### Removed (behaviour)
+
+- **The placeholder-email allowlist entry is gone.** It listed
+  `(example|test|noreply|info|contact)@(example|test).com` and had stopped
+  doing anything once the email rescue landed: a validating detector claims
+  every RFC-shaped address before a suppressor is consulted. It was deleted
+  rather than revived, because reviving it means letting a suppressor overrule
+  a validated identifier — the structure this release was rejected for.
+  `test@example.com` is now reported as an email. Tested:
+  `tests/test_leak_invariant.py::test_allowlist_cannot_suppress_a_validated_identifier`,
+  `::test_placeholder_addresses_are_reported_rather_than_allowlisted`.
+- **Semantic context matching against a remote embedding endpoint.** An
+  installation with `OPENAI_API_KEY` set that had run `embed_pii_contexts()`
+  was getting matches from a cloud endpoint; it now gets none until
+  `OPENAI_BASE_URL` names a local embedding server. It degrades to the
+  regex/lexicon floor rather than failing, and logs once saying why. The setup
+  call is unaffected — it embeds the fixed context phrases in the module's own
+  source, which are nobody's personal data. Tested:
+  `tests/test_privacy_shield_embeddings.py::TestEmbeddingEgressGuard::test_setup_may_still_use_a_remote_endpoint`.
 - The `privacy-shield` skill's `allowed-tools` granted unrestricted `Bash` to a
   skill whose governance block prohibits `egress_original_unredacted_text`.
   Scoped to `Bash(privacy-shield:*)`. Tested: `tests/test_skill_manifest.py`.

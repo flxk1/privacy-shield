@@ -9,11 +9,28 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   non-confidential PII document passes and its redacted overlay leaves. The gate
   leaves the overlay unscanned, so "cleared" stays short of a zero-residual
   certificate.
-- **Overlay cosmetics.** Redaction reuses the engine's `redactor.py`. When the
-  regex layers produce *overlapping* findings (e.g. a name pattern overlapping an
-  email), the placeholder splicing can leave placeholder-text fragments (the
-  tests assert injected original values stay out of the overlay). The engine is
-  reused unchanged; this is a known redactor artefact.
+- **Overlapping findings no longer splice the overlay.** This entry used to say
+  placeholder fragments were "a known redactor artefact" of overlapping
+  findings. They were not cosmetic — a spliced replacement left un-redacted PII
+  beside the fragment. Overlapping spans are merged into disjoint ones covering
+  the union before anything is applied, in `redactor.py` and in
+  `anonymous_json.py`, which had its own unfixed copy of the same loop.
+- **Over-redaction of long digit runs is deliberate.** Card detection applies
+  Luhn to every 13–19 digit window at every offset, with no issuer-prefix
+  table, so a Luhn-valid window inside a longer digit run is redacted — on
+  twenty realistic German business documents carrying no payment identifier,
+  six were affected (tracking numbers, an IMEI, long internal references). An
+  issuer table would cut that to one, at the price of a stale BIN range
+  standing between a real card and the gate. IBAN detection is held to the
+  ISO 13616 registered length per country and produced no false positives on
+  the same corpus. A false positive can only consume digits and the separators
+  written inside a number, never prose. Measured by
+  `tests/test_identifier_runs.py`.
+- **Detection is ASCII for the validated types.** Identifier runs are built
+  from ASCII alphanumerics; an account number written in full-width or
+  Arabic-Indic digits is not offered to the validators. Invisible characters
+  (`Cf`), every horizontal space (`Zs`) and every hyphen (`Pd`) inside an
+  identifier are handled.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.
@@ -22,6 +39,13 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   floor only (the modules degrade gracefully). `[extract]` extras
   (PyMuPDF, which is AGPL, and opencv) are needed for PDF/image extraction; without them those
   documents surface an extraction error.
+- **The semantic pass needs a LOCAL embedding endpoint.** `PIIContextMatcher`
+  sends document chunks — raw, pre-redaction text — so it is held to the same
+  loopback-or-unix-socket rule as the local-model send paths. Point
+  `OPENAI_BASE_URL` at a local embedding server; against anything else the
+  semantic layer declines, logs once, and the scan continues on the regex
+  floor. The one-off `embed_pii_contexts()` setup is exempt: it embeds the
+  fixed context phrases in the module's own source, not anybody's data.
 - **The local-LLM layer talks to local HTTP endpoints.**
   `services/local_model_runtime.py` discovers providers on
   `http://localhost:11434` (Ollama), `:1234` (LM Studio), `:1337` (Jan) and
@@ -41,17 +65,23 @@ pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-253 passed, 8 failed
+585 passed, 8 failed
 ```
 
-261 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+593 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
-not ship. `openai` is installed here (and by CI's `tests` job) so
+not ship; they fail identically on the tip before this round's changes.
+`openai` is installed here (and by CI's `tests` job) so
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 253 passed, 8 deselected.
+`tests` job runs 585 passed, 8 deselected.
+
+The leak invariant is its own CI job that `tests` waits on:
+`tests/test_leak_invariant.py`, 163 tests including a 300-document generated
+battery in each of the four privacy modes and a hypothesis property run. With
+`hypothesis` absent the property half is skipped and the rest still runs.
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
