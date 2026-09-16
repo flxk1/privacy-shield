@@ -729,3 +729,43 @@ def test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans():
         "[ANON_NAME_1], IBAN [ANON_IBAN_1], Karte [ANON_CC_1], "
         "Tel. [ANON_PHONE_4]"
     ), overlay
+
+
+def test_allowlist_cannot_suppress_a_validated_identifier(monkeypatch):
+    """The rule that made the placeholder-email allowlist entry dead code.
+
+    That entry listed (example|test|noreply|info|contact)@(example|test).com
+    and had no effect, because a validating detector claims an RFC-shaped
+    address before any suppressor is consulted. It was deleted rather than
+    revived: reviving it means letting a suppressor overrule a validated
+    identifier, which is the structure the 2.0.0 rejection was about.
+
+    Asserted here as a property rather than a spelling. An allowlist entry that
+    covers a real identifier exactly - the strongest form a suppressor can take
+    - still must not switch detection off.
+    """
+    from privacy_shield import scanner as scanner_module
+
+    greedy = re.compile(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+|[A-Z]{2}[0-9A-Z ]+|[0-9 ]{13,}"
+    )
+    monkeypatch.setattr(
+        scanner_module,
+        "ALLOWLIST_PATTERNS",
+        list(scanner_module.ALLOWLIST_PATTERNS) + [greedy],
+    )
+    for text in (
+        "erika.mustermann@example.com",
+        EXAMPLE_IBAN,
+        EXAMPLE_IBAN_SPACED,
+        EXAMPLE_CARD,
+        EXAMPLE_CARD_SPACED,
+    ):
+        assert_no_leak(text)
+
+
+def test_placeholder_addresses_are_reported_rather_than_allowlisted():
+    """The accepted cost of deleting the entry, stated so it is not a surprise."""
+    document = scan("Schreiben Sie an test@example.com").documents[0]
+    assert document.pii_detected
+    assert "test@example.com" not in document.overlay

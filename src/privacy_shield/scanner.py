@@ -573,8 +573,21 @@ ALLOWLIST_PATTERNS: List[Pattern] = [
         r"|Dear\s+Sir\s+or\s+Madam)"
     ),
 
-    # Common placeholder emails
-    _compile(r"\b(?:example|test|noreply|info|contact)@(?:example\.com|test\.com)\b"),
+    # There was an entry here for placeholder addresses -
+    # (example|test|noreply|info|contact)@(example|test).com - and it had
+    # stopped doing anything. A validating detector claims every RFC-shaped
+    # address before any suppressor is consulted, so the entry matched, was
+    # overridden, and the address was flagged regardless.
+    #
+    # It was deleted rather than made live again. Making it live means giving
+    # one suppressor the last word over a validated identifier, which is the
+    # exact structure the 2.0.0 rejection was about: it would turn "does this
+    # look like a documentation address" into a way of getting a real address
+    # past the detector. The cost of deleting it is that test@example.com is
+    # reported as an email. It is an email. Reporting it is the safe error, and
+    # a reserved RFC 2606 domain is cheap to over-redact.
+    #
+    # test_allowlist_cannot_suppress_a_validated_identifier pins the rule.
 
     # Generic IDs that are clearly not PII.
     # Two narrowings, both depth only - the load-bearing guard is that
