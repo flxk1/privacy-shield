@@ -14,17 +14,33 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
   submodule moves with it (`brain.<module>` -> `privacy_shield.<module>`).
 - Console script renamed `brain.privacy_shield.cli:main` -> `privacy_shield.cli:main`.
 - All 27 `BRAIN_*` environment variables are renamed to the `PRIVACY_SHIELD_*`
-  prefix (full table below). The four egress/CLI decision points — `scan`,
-  the CLI `main`, `PrivacyGate.check` and `is_safe_for_external_llm` — raise
-  `LegacyEnvironmentError`, naming the replacement, while a pre-rename
-  variable is set; importing the package never raises. Every other public
-  function (`scan_text`, `scan_text_with_local_llm`, `extract_document`,
+  prefix (full table below). Five call sites raise `LegacyEnvironmentError`,
+  naming the replacement, while a pre-rename variable is set — the four
+  egress/CLI decision points (`scan`, the CLI `main`, `PrivacyGate.check`,
+  `is_safe_for_external_llm`) and the credential master-key derivation
+  (`user_credentials._master_secret_bytes`, the one choke point every
+  add/get/update/delete/revalidate/get_decrypted_key credential call passes
+  through). Importing the package never raises. Every other public function
+  (`scan_text`, `scan_text_with_local_llm`, `extract_document`,
   `redact_text`, `PrivacyShield` and its lower-level methods, …) does not
   inspect legacy names at all: a legacy variable there is silently treated
   as unset, degrading to whatever default that function uses without
-  raising or warning. Route egress-safety decisions through one of the four
-  guarded entry points, not the lower-level building blocks, if this
-  matters to a caller.
+  raising or warning — for those, a caller who needs the guard should route
+  through one of the five entry points above rather than the lower-level
+  building blocks.
+  Credentials get a named guard, not just a documented consequence, because
+  the failure mode there is irreversible: with a stale
+  `BRAIN_CREDENTIALS_MASTER_KEY`, `_master_secret_bytes()` used to fall
+  through to `secrets.token_hex(32)` and persist it, so every credential
+  already encrypted under the operator's intended seed became permanently
+  undecryptable while new ones were silently encrypted under material the
+  operator never set — worse than a weaker default, and not recoverable
+  after the fact. A third, undocumented seed also feeds the same
+  derivation: `COCKPIT_SESSION_SECRET` (`user_credentials.py`), tried after
+  `PRIVACY_SHIELD_CREDENTIALS_MASTER_KEY` and
+  `PRIVACY_SHIELD_SKILL_INTAKE_MASTER_KEY`. It is not a `BRAIN_*` legacy
+  name — nothing renamed it — it simply appeared in no table and no doc
+  until now.
 - `AUDIT_LOG_PATH` semantics changed: `from privacy_shield.audit_log import
   AUDIT_LOG_PATH` yields `None` unless a caller pinned it. The audit writer
   and reader resolve `AUDIT_LOG_PATH or audit_log_path()` at call time, so a
