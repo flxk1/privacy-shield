@@ -14,10 +14,17 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
   submodule moves with it (`brain.<module>` -> `privacy_shield.<module>`).
 - Console script renamed `brain.privacy_shield.cli:main` -> `privacy_shield.cli:main`.
 - All 27 `BRAIN_*` environment variables are renamed to the `PRIVACY_SHIELD_*`
-  prefix (full table below). `scan`, the CLI `main` and `PrivacyGate.check`
-  raise `LegacyEnvironmentError`, naming the replacement, while a pre-rename
-  variable is set; importing the package never raises, and other names are
-  not inspected.
+  prefix (full table below). The four egress/CLI decision points — `scan`,
+  the CLI `main`, `PrivacyGate.check` and `is_safe_for_external_llm` — raise
+  `LegacyEnvironmentError`, naming the replacement, while a pre-rename
+  variable is set; importing the package never raises. Every other public
+  function (`scan_text`, `scan_text_with_local_llm`, `extract_document`,
+  `redact_text`, `PrivacyShield` and its lower-level methods, …) does not
+  inspect legacy names at all: a legacy variable there is silently treated
+  as unset, degrading to whatever default that function uses without
+  raising or warning. Route egress-safety decisions through one of the four
+  guarded entry points, not the lower-level building blocks, if this
+  matters to a caller.
 - `AUDIT_LOG_PATH` semantics changed: `from privacy_shield.audit_log import
   AUDIT_LOG_PATH` yields `None` unless a caller pinned it. The audit writer
   and reader resolve `AUDIT_LOG_PATH or audit_log_path()` at call time, so a

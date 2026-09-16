@@ -7,7 +7,7 @@ import pytest
 
 import privacy_shield
 from privacy_shield import LegacyEnvironmentError, PrivacyGate, cli, scan
-from privacy_shield import privacy_skill_kg as kg
+from privacy_shield import is_safe_for_external_llm, privacy_skill_kg as kg
 from privacy_shield._legacy_env import LEGACY_ENV
 from privacy_shield.audit_log import audit_log_path
 from privacy_shield.shield import PrivacyMode
@@ -18,6 +18,9 @@ ENTRY_POINTS = {
     "scan": lambda: scan("hello", mode=PrivacyMode.REGEX_ONLY),
     "cli.main": lambda: cli.main(["scan", "hello", "--text", "--mode", "REGEX_ONLY"]),
     "PrivacyGate.check": lambda: PrivacyGate().check({"text": "hello"}, "external_llm"),
+    # a second egress-safety judgment call, parallel to PrivacyGate.check; it must
+    # not silently downgrade to pattern-only checking on a legacy name.
+    "is_safe_for_external_llm": lambda: is_safe_for_external_llm("hello", use_local_llm_check=False),
 }
 
 # cli.main is a process boundary: it converts LegacyEnvironmentError into the

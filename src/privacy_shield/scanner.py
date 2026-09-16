@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
+from ._legacy_env import reject_legacy_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -827,6 +829,7 @@ def is_safe_for_external_llm(
     Returns:
         Tuple of (is_safe, reason, pii_categories_found)
     """
+    reject_legacy_env()
     # First do pattern scan
     result = scan_text(text, min_confidence=Confidence.MEDIUM)
 
