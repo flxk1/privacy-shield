@@ -1,19 +1,31 @@
 """Runtime state lands outside the installed package.
 
-Both surfaces — the standalone audit trail (``privacy_shield.audit_log``) and the privacy
-skill KG (``privacy_shield.privacy_skill_kg``) — resolve their paths at call time, default
+Four surfaces — the standalone audit trail (``privacy_shield.audit_log``), the privacy
+skill KG (``privacy_shield.privacy_skill_kg``), the GDPR Art. 33(2) breach log
+(``privacy_shield.breach``) and the pseudonymisation session store
+(``privacy_shield.anonymisation_skill``) — resolve their paths at call time, default
 to the platform user-state directory, honour an environment override verbatim, and create
 the directory on demand. ``tests/conftest.py`` points the user-state home at ``tmp_path``.
+
+The last two used to write into ``os.path.dirname(__file__)``: the breach log into
+``src/privacy_shield/data/breach_log``, and the session store — which holds the full
+re-identification map, pseudonym back to the real email address — into
+``src/privacy_shield/user/pseudonymisation_sessions``, inside site-packages.
 """
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
 
 import privacy_shield.audit_log as audit_log
+from privacy_shield import breach as breach_mod
 from privacy_shield import privacy_skill_kg as kg
+from privacy_shield.anonymisation_skill import SESSION_STORE_ENV, PseudonymisationSession
 from privacy_shield.audit_log import AuditEvent, audit_log_path, get_recent_audit_events, log_audit_event
+from privacy_shield.breach import BREACH_LOG_DIR_ENV, BreachDetector, breach_log_dir
+from privacy_shield.scanner import PIIType
 
 PKG_ROOT = Path(audit_log.__file__).resolve().parent
 AUDIT_ENV = "PRIVACY_SHIELD_AUDIT_LOG"
@@ -172,3 +184,121 @@ def test_kg_state_dir_is_created_on_demand(tmp_path, monkeypatch):
     rows = kg.list_privacy_kg_facts(tenant_id="acme")
     assert rows[-1]["issue_key"] == "pii_in_payload"
     assert (target / "acme.jsonl").exists()
+
+
+# -------------------------------------------------------------------------- breach
+
+
+def test_breach_log_default_resolves_outside_the_installed_package(tmp_path):
+    resolved = breach_log_dir()
+    assert _outside_package(resolved)
+    assert tmp_path in resolved.parents
+    assert resolved.name == "breach_log"
+    assert not resolved.exists()
+
+
+def test_breach_log_never_lands_in_the_package_tree():
+    assert PKG_ROOT / "data" / "breach_log" != breach_log_dir()
+    assert PKG_ROOT not in breach_log_dir().parents
+
+
+def test_breach_log_env_override_wins_verbatim(tmp_path, monkeypatch):
+    target = tmp_path / "override" / "breaches"
+    monkeypatch.setenv(BREACH_LOG_DIR_ENV, str(target))
+    assert breach_log_dir() == target
+    assert BreachDetector()._log_dir() == target
+
+
+def test_breach_log_writes_to_the_user_state_home(tmp_path):
+    detector = BreachDetector()
+    detector._log_breach(
+        breach_mod.BreachEvent(
+            event_id="breach_probe",
+            severity="high",
+            description="probe",
+            affected_data_categories=["email"],
+            detected_by="test",
+        )
+    )
+    written = list(breach_log_dir().glob("breaches_*.jsonl"))
+    assert written, breach_log_dir()
+    assert _outside_package(written[0])
+    assert tmp_path in written[0].parents
+    assert _rows(written[0])[-1]["event_id"] == "breach_probe"
+
+
+def test_breach_log_dir_stays_pinnable_for_callers(tmp_path):
+    detector = BreachDetector()
+    pinned = tmp_path / "pinned-breach"
+    detector._BREACH_LOG_DIR = pinned
+    assert detector._log_dir() == pinned
+
+
+# ------------------------------------------------------------------- session store
+
+
+def test_session_store_default_resolves_outside_the_installed_package(tmp_path):
+    resolved = PseudonymisationSession().store_path()
+    assert _outside_package(resolved)
+    assert tmp_path in resolved.parents
+    assert resolved.name == "pseudonymisation_sessions"
+    assert not resolved.exists()
+
+
+def test_session_store_never_lands_in_the_package_tree():
+    resolved = PseudonymisationSession().store_path()
+    assert PKG_ROOT / "user" / "pseudonymisation_sessions" != resolved
+    assert PKG_ROOT not in resolved.parents
+
+
+def test_session_store_env_override_wins_verbatim(tmp_path, monkeypatch):
+    target = tmp_path / "override" / "sessions"
+    monkeypatch.setenv(SESSION_STORE_ENV, str(target))
+    assert PseudonymisationSession().store_path() == target
+
+
+def test_session_store_explicit_path_beats_the_override(tmp_path, monkeypatch):
+    monkeypatch.setenv(SESSION_STORE_ENV, str(tmp_path / "env"))
+    explicit = tmp_path / "explicit"
+    assert PseudonymisationSession(store_path=str(explicit)).store_path() == explicit
+
+
+def test_saved_session_is_written_to_user_state_with_0600(tmp_path):
+    session = PseudonymisationSession()
+    session.get_or_create_pseudonym("erika.mustermann@example.com", PIIType.EMAIL)
+    session.save()
+
+    session_file = session._session_file()
+    assert _outside_package(session_file)
+    assert tmp_path in session_file.parents
+    assert stat.S_IMODE(session_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(session_file.parent.stat().st_mode) == 0o700
+
+
+def test_saved_session_round_trips_the_reverse_map(tmp_path):
+    original = PseudonymisationSession()
+    pseudo = original.get_or_create_pseudonym("erika.mustermann@example.com", PIIType.EMAIL)
+    original.save()
+
+    resumed = PseudonymisationSession(session_id=original.session_id)
+    assert resumed._reverse_mappings[pseudo] == "erika.mustermann@example.com"
+
+
+def test_the_docstring_does_not_claim_encryption_it_does_not_do(tmp_path):
+    """Item 5's second half: no false security statement left in the code.
+
+    The class docstring used to say "Mappings are stored encrypted on disk".
+    Nothing encrypts them. If encryption is ever added, this test is the thing
+    that has to change with it.
+    """
+    doc = PseudonymisationSession.__doc__ or ""
+    assert "encrypted" not in doc.lower()
+    assert "PLAINTEXT" in doc
+
+    session = PseudonymisationSession()
+    session.get_or_create_pseudonym("erika.mustermann@example.com", PIIType.EMAIL)
+    session.save()
+    on_disk = session._session_file().read_text(encoding="utf-8")
+    assert "erika.mustermann@example.com" in on_disk, (
+        "the file is plaintext; if that changed, the docstring must change too"
+    )

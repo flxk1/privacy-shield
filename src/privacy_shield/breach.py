@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
@@ -16,7 +17,25 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from privacy_shield.audit_log import _STATE_APP_DIR, _user_state_home
+
 logger = logging.getLogger(__name__)
+
+BREACH_LOG_DIR_ENV = "PRIVACY_SHIELD_BREACH_LOG_DIR"
+
+
+def breach_log_dir() -> Path:
+    """Where the Art. 33(2) breach log lives - resolved at call time.
+
+    The OS user-state home, the same root as the audit log, NOT inside the
+    installed package. Breach records name tenants and describe what leaked;
+    they are user state, and site-packages is world-readable, shared between
+    every user of the interpreter and wiped on reinstall.
+    """
+    override = str(os.environ.get(BREACH_LOG_DIR_ENV, "")).strip()
+    if override:
+        return Path(override)
+    return _user_state_home() / _STATE_APP_DIR / "breach_log"
 
 # ---------------------------------------------------------------------------
 # Breach event dataclass
@@ -75,8 +94,12 @@ class BreachDetector:
     - Mass data extraction (unusual query volume)
     """
 
-    # Persistent breach log directory (append-only JSONL)
-    _BREACH_LOG_DIR = Path(__file__).resolve().parent / "data" / "breach_log"
+    # Persistent breach log directory (append-only JSONL). None means "ask
+    # breach_log_dir() at call time"; set it to a Path to pin it.
+    _BREACH_LOG_DIR: Optional[Path] = None
+
+    def _log_dir(self) -> Path:
+        return Path(self._BREACH_LOG_DIR) if self._BREACH_LOG_DIR else breach_log_dir()
 
     def __init__(self) -> None:
         # Rolling counters: tenant_id -> list of timestamps
@@ -325,8 +348,9 @@ class BreachDetector:
         # is a real compliance gap (the durable Art. 33(2) record is lost
         # with no signal beyond the log line), not fixed here.
         now = datetime.now(timezone.utc)
-        self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_file = self._BREACH_LOG_DIR / f"breaches_{now.strftime('%Y_%m')}.jsonl"
+        log_dir = self._log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"breaches_{now.strftime('%Y_%m')}.jsonl"
         try:
             with open(log_file, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(asdict(breach), default=str) + "\n")
@@ -354,9 +378,10 @@ class BreachDetector:
 
     def _load_from_disk(self) -> None:
         """Load all breach events from persistent JSONL files."""
-        if not self._BREACH_LOG_DIR.exists():
+        log_dir = self._log_dir()
+        if not log_dir.exists():
             return
-        for log_file in sorted(self._BREACH_LOG_DIR.glob("breaches_*.jsonl")):
+        for log_file in sorted(log_dir.glob("breaches_*.jsonl")):
             try:
                 for line in log_file.read_text(encoding="utf-8").splitlines():
                     line = line.strip()

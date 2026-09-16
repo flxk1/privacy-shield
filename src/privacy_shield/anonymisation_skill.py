@@ -19,10 +19,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Counter, Dict, List, Optional, Set
 
+from .audit_log import _STATE_APP_DIR, _user_state_home
 from .redactor import Redactor, RedactionMode, RedactionResult, SelectionMode
 from .scanner import Confidence, Finding, PIIType, PrivacyScanner, ScanResult
 
 logger = logging.getLogger(__name__)
+
+SESSION_STORE_ENV = "PRIVACY_SHIELD_SESSION_STORE_DIR"
 
 
 # =============================================================================
@@ -214,14 +217,18 @@ class PseudonymisationSession:
     Persistent pseudonymisation session.
 
     Maintains consistent pseudonym mappings across multiple calls.
-    Mappings are stored encrypted on disk for session resumption.
+
+    A saved session holds the full re-identification map - pseudonym back to
+    the real name, email or IBAN it stands for. It is stored as PLAINTEXT
+    JSON; nothing in this package encrypts it. What it gets instead is the
+    user-state home rather than the installed package tree, and 0600 on the
+    file with 0700 on the directory. Treat a saved session as being exactly
+    as sensitive as the source document, because it is.
     """
 
     def __init__(self, session_id: Optional[str] = None, store_path: Optional[str] = None):
         self.session_id = session_id or str(uuid.uuid4())
-        self._store_path = store_path or os.path.join(
-            os.path.dirname(__file__), "user", "pseudonymisation_sessions"
-        )
+        self._store_path = store_path
         self._mappings: Dict[str, str] = {}
         self._reverse_mappings: Dict[str, str] = {}
         self._entity_counter: Dict[str, int] = {}
@@ -230,10 +237,29 @@ class PseudonymisationSession:
         if session_id:
             self._load_session()
 
+    def store_path(self) -> Path:
+        """Where sessions live - resolved at call time.
+
+        The OS user-state home, the same root as the audit log and the breach
+        log, NOT ``os.path.dirname(__file__)``: site-packages is shared between
+        every user of the interpreter, is world-readable by default, and is
+        wiped on reinstall. A re-identification map does not belong there.
+        """
+        if self._store_path:
+            return Path(self._store_path)
+        override = str(os.environ.get(SESSION_STORE_ENV, "")).strip()
+        if override:
+            return Path(override)
+        return _user_state_home() / _STATE_APP_DIR / "pseudonymisation_sessions"
+
     def _session_file(self) -> Path:
         """Get path to session file."""
-        path = Path(self._store_path)
+        path = self.store_path()
         path.mkdir(parents=True, exist_ok=True)
+        try:
+            path.chmod(0o700)
+        except OSError as exc:
+            logger.warning("Cannot restrict %s to 0700: %s", path, exc)
         # Sanitise session_id for filesystem safety
         safe_id = "".join(c for c in self.session_id if c.isalnum() or c in "-_")[:64]
         return path / f"{safe_id}.json"
@@ -262,6 +288,10 @@ class PseudonymisationSession:
             "saved_at": time.time(),
         }
         session_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            session_file.chmod(0o600)
+        except OSError as exc:
+            logger.warning("Cannot restrict %s to 0600: %s", session_file, exc)
         logger.info("Saved pseudonymisation session %s", self.session_id)
 
     def get_or_create_pseudonym(self, original: str, pii_type: PIIType) -> str:
