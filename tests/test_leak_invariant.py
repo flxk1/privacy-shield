@@ -16,6 +16,22 @@ the package: an oracle that shares the code under test cannot catch the code
 under test being wrong. 253 tests were green while a "Ref " prefix switched the
 product off, because every one of them asked the scanner what it had found
 instead of reading the bytes that came out.
+
+Re-implementing a validator is not enough on its own. The first version of this
+oracle re-implemented mod-97 and Luhn correctly and still reported "no
+identifiers present" for every leaking input, because it looked for candidates
+the same way the code under test did - with a ``\\b``-anchored regex. One word
+character glued in front of an identifier hid it from the oracle and from the
+detector simultaneously, so the assertion passed vacuously while a
+checksum-valid IBAN went out in the payload.
+
+So the oracle shares no anchoring assumption with the detectors. It walks every
+maximal run of identifier characters and tests every candidate substring. What
+it may share is a published SPECIFICATION - the Luhn algorithm, mod-97, the
+ISO 13616 country/length registry - because those define what the identifier IS.
+What it must never share is a heuristic: there is deliberately no issuer-prefix
+table here, so a card the package's issuer table does not recognise still fails
+this gate.
 """
 
 from __future__ import annotations
@@ -29,14 +45,42 @@ from privacy_shield import scan
 from privacy_shield.shield import PrivacyMode
 
 # ---------------------------------------------------------------------------
+# Published test vectors. Both are documentation examples, not live
+# credentials: the ECBS specimen IBAN quoted in the IBAN registry examples and
+# the reserved test card number every payment SDK documents. They are the only
+# identifier literals in this file; everything else is synthesised at runtime
+# with a real check digit.
+# ---------------------------------------------------------------------------
+
+EXAMPLE_IBAN = "DE89370400440532013000"
+EXAMPLE_IBAN_SPACED = "DE89 3704 0044 0532 0130 00"
+EXAMPLE_CARD = "4111111111111111"
+EXAMPLE_CARD_SPACED = "4111 1111 1111 1111"
+
+# ---------------------------------------------------------------------------
 # Independent oracle - no privacy_shield imports below this line
 # ---------------------------------------------------------------------------
 
-_ORACLE_EMAIL = re.compile(
-    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
-)
-_ORACLE_IBAN = re.compile(r"\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]{2,4}){2,8}\b")
-_ORACLE_CARD = re.compile(r"\b(?:[0-9]{4}[ -]?){3}[0-9]{1,4}\b")
+# ISO 13616: the registered IBAN length per country. This is the specification,
+# not a heuristic - a 23-character string beginning "NG20" is not an IBAN
+# because Nigeria has no IBAN, however the checksum comes out.
+_IBAN_LENGTHS = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16,
+    "BG": 22, "BH": 22, "BI": 27, "BR": 29, "BY": 28, "CH": 21, "CR": 22,
+    "CY": 28, "CZ": 24, "DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20,
+    "EG": 29, "ES": 24, "FI": 18, "FK": 18, "FO": 18, "FR": 27, "GB": 22,
+    "GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28, "HR": 21, "HU": 28,
+    "IE": 22, "IL": 23, "IQ": 23, "IS": 26, "IT": 27, "JO": 30, "KW": 30,
+    "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20, "LV": 21,
+    "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20, "MR": 27,
+    "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23, "PK": 24,
+    "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "RU": 33,
+    "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24, "SM": 27,
+    "SO": 23, "ST": 25, "SV": 28, "TL": 23, "TN": 24, "TR": 26, "UA": 29,
+    "VA": 22, "VG": 24, "XK": 20,
+}
+
+_ORACLE_SEPARATORS = " \t-"
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -66,24 +110,181 @@ def _iban_ok(candidate: str) -> bool:
     return int(expanded) % 97 == 1
 
 
-def _validated_identifiers(text: str) -> list[tuple[str, str]]:
-    """Every IBAN / card / email in *text* that an independent check confirms."""
+def _oracle_runs(text: str) -> list[tuple[str, list[int]]]:
+    """Every maximal run of identifier characters, compacted to alphanumerics.
+
+    No word boundary is consulted anywhere. A run grows over ASCII
+    alphanumerics and single internal spaces, tabs or hyphens - the separators
+    people actually write inside an IBAN or a card number - and ends at
+    anything else, including a newline. ``offsets[i]`` is where ``compact[i]``
+    sits in *text*.
+    """
+    runs: list[tuple[str, list[int]]] = []
+    compact: list[str] = []
+    offsets: list[int] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char.isascii() and char.isalnum():
+            compact.append(char)
+            offsets.append(index)
+            index += 1
+            continue
+        if compact and char in _ORACLE_SEPARATORS:
+            ahead = index
+            while ahead < length and text[ahead] in _ORACLE_SEPARATORS:
+                ahead += 1
+            if ahead - index == 1 and ahead < length and text[ahead].isascii() and text[ahead].isalnum():
+                index = ahead
+                continue
+        if compact:
+            runs.append(("".join(compact), offsets))
+            compact, offsets = [], []
+        index += 1
+    if compact:
+        runs.append(("".join(compact), offsets))
+    return runs
+
+
+def _oracle_ibans(text: str) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
-    for match in _ORACLE_EMAIL.finditer(text):
-        found.append(("email", match.group()))
-    for match in _ORACLE_IBAN.finditer(text):
-        if _iban_ok(match.group()):
-            found.append(("iban", match.group()))
-    for match in _ORACLE_CARD.finditer(text):
-        raw = match.group()
-        if _luhn_ok(re.sub(r"[ -]", "", raw)):
-            found.append(("credit_card", raw))
+    for compact, offsets in _oracle_runs(text):
+        position = 0
+        while position < len(compact) - 14:
+            window = compact[position:position + 4]
+            if not (window[:2].isalpha() and window[2:].isdigit()):
+                position += 1
+                continue
+            registered = _IBAN_LENGTHS.get(compact[position:position + 2].upper())
+            lengths = (registered,) if registered else range(34, 14, -1)
+            for size in lengths:
+                if position + size > len(compact):
+                    continue
+                candidate = compact[position:position + size]
+                if _iban_ok(candidate):
+                    start = offsets[position]
+                    end = offsets[position + size - 1] + 1
+                    found.append((candidate, text[start:end]))
+                    position += size - 1
+                    break
+            position += 1
+    return found
+
+
+def _oracle_cards(text: str) -> list[tuple[str, str]]:
+    """Every Luhn-valid 13-19 digit window, at every offset.
+
+    Deliberately no issuer-prefix table. The package has one; if this oracle
+    had the same one, a card whose prefix the package does not know would be
+    invisible to both at once - which is the failure mode this whole file
+    exists to prevent.
+    """
+    found: list[tuple[str, str]] = []
+    for compact, offsets in _oracle_runs(text):
+        for digits in re.finditer(r"\d+", compact):
+            run_start, run_end = digits.start(), digits.end()
+            position = run_start
+            while position < run_end:
+                claimed = 0
+                for size in range(19, 12, -1):
+                    if position + size > run_end:
+                        continue
+                    candidate = compact[position:position + size]
+                    if _luhn_ok(candidate):
+                        start = offsets[position]
+                        end = offsets[position + size - 1] + 1
+                        found.append((candidate, text[start:end]))
+                        claimed = size
+                        break
+                position += claimed if claimed else 1
+    return found
+
+
+_ORACLE_LOCAL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
+_ORACLE_DOMAIN = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-"
+_ORACLE_EMAIL_SHAPE = re.compile(
+    r"\A[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z"
+)
+
+
+def _oracle_emails(text: str) -> list[tuple[str, str]]:
+    """Every RFC-shaped address, found by expanding outwards from each '@'.
+
+    Expanding from the '@' rather than matching from a word boundary is the
+    point: a word character the local-part class does not cover - a German
+    umlaut, say - glued in front of an address makes a ``\\b``-anchored pattern
+    miss the whole thing.
+    """
+    found: list[tuple[str, str]] = []
+    for at in (index for index, char in enumerate(text) if char == "@"):
+        left = at
+        while left > 0 and text[left - 1] in _ORACLE_LOCAL:
+            left -= 1
+        right = at + 1
+        while right < len(text) and text[right] in _ORACLE_DOMAIN:
+            right += 1
+        for start in range(left, at):
+            matched = None
+            for end in range(right, at + 1, -1):
+                candidate = text[start:end]
+                if _ORACLE_EMAIL_SHAPE.match(candidate) and len(candidate) <= 254:
+                    matched = candidate
+                    break
+            if matched:
+                found.append((matched, matched))
+                break
+    return found
+
+
+def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
+    """Every IBAN / card / email in *text* an independent check confirms.
+
+    Returns ``(kind, canonical, as_written)``: the compacted identifier and the
+    exact substring of *text* it came from, which differ whenever the input
+    groups the number with spaces.
+    """
+    found: list[tuple[str, str, str]] = []
+    for canonical, as_written in _oracle_emails(text):
+        found.append(("email", canonical, as_written))
+    for canonical, as_written in _oracle_ibans(text):
+        found.append(("iban", canonical, as_written))
+    for canonical, as_written in _oracle_cards(text):
+        found.append(("credit_card", canonical, as_written))
     return found
 
 
 # ---------------------------------------------------------------------------
 # The invariant
 # ---------------------------------------------------------------------------
+
+#: Residue shorter than this is coincidence, not a surviving fragment. Eight
+#: alphanumerics of a specific identifier colliding with unrelated overlay text
+#: is a one-in-a-hundred-million event; eight digits of the identifier itself
+#: standing in the payload is a leak of most of the account number.
+RESIDUE_RUN = 8
+
+
+def _compact(value: str) -> str:
+    return "".join(char for char in value if char.isascii() and char.isalnum())
+
+
+def _residue_run(identifier: str, overlay: str) -> str:
+    """The longest contiguous stretch of *identifier* present in *overlay*.
+
+    Whole-value containment is not enough on its own: a spliced placeholder or
+    a span applied at a stale offset leaves most of the number behind while the
+    complete string is gone, and a check that only asks "is the whole value in
+    there" calls that clean.
+    """
+    needle = _compact(identifier)
+    haystack = _compact(overlay)
+    for size in range(len(needle), RESIDUE_RUN - 1, -1):
+        for start in range(0, len(needle) - size + 1):
+            if needle[start:start + size] in haystack:
+                return needle[start:start + size]
+    return ""
 
 
 def leaks_in(text: str, document) -> list[str]:
@@ -97,13 +298,43 @@ def leaks_in(text: str, document) -> list[str]:
     for span in document.spans:
         value = (span.value or "").strip()
         if value and value in overlay:
-            leaks.append(f"detected {span.pii_type} value {value!r} survived in overlay")
+            leaks.append(f"detected {span.pii_type} value survived whole in overlay")
 
-    for kind, value in _validated_identifiers(text):
-        if value in overlay:
-            leaks.append(f"validated {kind} {value!r} survived in overlay")
+    for kind, canonical, as_written in validated_identifiers(text):
+        if canonical in overlay or as_written in overlay:
+            leaks.append(f"validated {kind} survived whole in overlay")
+            continue
+        if kind == "email":
+            local = canonical.split("@", 1)[0]
+            if len(local) >= 4 and local in overlay:
+                leaks.append(f"validated {kind} local part survived in overlay")
+            continue
+        residue = _residue_run(canonical, overlay)
+        if residue:
+            leaks.append(
+                f"validated {kind} left {len(residue)} of {len(canonical)} "
+                "characters of residue in overlay"
+            )
 
     return leaks
+
+
+#: The four modes. LOCAL_ONLY never clears an external egress, so the invariant
+#: is vacuous there by construction - it is in the list so that a change which
+#: quietly starts clearing it shows up here rather than in production.
+ALL_MODES = [
+    PrivacyMode.STANDARD,
+    PrivacyMode.REGEX_ONLY,
+    PrivacyMode.ANONYMOUS_JSON,
+    PrivacyMode.LOCAL_ONLY,
+]
+
+#: The three modes that can actually clear a payload for egress.
+EGRESS_MODES = [
+    PrivacyMode.STANDARD,
+    PrivacyMode.REGEX_ONLY,
+    PrivacyMode.ANONYMOUS_JSON,
+]
 
 
 def assert_no_leak(text: str, mode: PrivacyMode = PrivacyMode.STANDARD) -> None:
@@ -113,7 +344,6 @@ def assert_no_leak(text: str, mode: PrivacyMode = PrivacyMode.STANDARD) -> None:
         assert not leaks, (
             "LEAK INVARIANT VIOLATED\n"
             f"  mode      : {mode.value}\n"
-            f"  input     : {text!r}\n"
             f"  overlay   : {document.overlay!r}\n"
             f"  pii       : {document.pii_detected}\n"
             f"  egress    : {document.egress_allowed}\n"
@@ -121,15 +351,20 @@ def assert_no_leak(text: str, mode: PrivacyMode = PrivacyMode.STANDARD) -> None:
         )
 
 
+def assert_no_leak_any_mode(text: str) -> None:
+    for mode in ALL_MODES:
+        assert_no_leak(text, mode=mode)
+
+
 # ---------------------------------------------------------------------------
 # Named regressions - the five reproductions that rejected 2.0.0
 # ---------------------------------------------------------------------------
 
 REJECTION_REPRODUCTIONS = [
-    pytest.param("DE89370400440532013000", id="bare_iban"),
-    pytest.param("Ref DE89370400440532013000", id="iban_behind_ref_prefix"),
-    pytest.param("4111111111111111", id="bare_card"),
-    pytest.param("ID 4111111111111111", id="card_behind_id_prefix"),
+    pytest.param(EXAMPLE_IBAN, id="bare_iban"),
+    pytest.param(f"Ref {EXAMPLE_IBAN}", id="iban_behind_ref_prefix"),
+    pytest.param(EXAMPLE_CARD, id="bare_card"),
+    pytest.param(f"ID {EXAMPLE_CARD}", id="card_behind_id_prefix"),
     pytest.param("Kontakt: ref abcdef1234@example.com", id="email_behind_ref_hex_local_part"),
 ]
 
@@ -137,6 +372,77 @@ REJECTION_REPRODUCTIONS = [
 @pytest.mark.parametrize("text", REJECTION_REPRODUCTIONS)
 def test_release_gate_rejection_reproductions(text):
     assert_no_leak(text)
+
+
+# ---------------------------------------------------------------------------
+# The class behind those five: a word character glued to the identifier
+# ---------------------------------------------------------------------------
+#
+# Every pattern in Layer 1 starts with \b. A word boundary exists between a
+# word character and a non-word character, so ONE word character in front of an
+# identifier means no boundary exists at its first character - and because the
+# rest of an IBAN or a card number is also word characters, no boundary exists
+# anywhere inside it either. The pattern therefore never matches, the validator
+# is never offered the candidate, and the caller is told pii_detected=False
+# while a mod-97-valid account number goes out verbatim.
+#
+# These are the shapes that arise in real documents, not exotic ones.
+
+GLUED_PREFIX_SHAPES = [
+    pytest.param("acct_{identifier}", id="underscore_prefixed_account_reference"),
+    pytest.param("Rechnung2026{identifier}", id="document_number_run_together"),
+    pytest.param("id-a3f{identifier}", id="id_dash_hex_prefix"),
+    # Quoted-printable encodes a space as =20 and every non-ASCII byte as =XX.
+    # Any MIME body with German umlauts is transfer-encoded this way, and .txt,
+    # .eml and .log are all in the default extension set.
+    pytest.param("Konto=20{identifier}", id="quoted_printable_space"),
+    pytest.param("Gesch=E4ftskonto=20{identifier}", id="quoted_printable_umlaut_line"),
+    pytest.param("x{identifier}", id="single_letter_glued"),
+    pytest.param("7{identifier}", id="single_digit_glued"),
+    pytest.param("A;B{identifier};C", id="csv_field_run_together"),
+]
+
+
+@pytest.mark.parametrize("shape", GLUED_PREFIX_SHAPES)
+@pytest.mark.parametrize("identifier", [EXAMPLE_IBAN, EXAMPLE_CARD], ids=["iban", "card"])
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_release_gate_glued_prefix_class(shape, identifier, mode):
+    """A checksum-valid identifier must be found whatever is glued to it."""
+    assert_no_leak(shape.format(identifier=identifier), mode=mode)
+
+
+@pytest.mark.parametrize("shape", GLUED_PREFIX_SHAPES)
+@pytest.mark.parametrize("identifier", [EXAMPLE_IBAN, EXAMPLE_CARD], ids=["iban", "card"])
+def test_glued_prefix_is_reported_not_merely_removed(shape, identifier):
+    """The caller must also be WARNED, not silently handed a clean overlay.
+
+    The original defect at least set pii_detected. The glued-prefix class did
+    not: it returned False, so a caller deciding on that flag had no signal at
+    all.
+    """
+    document = scan(shape.format(identifier=identifier)).documents[0]
+    assert document.pii_detected, document.overlay
+
+
+def test_glued_prefix_keeps_the_prefix_and_loses_the_number():
+    """Precision: the placeholder replaces the identifier, not its neighbours.
+
+    A prefixed account reference keeps its prefix. Redacting the surrounding
+    characters too would be safe and useless - the overlay is what the cloud
+    model reads.
+    """
+    document = scan(f"acct_{EXAMPLE_IBAN} freigegeben").documents[0]
+    assert document.overlay == "acct_[IBAN] freigegeben", document.overlay
+
+
+def test_umlaut_glued_to_an_email_does_not_hide_it():
+    """The same class, on the email pattern.
+
+    An umlaut is a word character that the local-part class does not cover, so
+    \\b finds no boundary and the address is invisible - while the address
+    itself is perfectly valid and perfectly readable to a human.
+    """
+    assert_no_leak("Gruesse an Frau Muelleräerika@example.com")
 
 
 @pytest.mark.parametrize(
@@ -212,7 +518,7 @@ def test_a_trimmed_identifier_does_not_blank_out_its_neighbour():
     only half the job - the untrimmed candidate has to go, or the redactor
     merges the two and blanks the neighbour out as well.
     """
-    text = "Ref DE89370400440532013000\nID 4111111111111111\n"
+    text = f"Ref {EXAMPLE_IBAN}\nID {EXAMPLE_CARD}\n"
     document = scan(text).documents[0]
 
     assert not leaks_in(text, document)
@@ -224,7 +530,14 @@ def test_a_trimmed_identifier_does_not_blank_out_its_neighbour():
 # ---------------------------------------------------------------------------
 
 _NAMES = ["Erika Mustermann", "Max Mueller", "Anna Schmidt", "Klaus Weber"]
-_PREFIXES = ["", "Ref ", "REF: ", "ID ", "id-", "UUID ", "Referenz: ", "Nr. "]
+# Separated prefixes and glued ones. The glued half is the class the five named
+# reproductions belonged to: a word character immediately before the first
+# character of the identifier.
+_PREFIXES = [
+    "", "Ref ", "REF: ", "ID ", "id-", "UUID ", "Referenz: ", "Nr. ",
+    "acct_", "Rechnung2026", "id-a3f", "Konto=20", "Gesch=E4ftskonto=20",
+    "x", "7", "Beleg-", "KTO/",
+]
 _NOISE = [
     "Art. 6 DSGVO",
     "Gemaess GDPR",
@@ -238,8 +551,14 @@ _NOISE = [
 ]
 
 
+# A spread of registered IBAN countries and their registered total lengths, so
+# the battery is not all one national format.
+_IBAN_COUNTRIES = {"DE": 22, "AT": 20, "NL": 18, "BE": 16, "ES": 24, "IT": 27, "NO": 15}
+
+
 def _make_iban(rng: random.Random, country: str = "DE") -> str:
-    bban = "".join(rng.choice("0123456789") for _ in range(18))
+    """A syntactically real IBAN for *country*, with a computed check digit."""
+    bban = "".join(rng.choice("0123456789") for _ in range(_IBAN_COUNTRIES[country] - 4))
     rotated = bban + "".join(str(int(ch, 36)) for ch in country) + "00"
     check = 98 - int(rotated) % 97
     return f"{country}{check:02d}{bban}"
@@ -270,44 +589,67 @@ def _spaced(rng: random.Random, digits: str) -> str:
     return " ".join(digits[i:i + size] for i in range(0, len(digits), size))
 
 
-def generate_document(rng: random.Random) -> str:
-    """A short realistic document carrying at least one validated identifier."""
+def generate_document(rng: random.Random) -> tuple[str, list[str], list[str]]:
+    """A short realistic document carrying at least one validated identifier.
+
+    Returns ``(text, planted, shapes)``. *planted* is ground truth - the exact
+    identifiers this document was built from, which no pattern had to find -
+    and *shapes* names how each was glued in, so a failure can be reported
+    without quoting the identifier itself.
+    """
     lines: list[str] = []
+    planted: list[str] = []
+    shapes: list[str] = []
     for _ in range(rng.randint(1, 4)):
         kind = rng.choice(["iban", "card", "email", "name", "noise"])
         prefix = rng.choice(_PREFIXES)
-        if kind == "iban":
-            lines.append(f"{prefix}{_spaced(rng, _make_iban(rng))}")
-        elif kind == "card":
-            lines.append(f"{prefix}{_spaced(rng, _make_card(rng))}")
-        elif kind == "email":
-            lines.append(f"{prefix}{_make_email(rng)}")
+        if kind in ("iban", "card", "email"):
+            if kind == "iban":
+                value = _make_iban(rng, rng.choice(list(_IBAN_COUNTRIES)))
+                written = _spaced(rng, value)
+            elif kind == "card":
+                value = _make_card(rng)
+                written = _spaced(rng, value)
+            else:
+                value = _make_email(rng)
+                written = value
+            planted.append(value)
+            shapes.append(f"{kind}/{prefix.strip() or 'bare'}/{'spaced' if written != value else 'compact'}")
+            lines.append(f"{prefix}{written}")
         elif kind == "name":
             lines.append(f"{rng.choice(_NAMES)}, Tel. +49 170 {rng.randint(1000000, 9999999)}")
         else:
             lines.append(rng.choice(_NOISE))
     rng.shuffle(lines)
     joiner = rng.choice(["\n", " ", ", "])
-    return joiner.join(lines)
+    return joiner.join(lines), planted, shapes
 
 
 GENERATED_DOCUMENT_COUNT = 300
 
 
-@pytest.mark.parametrize("mode", [PrivacyMode.STANDARD, PrivacyMode.REGEX_ONLY])
+@pytest.mark.parametrize("mode", ALL_MODES, ids=lambda m: m.value)
 def test_release_gate_generated_battery(mode):
-    """No generated document may egress carrying its own PII."""
+    """No generated document may egress carrying its own PII, in any mode.
+
+    Failures are reported by SHAPE and count. The identifiers are synthesised
+    here with real check digits and are never printed - a gate that pastes the
+    account numbers it just caught into a CI log is its own kind of leak.
+    """
     rng = random.Random(20260916)
     failures: list[str] = []
     for index in range(GENERATED_DOCUMENT_COUNT):
-        text = generate_document(rng)
+        text, planted, shapes = generate_document(rng)
         document = scan(text, mode=mode).documents[0]
         leaks = leaks_in(text, document)
+        # Ground truth, independent of any pattern on either side: the exact
+        # identifier this document was BUILT from must not be in the payload.
+        if document.egress_allowed:
+            for value in planted:
+                if value in document.overlay:
+                    leaks.append("planted identifier survived whole in overlay")
         if leaks:
-            failures.append(
-                f"[{index}] input={text!r}\n      overlay={document.overlay!r}\n"
-                f"      {'; '.join(leaks)}"
-            )
+            failures.append(f"[{index}] shapes={shapes} -> {'; '.join(sorted(set(leaks)))}")
     assert not failures, (
         f"{len(failures)}/{GENERATED_DOCUMENT_COUNT} generated documents leaked "
         f"in {mode.value} mode:\n" + "\n".join(failures[:15])
@@ -328,26 +670,31 @@ if given is not None:  # pragma: no branch
         st.sampled_from(_NAMES),
         st.sampled_from(
             [
-                "DE89370400440532013000",
-                "DE89 3704 0044 0532 0130 00",
-                "4111111111111111",
-                "4012 8888 8888 1881",
+                EXAMPLE_IBAN,
+                EXAMPLE_IBAN_SPACED,
+                EXAMPLE_CARD,
+                EXAMPLE_CARD_SPACED,
                 "abcdef1234@example.com",
                 "erika.mustermann@example.com",
                 "+49 170 1234567",
             ]
         ),
-        st.text(alphabet="abcdefABCDEF0123456789 .:,-/", max_size=24),
+        st.text(alphabet="abcdefABCDEF0123456789 .:,-/_=", max_size=24),
     )
 
     @settings(max_examples=250, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-    @given(st.lists(_fragment, min_size=1, max_size=8), st.sampled_from([" ", "\n", ", "]))
-    def test_release_gate_property(fragments, joiner):
+    @given(
+        st.lists(_fragment, min_size=1, max_size=8),
+        st.sampled_from([" ", "\n", ", ", ""]),
+        st.sampled_from(EGRESS_MODES),
+    )
+    def test_release_gate_property(fragments, joiner, mode):
         text = joiner.join(fragments)
         if not text.strip():
             return
-        document = scan(text).documents[0]
+        document = scan(text, mode=mode).documents[0]
         leaks = leaks_in(text, document)
         assert not leaks, (
-            f"input={text!r}\noverlay={document.overlay!r}\n" + "; ".join(leaks)
+            f"mode={mode.value}\ninput={text!r}\noverlay={document.overlay!r}\n"
+            + "; ".join(leaks)
         )
