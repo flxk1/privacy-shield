@@ -13,8 +13,18 @@ src/privacy_shield/data/privacy_shield/*.json
 *.onnx
 # the package is installed for tests; a root conftest papering over that is not tracked
 /conftest.py
-# No runtime state is written inside this tree any more, so there is nothing
-# here to ignore. The audit log, the privacy-skill KG, the Art. 33(2) breach log
-# and the pseudonymisation session store all resolve under the OS user-state
-# home (audit_log._user_state_home), outside this tree entirely. The credential
-# and evidence-pack paths went with the modules 2.0.0 removed.
+# No runtime state is written inside this tree any more: the audit log, the
+# privacy-skill KG, the Art. 33(2) breach log and the pseudonymisation session
+# store all resolve under the OS user-state home (audit_log._user_state_home),
+# outside this tree entirely, and the credential and evidence-pack paths went
+# with the modules 2.0.0 removed. So the rules that covered them are gone.
+#
+# These two stay, for the opposite reason to the others. Nothing writes them any
+# more, but 1.x runs left real files at both paths on working trees that have
+# been around since before the split: a credential master key, and generated
+# evidence packs. Without the rules the next `git add -A` commits them — which
+# is not hypothetical, both were caught in the index on this branch and taken
+# back out. Leave the rules until the stale files are deleted from the working
+# trees that still carry them.
+src/privacy_shield/user/.credentials_master.key
+src/privacy_shield/compliance_evidence/
