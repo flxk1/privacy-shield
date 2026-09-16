@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ._legacy_env import reject_legacy_env
+from ._legacy_env import LegacyEnvironmentError, reject_legacy_env
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -41,6 +41,10 @@ except Exception:
     httpx = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+
+class CredentialEncryptionUnavailable(RuntimeError):
+    """Raised instead of silently storing or reading a credential in cleartext."""
 
 
 _DEFAULT_USER_ROOT = Path(__file__).resolve().parent / "user"
@@ -285,39 +289,53 @@ def _derive_user_key(user_id: str, salt: bytes) -> bytes:
     return hashlib.sha256(combined).digest()
 
 
-def _get_fernet(user_id: str, salt_hex: str) -> Optional[Any]:
-    """Get Fernet instance for a user."""
+def _get_fernet(user_id: str, salt_hex: str) -> Any:
+    """Get a Fernet instance for a user.
+
+    Raises rather than degrading: there is no silent path back to plaintext
+    here any more. `Fernet is None` (cryptography not installed) and
+    `LegacyEnvironmentError` (from `_master_secret_bytes` via
+    `_derive_user_key`) both propagate as raises, same as any other
+    unexpected failure deriving the key. `_encrypt_key`/`_decrypt_key` no
+    longer catch anything from this call — see their docstrings.
+    """
     if Fernet is None:
-        return None
-    try:
-        salt = bytes.fromhex(salt_hex)
-        key = _derive_user_key(user_id, salt)
-        fernet_key = base64.urlsafe_b64encode(key)
-        return Fernet(fernet_key)
-    except Exception:
-        return None
+        raise CredentialEncryptionUnavailable(
+            "cryptography is not installed; credentials cannot be encrypted "
+            "or decrypted without it"
+        )
+    salt = bytes.fromhex(salt_hex)
+    key = _derive_user_key(user_id, salt)
+    fernet_key = base64.urlsafe_b64encode(key)
+    return Fernet(fernet_key)
 
 
 def _encrypt_key(user_id: str, api_key: str) -> Tuple[str, str]:
-    """Encrypt an API key. Returns (encrypted_key, salt_hex)."""
-    if Fernet is None:
-        # Fallback: base64 encoding (not secure, but functional)
-        encoded = base64.b64encode(api_key.encode("utf-8")).decode("utf-8")
-        return encoded, "fallback"
+    """Encrypt an API key. Returns (encrypted_key, salt_hex).
 
+    Raises (LegacyEnvironmentError / CredentialEncryptionUnavailable) instead
+    of writing the key in cleartext when encryption is not available for any
+    reason: a credential store must never silently persist a secret
+    unencrypted. There is no `key_salt="fallback"` write path any more; that
+    value is still accepted on read (`_decrypt_key`), for credentials a
+    pre-fix install already wrote insecurely.
+    """
     salt = secrets.token_bytes(16)
     salt_hex = salt.hex()
     fernet = _get_fernet(user_id, salt_hex)
-    if not fernet:
-        encoded = base64.b64encode(api_key.encode("utf-8")).decode("utf-8")
-        return encoded, "fallback"
-
     encrypted = fernet.encrypt(api_key.encode("utf-8"))
     return encrypted.decode("utf-8"), salt_hex
 
 
 def _decrypt_key(user_id: str, encrypted_key: str, salt_hex: str) -> Optional[str]:
-    """Decrypt an API key."""
+    """Decrypt an API key.
+
+    `key_salt="fallback"` is only ever read here now, never written by
+    `_encrypt_key` — it is the marker a pre-fix install left on disk.
+    Genuine decrypt failure (wrong/rotated master key, corrupted data)
+    returns None, same as before; a legacy env var or a missing
+    `cryptography` install raises out of `_get_fernet`, unchanged from there.
+    """
     if salt_hex == "fallback":
         try:
             return base64.b64decode(encrypted_key.encode("utf-8")).decode("utf-8")
@@ -325,9 +343,6 @@ def _decrypt_key(user_id: str, encrypted_key: str, salt_hex: str) -> Optional[st
             return None
 
     fernet = _get_fernet(user_id, salt_hex)
-    if not fernet:
-        return None
-
     try:
         decrypted = fernet.decrypt(encrypted_key.encode("utf-8"))
         return decrypted.decode("utf-8")
