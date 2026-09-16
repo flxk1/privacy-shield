@@ -13,11 +13,8 @@ src/privacy_shield/data/privacy_shield/*.json
 *.onnx
 # the package is installed for tests; a root conftest papering over that is not tracked
 /conftest.py
-# runtime state written by the package inside its own tree, never part of the distribution;
-# the audit log and the privacy-skill KG now live under the OS user-state home
-# (see audit_log._user_state_home / privacy_skill_kg), outside this tree entirely.
-src/privacy_shield/user/credentials/*.json
-src/privacy_shield/user/.credentials_master.key
-src/privacy_shield/user/pseudonymisation_sessions/
-src/privacy_shield/data/breach_log/
-src/privacy_shield/compliance_evidence/
+# No runtime state is written inside this tree any more, so there is nothing
+# here to ignore. The audit log, the privacy-skill KG, the Art. 33(2) breach log
+# and the pseudonymisation session store all resolve under the OS user-state
+# home (audit_log._user_state_home), outside this tree entirely. The credential
+# and evidence-pack paths went with the modules 2.0.0 removed.

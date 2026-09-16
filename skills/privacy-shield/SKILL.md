@@ -14,7 +14,7 @@ description: >-
   this before I send it to the cloud", "is this safe for an external LLM", "scan
   this folder for personal data", "make a privacy overlay", "lock this folder's
   egress".
-allowed-tools: privacy_scan, Bash, Read
+allowed-tools: privacy_scan, Bash(privacy-shield:*), Read
 governance:
   grade: L1
   actions:
@@ -46,7 +46,14 @@ Primary path, works standalone with nothing else installed: the
 `privacy_shield` package's scan / overlay / egress engine (`scanner`,
 `redactor`, `anonymous_json`, `gate`, `audit_log`). Call it as
 `privacy_shield.scan(target) -> ScanReport`, or via the `privacy-shield` CLI
-(`Bash`) over a file or folder (`Read`). The four modes (STANDARD /
+over a file or folder.
+
+The shell grant is scoped to `Bash(privacy-shield:*)` — the console script this
+package installs, and nothing else. An unrestricted `Bash` would hand a skill
+whose governance block prohibits `egress_original_unredacted_text` the ability
+to `curl` the original file anywhere, which is the exact act the block forbids.
+`Read` stays unscoped so the overlays the CLI writes to `--out` can be consumed;
+it cannot egress anything by itself. The four modes (STANDARD /
 LOCAL_ONLY / ANONYMOUS_JSON / REGEX_ONLY) are listed in the README, which
 links the repository's pipeline and external-enforcement notes.
 
