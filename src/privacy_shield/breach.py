@@ -293,7 +293,15 @@ class BreachDetector:
         """
         self._breach_log.append(breach)
 
-        # Persist to append-only JSONL
+        # Persist to append-only JSONL. A failure here (mkdir or write) is logged
+        # and swallowed, same as every other write path in this package
+        # (audit_log, compliance_evidence_export): the in-memory record above
+        # survives for this process, but the durable Art. 33(2) record is lost
+        # with no signal beyond the log line. That is a real compliance gap for
+        # this module specifically, not just a resilience trade-off; fixing it
+        # (raise, return a persisted flag, or a dead-letter fallback) changes
+        # report_breach's contract and belongs to a dedicated, reviewed change
+        # across all three write paths, not a drive-by here.
         try:
             now = datetime.now(timezone.utc)
             self._BREACH_LOG_DIR.mkdir(parents=True, exist_ok=True)
