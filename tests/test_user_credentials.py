@@ -165,6 +165,34 @@ def test_revalidate_credential_re_encrypts_a_fallback_record_under_a_real_salt(t
     assert get_decrypted_key("alice", "cred1", user_root=tmp_path) == OPENAI_KEY
 
 
+def test_revalidate_credential_with_a_fallback_record_and_no_cryptography(monkeypatch, tmp_path, caplog):
+    """The exact combination nothing covered before: a fallback (pre-fix,
+    cleartext) record on a build where cryptography is still not installed
+    — the stock/default state, since it is an extra, not a requirement. A
+    fallback record can only exist because a prior write happened without
+    cryptography; re-encrypting unconditionally therefore crashed exactly
+    the operators this remediation was for (_encrypt_key -> _get_fernet
+    raises CredentialEncryptionUnavailable when Fernet is None, out of a
+    function typed -> Tuple[bool, str]). No fake_fernet fixture: Fernet is
+    forced to None explicitly, not left to ambient package absence."""
+    monkeypatch.setattr(uc, "Fernet", None)
+    monkeypatch.setattr(uc, "httpx", None)  # deterministic: no live network path either
+    _plant_credential(tmp_path, "cred1", key_salt="fallback",
+                       encrypted_key=uc.base64.b64encode(OPENAI_KEY.encode()).decode())
+
+    with caplog.at_level("WARNING", logger="privacy_shield.user_credentials"):
+        result = revalidate_credential("alice", "cred1", user_root=tmp_path)  # must not raise
+
+    assert result == (True, "httpx not available - skipping live validation")
+    assert any("cred1" in r.message and "cleartext" in r.message and "credentials" in r.message
+               for r in caplog.records), "expected a warning naming the credentials extra"
+
+    # not rewritten: still "fallback", still the original cleartext value, still readable
+    stored = json.loads((tmp_path / "credentials" / "alice.json").read_text())["cred1"]
+    assert stored["key_salt"] == "fallback"
+    assert get_decrypted_key("alice", "cred1", user_root=tmp_path) == OPENAI_KEY
+
+
 def test_add_credential_and_get_decrypted_key_round_trip_with_real_cryptography(tmp_path):
     """No fake_fernet fixture: exercises genuine cryptography.fernet.Fernet
     end to end, not the _FakeFernet stand-in every other test in this file

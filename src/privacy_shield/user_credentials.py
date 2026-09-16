@@ -750,18 +750,50 @@ def revalidate_credential(
         # A successful read of a "fallback" record is the only moment this
         # system learns a secret has been sitting on disk as cleartext
         # (base64, not encrypted) since a pre-2.0.0 build without
-        # `cryptography` installed wrote it. Loud, naming what and whose,
-        # and — since the plaintext is already decrypted in hand and this
-        # record is about to be rewritten below regardless — re-encrypted
-        # under a real salt now rather than left insecure until the next
-        # unrelated write.
-        logger.warning(
-            "Credential %s (provider=%s, user=%s) was stored in cleartext "
-            "(key_salt=\"fallback\") by a pre-2.0.0 build without cryptography "
-            "installed; re-encrypting it under a real salt now",
-            credential_id, credential.provider, uid,
-        )
-        credential.encrypted_key, credential.key_salt = _encrypt_key(uid, api_key)
+        # `cryptography` installed wrote it. A fallback record existing at
+        # all means it was written WITHOUT cryptography — and cryptography
+        # is still not installed by default (it is the `credentials`
+        # extra), so "re-encrypt it now" and "cryptography is available
+        # right now" are not implied by each other. Re-encrypting
+        # unconditionally would call _encrypt_key -> _get_fernet, which
+        # raises CredentialEncryptionUnavailable when Fernet is None — out
+        # of a function typed -> Tuple[bool, str], for exactly the
+        # operators this warning is trying to help. Only attempt it when
+        # Fernet is actually available; otherwise stay loud but do not
+        # rewrite, and say what to install.
+        if Fernet is None:
+            logger.warning(
+                "Credential %s (provider=%s, user=%s) is stored in cleartext "
+                "(key_salt=\"fallback\") by a pre-2.0.0 build without "
+                "cryptography installed; still not installed here, so it "
+                "cannot be re-encrypted yet — run "
+                "pip install \"privacy-shield[credentials]\" and call "
+                "revalidate_credential again",
+                credential_id, credential.provider, uid,
+            )
+        else:
+            logger.warning(
+                "Credential %s (provider=%s, user=%s) was stored in cleartext "
+                "(key_salt=\"fallback\") by a pre-2.0.0 build without cryptography "
+                "installed; re-encrypting it under a real salt now",
+                credential_id, credential.provider, uid,
+            )
+            new_encrypted_key, new_salt = _encrypt_key(uid, api_key)
+            # Round-trip verify before overwriting: _master_secret_bytes can
+            # silently (debug-level) mint a fresh random master key when the
+            # persisted one is unreadable or unwritable, which would make
+            # this rewrite permanently unrecoverable even though the
+            # cleartext decrypted fine a moment ago. Refuse to lose data the
+            # remediation was supposed to protect.
+            if _decrypt_key(uid, new_encrypted_key, new_salt) == api_key:
+                credential.encrypted_key, credential.key_salt = new_encrypted_key, new_salt
+            else:
+                logger.error(
+                    "Re-encryption of credential %s (provider=%s, user=%s) "
+                    "failed round-trip verification; leaving the existing "
+                    "cleartext record in place rather than risk losing it",
+                    credential_id, credential.provider, uid,
+                )
 
     # Validate
     is_valid, error, _ = validate_key_live(
@@ -803,11 +835,15 @@ def get_decrypted_key(
     if credential.key_salt == "fallback":
         # Same disclosure as revalidate_credential; this path is read-only
         # (no record to rewrite here), so it does not also re-encrypt —
-        # call revalidate_credential (or add_credential again) to do that.
+        # call revalidate_credential (or add_credential again) to do that,
+        # after `pip install "privacy-shield[credentials]"` if that has not
+        # been done yet (revalidate_credential itself only re-encrypts when
+        # cryptography is actually available; otherwise it says so too).
         logger.warning(
             "Credential %s (provider=%s, user=%s) was stored in cleartext "
             "(key_salt=\"fallback\") by a pre-2.0.0 build without cryptography "
-            "installed; call revalidate_credential to re-encrypt it",
+            "installed; run pip install \"privacy-shield[credentials]\" and "
+            "call revalidate_credential to re-encrypt it",
             credential_id, credential.provider, uid,
         )
 
