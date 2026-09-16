@@ -22,44 +22,36 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   floor only (the modules degrade gracefully). `[extract]` extras
   (PyMuPDF, which is AGPL, and opencv) are needed for PDF/image extraction; without them those
   documents surface an extraction error.
-- **The local-LLM layer talks to local HTTP endpoints.** `user_credentials.py`
-  discovers providers on `http://localhost:11434` (Ollama), `:1234` (LM Studio),
-  `:1337` (Jan) and `:4891` (GPT4All). Detection stays on the machine; it is
-  local HTTP rather than an in-process model.
-- **An MCP wrapper is out of scope here** — `scan()` is the callable capability;
-  wrap it in a tool server when needed.
+- **The local-LLM layer talks to local HTTP endpoints.**
+  `services/local_model_runtime.py` discovers providers on
+  `http://localhost:11434` (Ollama), `:1234` (LM Studio), `:1337` (Jan) and
+  `:4891` (GPT4All). Detection stays on the machine; it is local HTTP rather
+  than an in-process model.
+- **The MCP tool is the enriched path, not the only path.** `scan()` and the
+  `privacy-shield` CLI are the callable capability with nothing else
+  installed; the `privacy-shield` skill's `privacy_scan` tool requires
+  `loomground-mcp`.
 
 ## Known gaps
 
-The compliance evidence export is still woven into the upstream service layer;
-the CLI entry point ships (`privacy-shield scan`) while an MCP-tool wrapper does
-not; the ONNX contextual model is shadow-only (no promotion); there is no
-bundled pre-embedded PII-context file.
+The ONNX contextual model is shadow-only (no promotion); there is no bundled
+pre-embedded PII-context file.
 
 ## Test split
 
 ```
 python3 -m pytest -q
-323 passed, 8 failed, 1 skipped
+253 passed, 8 failed
 ```
 
-332 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+261 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
-`privacy_shield.services.llm_runtime` — the upstream LLM gateway chain, out
-of scope in this subset. The 1 skip needs `cryptography` (the `credentials`
-extra), genuinely absent from this install on purpose — that absence is what
-`tests/test_user_credentials.py::test_add_credential_raises_when_cryptography_is_unavailable`
-and friends assert against; CI's dedicated `credentials` job installs
-`cryptography` and re-runs that file, catching a different class of bug (one
-inside real Fernet's own error surface) that installing `cryptography` there
-would not, and did not, catch — see CHANGELOG for why those two jobs are not
-interchangeable. `openai` is installed here (and by CI's `tests` job) so
+`privacy_shield.services.llm_runtime` — an upstream gateway this package does
+not ship. `openai` is installed here (and by CI's `tests` job) so
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 323 passed, 8 deselected, 1 skipped; the `credentials` job
-runs `tests/test_user_credentials.py` again with `cryptography` installed
-(39 passed, 0 skipped there).
+`tests` job runs 253 passed, 8 deselected.
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,

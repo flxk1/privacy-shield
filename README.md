@@ -16,15 +16,14 @@ pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
 
 Zero required dependencies. Extras: `[semantic]` numpy>=1.24 +
 onnxruntime>=1.16 (embeddings/shadow ONNX), `[extract]` PyMuPDF>=1.23 +
-opencv-python-headless>=4.8 (PDF/image, PyMuPDF AGPL), `[credentials]`
-cryptography>=42 (BYOK at rest), `[openai]` openai>=1 (local-model client),
-`[dev]` pyyaml>=6 + pytest>=7.
+opencv-python-headless>=4.8 (PDF/image, PyMuPDF AGPL), `[openai]` openai>=1
+(local-model client), `[dev]` pyyaml>=6 + pytest>=7.
 
 State lands outside the package in `<user-state>/privacy-shield/`:
 `logs/audit.jsonl` and `privacy_skill_kg/`, lazy-made. User-state is
 `$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
 Support`, Windows `%LOCALAPPDATA%`. `PRIVACY_SHIELD_AUDIT_LOG` and
-`PRIVACY_SHIELD_KG_DIR` override them verbatim.
+`PRIVACY_SHIELD_KG_DIR` override them.
 `PRIVACY_SHIELD_{NATIVE,EMBEDDED}_LOCAL_MODEL_ENDPOINT` is loopback/unix;
 `PRIVACY_SHIELD_MODEL_ENDPOINT_ALLOW_REMOTE=1` permits remote, logged.
 
@@ -72,12 +71,13 @@ enforcement host optional. Absent `[semantic]`/`[extract]`, detection
 degrades to the deterministic regex/lexicon floor. Without a sink,
 the guard decides locally and writes the standalone audit trail. A host
 attaches via the neutral `EnforcementSink` contract; see
-[ADR 0001](docs/adr/0001-external-enforcement.md). The
-`privacy-shield` skill wraps this capability for agents.
+[ADR 0001](docs/adr/0001-external-enforcement.md). The `privacy-shield` skill
+wraps this for agents: package/CLI needs nothing else; MCP requires
+`loomground-mcp`.
 
 ## Status
 
-2.0.0 · 332 tests, 323 passing · Python >=3.10 · limits and gaps:
+2.0.0 · 261 tests, 253 passing · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License
