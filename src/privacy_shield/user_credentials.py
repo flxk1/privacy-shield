@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ._legacy_env import reject_legacy_env
+
 try:
     from cryptography.fernet import Fernet, InvalidToken
 except Exception:
@@ -234,7 +236,19 @@ def _store_file(user_id: str, *, user_root: Optional[Path] = None) -> Path:
 
 
 def _master_secret_bytes() -> bytes:
-    """Get or generate the master encryption key."""
+    """Get or generate the master encryption key.
+
+    The one choke point every credential encrypt/decrypt call passes through
+    (via _derive_user_key/_get_fernet); guarding here, not at each public
+    function, covers add/get/update/delete/revalidate/get_decrypted_key in one
+    place. A legacy master-key name here is not a silent-degrade case like the
+    lower-level scan primitives: falling through to the persisted-or-generate
+    path below MINTS A NEW RANDOM KEY, so every credential encrypted under the
+    operator's intended (but misnamed) seed becomes permanently undecryptable.
+    That is irreversible, unlike a weaker detection default, so it is raised
+    loudly here rather than merely documented.
+    """
+    reject_legacy_env()
     seed = (
         str(os.environ.get("PRIVACY_SHIELD_CREDENTIALS_MASTER_KEY", "")).strip()
         or str(os.environ.get("PRIVACY_SHIELD_SKILL_INTAKE_MASTER_KEY", "")).strip()
