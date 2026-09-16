@@ -887,9 +887,32 @@ class HumanControlSource:
         return self._service().pending_summary(tenant_id=tenant_id)
 
 
+class _UnavailablePersistentObjectService:
+    """Stand-in when the host has not shimmed persistent_objects; every
+    list_* call degrades to empty rather than crashing the export."""
+
+    def list_objects(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return []
+
+    def list_events(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return []
+
+
 class PersistentObjectSource:
     def _service(self):
-        from privacy_shield.services.persistent_objects import get_persistent_object_service
+        # Renamed from brain.services.persistent_brain_objects in the 2.0.0
+        # rename (CHANGELOG); a host that shimmed only the names the
+        # CHANGELOG lists before this entry was added would otherwise hit an
+        # uncaught ImportError here on every export_workspace_evidence call.
+        try:
+            from privacy_shield.services.persistent_objects import get_persistent_object_service
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.persistent_objects not provided by this host (%s); "
+                "persistent-object evidence sections will be empty",
+                exc,
+            )
+            return _UnavailablePersistentObjectService()
 
         return get_persistent_object_service()
 
