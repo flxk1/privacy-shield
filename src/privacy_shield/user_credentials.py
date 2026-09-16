@@ -332,9 +332,13 @@ def _decrypt_key(user_id: str, encrypted_key: str, salt_hex: str) -> Optional[st
 
     `key_salt="fallback"` is only ever read here now, never written by
     `_encrypt_key` — it is the marker a pre-fix install left on disk.
-    Genuine decrypt failure (wrong/rotated master key, corrupted data)
-    returns None, same as before; a legacy env var or a missing
-    `cryptography` install raises out of `_get_fernet`, unchanged from there.
+    Genuine decrypt failure — wrong/rotated master key, corrupted
+    ciphertext, or a corrupted/odd-length/non-hex `key_salt` on the stored
+    record — returns None, same as 1.0.0 (`revalidate_credential` exists to
+    triage exactly this data; it must not raise on it). A legacy env var or
+    a missing `cryptography` install still raises out of `_get_fernet`,
+    unchanged from there — only `ValueError` from a bad `salt_hex` is
+    caught here, so that distinction is preserved.
     """
     if salt_hex == "fallback":
         try:
@@ -342,7 +346,10 @@ def _decrypt_key(user_id: str, encrypted_key: str, salt_hex: str) -> Optional[st
         except Exception:
             return None
 
-    fernet = _get_fernet(user_id, salt_hex)
+    try:
+        fernet = _get_fernet(user_id, salt_hex)
+    except ValueError:
+        return None
     try:
         decrypted = fernet.decrypt(encrypted_key.encode("utf-8"))
         return decrypted.decode("utf-8")
@@ -739,6 +746,23 @@ def revalidate_credential(
         _save_user_credentials(uid, credentials, user_root=user_root)
         return False, "Cannot decrypt key"
 
+    if credential.key_salt == "fallback":
+        # A successful read of a "fallback" record is the only moment this
+        # system learns a secret has been sitting on disk as cleartext
+        # (base64, not encrypted) since a pre-2.0.0 build without
+        # `cryptography` installed wrote it. Loud, naming what and whose,
+        # and — since the plaintext is already decrypted in hand and this
+        # record is about to be rewritten below regardless — re-encrypted
+        # under a real salt now rather than left insecure until the next
+        # unrelated write.
+        logger.warning(
+            "Credential %s (provider=%s, user=%s) was stored in cleartext "
+            "(key_salt=\"fallback\") by a pre-2.0.0 build without cryptography "
+            "installed; re-encrypting it under a real salt now",
+            credential_id, credential.provider, uid,
+        )
+        credential.encrypted_key, credential.key_salt = _encrypt_key(uid, api_key)
+
     # Validate
     is_valid, error, _ = validate_key_live(
         credential.provider,
@@ -775,6 +799,17 @@ def get_decrypted_key(
     credential = credentials.get(credential_id)
     if not credential:
         return None
+
+    if credential.key_salt == "fallback":
+        # Same disclosure as revalidate_credential; this path is read-only
+        # (no record to rewrite here), so it does not also re-encrypt —
+        # call revalidate_credential (or add_credential again) to do that.
+        logger.warning(
+            "Credential %s (provider=%s, user=%s) was stored in cleartext "
+            "(key_salt=\"fallback\") by a pre-2.0.0 build without cryptography "
+            "installed; call revalidate_credential to re-encrypt it",
+            credential_id, credential.provider, uid,
+        )
 
     return _decrypt_key(uid, credential.encrypted_key, credential.key_salt)
 

@@ -53,6 +53,21 @@ def _no_fallback_records_written(user_root):
             assert rec.get("key_salt") != "fallback", f"plaintext credential written: {f}"
 
 
+def _plant_credential(user_root, credential_id, *, key_salt, encrypted_key="ciphertext"):
+    """Write a raw credential record directly, as if a prior (possibly
+    corrupted) build had stored it — bypassing add_credential/_encrypt_key
+    entirely, so key_salt can be any value including a corrupted one."""
+    store = user_root / "credentials"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "alice.json").write_text(json.dumps({
+        credential_id: {
+            "credential_id": credential_id, "provider": "openai", "label": "x",
+            "created_at": "now", "updated_at": "now", "encrypted_key": encrypted_key,
+            "key_salt": key_salt,
+        }
+    }))
+
+
 @pytest.mark.parametrize("legacy", sorted(LEGACY_ENV))
 def test_add_credential_rejects_a_legacy_name(legacy, monkeypatch, tmp_path, fake_fernet):
     monkeypatch.setenv(legacy, "1")
@@ -93,6 +108,22 @@ def test_update_credential_does_not_touch_key_material(monkeypatch, tmp_path, fa
     assert updated is not None and updated.label == "renamed"  # no raise: no key material touched
 
 
+@pytest.mark.parametrize("bad_salt", ["not-hex!!", "abc"], ids=["non-hex", "odd-length"])
+def test_get_decrypted_key_degrades_on_a_corrupted_salt(bad_salt, tmp_path, fake_fernet):
+    """A corrupted/odd-length key_salt must degrade like 1.0.0 (None), not
+    raise ValueError out of the public boundary — this is exactly the data
+    revalidate_credential/get_decrypted_key exist to triage safely."""
+    _plant_credential(tmp_path, "cred1", key_salt=bad_salt)
+    assert get_decrypted_key("alice", "cred1", user_root=tmp_path) is None
+
+
+@pytest.mark.parametrize("bad_salt", ["not-hex!!", "abc"], ids=["non-hex", "odd-length"])
+def test_revalidate_credential_degrades_on_a_corrupted_salt(bad_salt, tmp_path, fake_fernet):
+    _plant_credential(tmp_path, "cred1", key_salt=bad_salt)
+    is_valid, error = revalidate_credential("alice", "cred1", user_root=tmp_path)
+    assert is_valid is False and error == "Cannot decrypt key"
+
+
 def test_add_credential_raises_when_cryptography_is_unavailable(monkeypatch, tmp_path):
     """Force the Fernet-unavailable condition explicitly (rather than relying
     on `cryptography` being absent from this environment's install, which is
@@ -104,3 +135,44 @@ def test_add_credential_raises_when_cryptography_is_unavailable(monkeypatch, tmp
     with pytest.raises(CredentialEncryptionUnavailable):
         add_credential("alice", "openai", OPENAI_KEY, validate=False, user_root=tmp_path)
     _no_fallback_records_written(tmp_path)
+
+
+def test_get_decrypted_key_warns_on_a_pre_fix_fallback_record(tmp_path, fake_fernet, caplog):
+    """A successful read of key_salt="fallback" is the only moment the
+    system learns a secret sat in cleartext — it must not be silent."""
+    _plant_credential(tmp_path, "cred1", key_salt="fallback",
+                       encrypted_key=uc.base64.b64encode(OPENAI_KEY.encode()).decode())
+    with caplog.at_level("WARNING", logger="privacy_shield.user_credentials"):
+        result = get_decrypted_key("alice", "cred1", user_root=tmp_path)
+    assert result == OPENAI_KEY
+    assert any("cred1" in r.message and "cleartext" in r.message for r in caplog.records)
+
+
+def test_revalidate_credential_re_encrypts_a_fallback_record_under_a_real_salt(tmp_path, fake_fernet, caplog):
+    """revalidate_credential opportunistically re-encrypts a pre-fix
+    plaintext record once it has the decrypted key in hand and is about to
+    rewrite the record anyway — this is its own test, per the instruction
+    that a re-encrypt decision needs one."""
+    _plant_credential(tmp_path, "cred1", key_salt="fallback",
+                       encrypted_key=uc.base64.b64encode(OPENAI_KEY.encode()).decode())
+    with caplog.at_level("WARNING", logger="privacy_shield.user_credentials"):
+        revalidate_credential("alice", "cred1", user_root=tmp_path)
+    assert any("cred1" in r.message and "cleartext" in r.message for r in caplog.records)
+
+    stored = json.loads((tmp_path / "credentials" / "alice.json").read_text())["cred1"]
+    assert stored["key_salt"] != "fallback"
+    # and it decrypts back to the same secret through the normal (non-fallback) path
+    assert get_decrypted_key("alice", "cred1", user_root=tmp_path) == OPENAI_KEY
+
+
+def test_add_credential_and_get_decrypted_key_round_trip_with_real_cryptography(tmp_path):
+    """No fake_fernet fixture: exercises genuine cryptography.fernet.Fernet
+    end to end, not the _FakeFernet stand-in every other test in this file
+    uses. Skipped where `cryptography` is not installed (this repo's `dev`
+    extra does not pull it in); CI's dedicated `.[dev,credentials]` leg
+    always has it, so at least one leg exercises the real encrypt path."""
+    pytest.importorskip("cryptography")
+    cred, err = add_credential("alice", "openai", OPENAI_KEY, validate=False, user_root=tmp_path)
+    assert cred is not None, err
+    assert cred.key_salt != "fallback"
+    assert get_decrypted_key("alice", cred.credential_id, user_root=tmp_path) == OPENAI_KEY
