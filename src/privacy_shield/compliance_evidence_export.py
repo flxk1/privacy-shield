@@ -270,6 +270,30 @@ class EvidencePack:
 # =============================================================================
 
 
+class _UnavailableComplianceControlPlane:
+    """Stand-in when the host has not shimmed compliance_control_plane
+    (a pre-existing host dependency, not renamed by 2.0.0 — it never
+    shipped in this package on 1.0.0 either): degrades to no evaluations /
+    a zeroed status instead of crashing export_workspace_evidence."""
+
+    class _EvaluationLog:
+        def get_recent(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+            return []
+
+    _evaluation_log = _EvaluationLog()
+
+    class _Status:
+        total_policies = 0
+        active_policies = 0
+        suspended_policies = 0
+        health_score = 0
+        recent_evaluations = 0
+        recent_violations = 0
+
+    def get_enforcement_status(self, tenant_id: str) -> "_UnavailableComplianceControlPlane._Status":
+        return self._Status()
+
+
 class PolicyEvaluationSource:
     """Source for policy evaluation records."""
 
@@ -278,7 +302,16 @@ class PolicyEvaluationSource:
 
     def _get_ccp(self):
         if self._ccp is None:
-            from privacy_shield.compliance_control_plane import get_compliance_control_plane
+            try:
+                from privacy_shield.compliance_control_plane import get_compliance_control_plane
+            except ImportError as exc:
+                logger.warning(
+                    "privacy_shield.compliance_control_plane not provided by "
+                    "this host (%s); policy-evaluation evidence will be empty",
+                    exc,
+                )
+                self._ccp = _UnavailableComplianceControlPlane()
+                return self._ccp
             self._ccp = get_compliance_control_plane()
         return self._ccp
 
@@ -426,8 +459,33 @@ class GovernanceLogSource:
     """Source for governance activity logs."""
 
     def __init__(self):
-        from privacy_shield.services.governance_audit import GOVERNANCE_DIR
-        self._governance_dir = GOVERNANCE_DIR
+        # Was an eager, unguarded `from privacy_shield.services.governance_audit
+        # import GOVERNANCE_DIR` here: since ComplianceEvidenceExporter()
+        # constructs this 4th (after Policy/Approval/AuditLog), a host missing
+        # this shim never reached PersistentObjectSource's guard at all —
+        # export_workspace_evidence died in this constructor first. Lazy +
+        # guarded now, same shape as the other sources.
+        self._governance_dir_cache: Optional[Path] = None
+        self._governance_dir_unavailable = False
+
+    @property
+    def _governance_dir(self) -> Optional[Path]:
+        if self._governance_dir_cache is not None:
+            return self._governance_dir_cache
+        if self._governance_dir_unavailable:
+            return None
+        try:
+            from privacy_shield.services.governance_audit import GOVERNANCE_DIR
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.governance_audit not provided by this "
+                "host (%s); governance-log evidence sections will be empty",
+                exc,
+            )
+            self._governance_dir_unavailable = True
+            return None
+        self._governance_dir_cache = GOVERNANCE_DIR
+        return GOVERNANCE_DIR
 
     @staticmethod
     def _resolve_username_tenant(username: str) -> str:
@@ -439,7 +497,18 @@ class GovernanceLogSource:
 
             row = host_app._load_user_account(name)
             return str((row or {}).get("tenant_id", "")).strip()
-        except Exception:
+        except Exception as exc:
+            # Silent here used to mean a record fell into the "no tenant"
+            # bucket with no trace of why: wrong-tenant/no-tenant evidence is
+            # a compliance-correctness issue, not merely an availability one,
+            # so this degrades (returns "", same as before) but is loud
+            # about it rather than invisible.
+            logger.warning(
+                "Cannot resolve tenant for user %r: privacy_shield.app not "
+                "provided by this host (%s); this record's tenant match may "
+                "be wrong, not merely absent",
+                name, exc,
+            )
             return ""
 
     def _record_matches_tenant(self, record: Dict[str, Any], tenant_id: Optional[str]) -> bool:
@@ -471,7 +540,10 @@ class GovernanceLogSource:
         limit: int = 500,
     ) -> List[Dict[str, Any]]:
         """Get governance events for the period."""
-        events_file = self._governance_dir / "governance_events.jsonl"
+        governance_dir = self._governance_dir
+        if governance_dir is None:
+            return []
+        events_file = governance_dir / "governance_events.jsonl"
         if not events_file.exists():
             return []
 
@@ -507,7 +579,10 @@ class GovernanceLogSource:
         limit: int = 500,
     ) -> List[Dict[str, Any]]:
         """Get agent activity log."""
-        activity_file = self._governance_dir / "activity_log.jsonl"
+        governance_dir = self._governance_dir
+        if governance_dir is None:
+            return []
+        activity_file = governance_dir / "activity_log.jsonl"
         if not activity_file.exists():
             return []
 
@@ -575,7 +650,18 @@ class QueryAuditSource:
             from privacy_shield import app as host_app
 
             user_root = Path(getattr(host_app, "USER_ROOT", Path(__file__).resolve().parent / "user"))
-        except Exception:
+        except Exception as exc:
+            # Was entirely silent: falling back to this package's own user/
+            # dir (almost certainly not where the host's real accounts/audits
+            # live) used to look identical to "no query-audit data exists"
+            # rather than "the host app shim is missing". Loud now, same as
+            # GovernanceLogSource._resolve_username_tenant.
+            logger.warning(
+                "privacy_shield.app not provided by this host (%s); "
+                "query-audit accounts/audits resolve to this package's own "
+                "user/ dir, which is very unlikely to hold the host's real data",
+                exc,
+            )
             user_root = Path(__file__).resolve().parent / "user"
         return (
             self._accounts_dir or (user_root / "accounts"),
@@ -755,27 +841,66 @@ class AuditDocumentationSource:
     """Source for audit-documentation inventory records."""
 
     def get_governance_documentation(self) -> List[Dict[str, Any]]:
-        from privacy_shield.services.audit_documentation import governance_documentation_inventory
-
+        try:
+            from privacy_shield.services.audit_documentation import governance_documentation_inventory
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.audit_documentation not provided by "
+                "this host (%s); governance-documentation evidence will be empty",
+                exc,
+            )
+            return []
         return governance_documentation_inventory()
 
     def get_workplane_documentation(self) -> List[Dict[str, Any]]:
-        from privacy_shield.services.audit_documentation import workplane_monitoring_inventory
-
+        try:
+            from privacy_shield.services.audit_documentation import workplane_monitoring_inventory
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.audit_documentation not provided by "
+                "this host (%s); workplane-documentation evidence will be empty",
+                exc,
+            )
+            return []
         return workplane_monitoring_inventory()
 
     def get_summary(self) -> Dict[str, Any]:
-        from privacy_shield.services.audit_documentation import build_audit_documentation_summary
-
+        try:
+            from privacy_shield.services.audit_documentation import build_audit_documentation_summary
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.audit_documentation not provided by "
+                "this host (%s); audit-documentation summary will be empty",
+                exc,
+            )
+            return {}
         return build_audit_documentation_summary()
+
+
+class _UnavailableHostService:
+    """Generic stand-in for a host service module this package does not ship
+    (see the migration table's host-service rows): every `list_*` call
+    degrades to `[]`, everything else (e.g. `pending_summary`) to `{}`,
+    rather than raising an uncaught ImportError out of export_workspace_evidence."""
+
+    def __getattr__(self, name: str):
+        empty = [] if name.startswith("list_") else {}
+        return lambda *args, **kwargs: empty
 
 
 class HumanControlSource:
     """Source for tenant-local feedback, review, approval, and intervention records."""
 
     def _service(self):
-        from privacy_shield.services.human_control_service import get_human_control_service
-
+        try:
+            from privacy_shield.services.human_control_service import get_human_control_service
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.human_control_service not provided "
+                "by this host (%s); human-control evidence sections will be empty",
+                exc,
+            )
+            return _UnavailableHostService()
         return get_human_control_service()
 
     def _filter_by_date(
@@ -887,17 +1012,6 @@ class HumanControlSource:
         return self._service().pending_summary(tenant_id=tenant_id)
 
 
-class _UnavailablePersistentObjectService:
-    """Stand-in when the host has not shimmed persistent_objects; every
-    list_* call degrades to empty rather than crashing the export."""
-
-    def list_objects(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return []
-
-    def list_events(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return []
-
-
 class PersistentObjectSource:
     def _service(self):
         # Renamed from brain.services.persistent_brain_objects in the 2.0.0
@@ -912,7 +1026,7 @@ class PersistentObjectSource:
                 "persistent-object evidence sections will be empty",
                 exc,
             )
-            return _UnavailablePersistentObjectService()
+            return _UnavailableHostService()
 
         return get_persistent_object_service()
 
@@ -957,8 +1071,16 @@ class PersistentObjectSource:
 
 class DeliveryAuditSource:
     def _service(self):
-        from privacy_shield.services.conversation_delivery_records import get_conversation_delivery_record_service
-
+        try:
+            from privacy_shield.services.conversation_delivery_records import get_conversation_delivery_record_service
+        except ImportError as exc:
+            logger.warning(
+                "privacy_shield.services.conversation_delivery_records not "
+                "provided by this host (%s); delivery-audit evidence sections "
+                "will be empty",
+                exc,
+            )
+            return _UnavailableHostService()
         return get_conversation_delivery_record_service()
 
     def get_records(

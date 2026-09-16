@@ -251,7 +251,13 @@ def get_recent_audit_events(
             row = host_app._load_user_account(name)
             return str((row or {}).get("tenant_id", "")).strip()
         except (ImportError, KeyError, AttributeError, TypeError) as exc:
-            logger.debug("Failed to resolve tenant for user %s: %s", name, exc)
+            # Loud, not debug: an unresolved tenant here means this event
+            # reads back as "no tenant" rather than its real one — a wrong
+            # audit trail, not merely a missing one — so it must not be
+            # invisible at any normal deployment log level.
+            logger.warning("Cannot resolve tenant for user %s: privacy_shield.app "
+                            "not provided by this host (%s); event may be misattributed "
+                            "to no tenant", name, exc)
             return ""
 
     events = []

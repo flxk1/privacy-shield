@@ -63,7 +63,14 @@ def _get_current_user() -> Optional[str]:
         if user and role != "guest":
             return user
     except Exception as exc:
-        logger.debug("Failed to resolve current user from app context: %s", exc)
+        # Loud, not debug: this makes a real authenticated user look
+        # anonymous to every caller of _get_current_user (BYOK credential
+        # lookups, usage attribution) rather than visibly unavailable.
+        logger.warning(
+            "Cannot resolve current user: privacy_shield.app not provided "
+            "by this host (%s); an authenticated user will be treated as none",
+            exc,
+        )
     return None
 
 
