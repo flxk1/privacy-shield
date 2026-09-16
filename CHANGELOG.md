@@ -54,6 +54,14 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
   `persistent_brain_object_events` -> `persistent_object_events`. A downstream
   tool keyed on the old `section_id` finds no matching section and reports
   zero records rather than raising — check any consumer for the old strings.
+- **The on-disk state root moved** (full paths in the migration table below):
+  the encrypted BYOK credential store, `.credentials_master.key`, the
+  pseudonymisation session maps and the breach log all lived under
+  `<site-packages>/brain/...` on 1.0.0 and now live under
+  `<site-packages>/privacy_shield/...`. Nothing reads the old location and
+  nothing warns: **an operator upgrading in place must move these four
+  paths by hand** (or re-derive credentials/keys fresh) before anything on
+  disk there is found again.
 
 ### Other changes
 
@@ -74,6 +82,10 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
 | `brain.<module>`, e.g. `brain.audit_log` | `privacy_shield.<module>` |
 | console script `brain.privacy_shield.cli:main` | `privacy_shield.cli:main` |
 | `documents_store_path(brain_app=app)` (and ~15 other helpers) | `documents_store_path(host_app=app)` |
+| `<site-packages>/brain/user/credentials/*.json` | `<site-packages>/privacy_shield/user/credentials/*.json` |
+| `<site-packages>/brain/user/.credentials_master.key` | `<site-packages>/privacy_shield/user/.credentials_master.key` |
+| `<site-packages>/brain/user/pseudonymisation_sessions/` | `<site-packages>/privacy_shield/user/pseudonymisation_sessions/` |
+| `<site-packages>/brain/data/breach_log/` | `<site-packages>/privacy_shield/data/breach_log/` |
 | `BRAIN_CREDENTIALS_MASTER_KEY` | `PRIVACY_SHIELD_CREDENTIALS_MASTER_KEY` |
 | `BRAIN_DEVICE_CLASS` | `PRIVACY_SHIELD_DEVICE_CLASS` |
 | `BRAIN_EMBEDDED_LOCAL_MODEL_API_KEY` | `PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_API_KEY` |
