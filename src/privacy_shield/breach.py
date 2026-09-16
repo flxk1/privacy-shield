@@ -293,16 +293,31 @@ class BreachDetector:
         """
         self._breach_log.append(breach)
 
-        # The directory precondition is NOT swallowed: on 1.0.0 this same mkdir
-        # ran in __init__, outside any try, so a broken log directory failed
-        # loudly at construction (PermissionError on a read-only install). It
-        # cannot run at import/construction time any more (the module-level
+        # The directory precondition is NOT swallowed HERE: on 1.0.0 this same
+        # mkdir ran in __init__, outside any try, so a broken log directory
+        # failed loudly at construction (PermissionError on a read-only
+        # install, before any breach data was ever at stake). It cannot run
+        # at import/construction time any more (the module-level
         # `breach_detector` singleton below is constructed on import, and
         # ADR-0001 forbids import-time filesystem writes — that's why this
-        # method exists), so it now fails loudly here instead, on the first
-        # write attempt. report_breach's contract changes accordingly: a
-        # broken log directory now raises out of report_breach, same class of
-        # signal as 1.0.0 gave at construction, just later in the lifecycle.
+        # method exists), so it now raises here instead, on the first write
+        # attempt — deliberately, so report_breach() (this method's only
+        # caller) does not swallow it into report_breach's own return-None
+        # contract.
+        #
+        # That is NOT the same class of signal as 1.0.0 gave, though: this
+        # package's only internal caller, gate.py's `PrivacyGate._on_blocked`,
+        # wraps that same call in `except Exception: logger.debug(...)`. On
+        # the live PrivacyGate.check() path, a broken log directory was
+        # therefore still swallowed — at debug level, which most deployments
+        # never surface — one layer up from here, and this raise also aborts
+        # report_breach() before `_emit_webhook`, so the breach notification
+        # is lost too, not just the persisted record. That gate.py swallow
+        # was a second finding, not fixed by moving this mkdir alone: its log
+        # level is bumped from debug to error (see gate.py._on_blocked) so a
+        # broken breach-log directory is visible there without also letting
+        # a breach-detector failure abort the egress decision
+        # PrivacyGate.check() exists to make.
         #
         # The write itself (open + write, below) IS swallowed and logged —
         # that part is inherited, unchanged, from the pre-rename code, and is

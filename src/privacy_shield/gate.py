@@ -545,7 +545,14 @@ class PrivacyGate:
                 },
             )
         except Exception as exc:
-            logger.debug("Breach detector notification skipped: %s", exc)
+            # Isolates breach-detector failures from the egress decision this
+            # method exists to enforce: a broken breach log must not stop
+            # PrivacyGate.check() from blocking/allowing correctly. It must,
+            # though, be visible — a swallowed critical breach on a read-only
+            # install is exactly the signal 1.0.0 gave loudly at
+            # construction (see breach.py's _log_breach); debug is invisible
+            # at most deployments' log level, so this logs at error instead.
+            logger.error("Breach detector notification failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
