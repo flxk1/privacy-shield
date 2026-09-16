@@ -13,11 +13,33 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .utils.network import (
+    is_loopback_or_unix_endpoint,
+    no_proxy_http_client,
+    safe_hostname,
+)
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1"
+
+
+def _configured_base_url() -> str:
+    """The endpoint the embedding client will actually talk to.
+
+    Read here rather than left to the SDK's own environment lookup, so the
+    endpoint guard below checks the same address the request will use.
+    """
+    return (
+        os.environ.get("OPENAI_BASE_URL")
+        or os.environ.get("OPENAI_API_BASE")
+        or DEFAULT_EMBEDDING_BASE_URL
+    ).strip()
 
 _DATA_DIR = Path(__file__).resolve().parent / "data" / "privacy_shield"
 _CONTEXT_EMBEDDINGS_FILE = _DATA_DIR / "pii_context_embeddings.json"
@@ -185,24 +207,41 @@ class PIIContextMatcher:
     def __init__(self, model: str = "text-embedding-3-small") -> None:
         self.model = model
         self._client = None
+        self._refused_remote_endpoint = False
         self._context_embeddings: Dict[str, List[Dict[str, Any]]] = {}
         self._load_context_embeddings()
 
     def _get_client(self):
-        """Get or create OpenAI client for embeddings."""
+        """Get or create the OpenAI client for embeddings.
+
+        `trust_env=False` on the transport, like every other send path in this
+        package. The three that were fixed carried scan text to a checked
+        loopback address; this one was left building a client with the
+        environment's proxy mounts, so with HTTP_PROXY set its requests went to
+        the corporate proxy regardless of the endpoint. See utils.network.
+        """
         if self._client is None:
             try:
-                import os
                 import openai
-                api_key = os.environ.get("OPENAI_API_KEY", "")
-                if api_key:
-                    self._client = openai.OpenAI(api_key=api_key)
             except ImportError:
                 logger.warning("OpenAI not available for PII embeddings")
+                return None
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if api_key:
+                self._client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url=_configured_base_url(),
+                    http_client=no_proxy_http_client(),
+                )
         return self._client
 
     def _embed(self, text: str) -> List[float]:
-        """Generate embedding for a single text string."""
+        """Generate embedding for a single text string.
+
+        Callers that pass DOCUMENT text must go through `_embed_document_chunk`
+        instead. This one is for the fixed context phrases defined in this
+        module's source, which are not anybody's personal data.
+        """
         client = self._get_client()
         if not client:
             return []
@@ -215,6 +254,37 @@ class PIIContextMatcher:
         except Exception as e:
             logger.error("Embedding failed: %s", e)
             return []
+
+    def _embed_document_chunk(self, text: str) -> List[float]:
+        """Embed a chunk of the scanned document, if the endpoint is local.
+
+        This is the one call in the package that hands raw, pre-redaction
+        document text to an embedding service, 8000 characters at a time. It is
+        on the main scan path - `shield._get_semantic_context_matcher` reaches
+        it from `process_text`, and PRIVACY_SHIELD_SEMANTIC_ENABLED defaults to
+        "1" - and it is silent today only because the context store ships
+        empty. Run the documented `embed_pii_contexts()` setup once and every
+        chunk of every scanned document starts leaving the machine.
+
+        Sending it to a remote endpoint is `egress_original_unredacted_text`,
+        which the skill's own governance block prohibits. So the same endpoint
+        guard the local-model send paths use applies here: a loopback address
+        or a unix socket, or the semantic layer declines and the scan proceeds
+        on the regex floor.
+        """
+        endpoint = _configured_base_url()
+        if not is_loopback_or_unix_endpoint(endpoint):
+            if not self._refused_remote_endpoint:
+                self._refused_remote_endpoint = True
+                logger.error(
+                    "semantic context scan disabled: embedding endpoint %s is not "
+                    "loopback or a unix socket, and this call would send raw "
+                    "pre-redaction document text to it. Point OPENAI_BASE_URL at a "
+                    "local embedding server to re-enable it.",
+                    safe_hostname(endpoint),
+                )
+            return []
+        return self._embed(text)
 
     def _load_context_embeddings(self) -> None:
         """Load pre-computed PII context embeddings from disk."""
@@ -291,7 +361,7 @@ class PIIContextMatcher:
         matches: List[PIIMatch] = []
 
         for chunk_idx, chunk in enumerate(chunks):
-            chunk_embedding = self._embed(chunk)
+            chunk_embedding = self._embed_document_chunk(chunk)
             if not chunk_embedding:
                 continue
 

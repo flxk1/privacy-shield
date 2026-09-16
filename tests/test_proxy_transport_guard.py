@@ -166,3 +166,97 @@ def test_local_provider_probe_does_not_use_the_env_proxy(proxied_env, monkeypatc
     assert seen["trust_env"] is False
     assert seen["url"].startswith("http://localhost:1234")
     assert result["running"] is False
+
+
+# ---------------------------------------------------------------------------
+# The enumeration. Three proxy sites were fixed and a fourth was found later,
+# in privacy_shield_embeddings, because the list was drawn from memory. This
+# one is drawn from the source on every run.
+# ---------------------------------------------------------------------------
+
+import ast
+import pathlib
+
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "privacy_shield"
+
+#: Every construction of an HTTP client in the package, with the reason it is
+#: allowed to exist. A new one fails this test until it is listed here, which
+#: is the point: the previous round's proxy fix was complete against a list
+#: held in someone's head, and the fourth site had been there the whole time.
+KNOWN_CLIENT_SITES = {
+    # (module, callee) -> why this is safe
+    ("utils/network.py", "httpx.Client"):
+        "the no-proxy helper itself; trust_env=False is its whole purpose",
+    ("llm_client.py", "OpenAI"):
+        "local send path; endpoint guarded + no_proxy_http_client",
+    ("services/local_model_runtime.py", "OpenAI"):
+        "embedded local send path; endpoint guarded + no_proxy_http_client",
+    ("privacy_shield_embeddings.py", "openai.OpenAI"):
+        "embedding path; no_proxy_http_client, and document chunks are "
+        "refused unless the endpoint is loopback",
+}
+
+CLIENT_CALLEES = {
+    "OpenAI", "AsyncOpenAI", "openai.OpenAI", "openai.AsyncOpenAI",
+    "httpx.Client", "httpx.AsyncClient", "requests.Session",
+    "urllib.request.urlopen", "urlopen",
+}
+
+
+def _callee_name(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _client_sites():
+    found = {}
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _callee_name(node.func)
+            if name in CLIENT_CALLEES:
+                found[(path.relative_to(SRC).as_posix(), name)] = node.lineno
+    return found
+
+
+def test_every_http_client_construction_is_accounted_for():
+    """No fifth site. Enumerated from the AST, not from memory."""
+    sites = _client_sites()
+    unlisted = sorted(set(sites) - set(KNOWN_CLIENT_SITES))
+    assert not unlisted, (
+        "new HTTP client construction(s) that no one has justified: "
+        + ", ".join(f"{module}:{sites[(module, callee)]} ({callee})"
+                    for module, callee in unlisted)
+    )
+    stale = sorted(set(KNOWN_CLIENT_SITES) - set(sites))
+    assert not stale, f"listed client sites that no longer exist: {stale}"
+
+
+def test_every_client_site_passes_an_explicit_http_client():
+    """Each `OpenAI(...)` in the package must hand in a transport of its own.
+
+    Omitting `http_client` is the defect: the SDK then builds one with
+    `trust_env=True` and mounts the environment's proxy under it.
+    """
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _callee_name(node.func) not in {"OpenAI", "openai.OpenAI",
+                                               "AsyncOpenAI", "openai.AsyncOpenAI"}:
+                continue
+            if not any(kw.arg == "http_client" for kw in node.keywords):
+                offenders.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
+    assert not offenders, (
+        "OpenAI client built without an explicit http_client, so it trusts the "
+        f"environment's proxy settings: {offenders}"
+    )
