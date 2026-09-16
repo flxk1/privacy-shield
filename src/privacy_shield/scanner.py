@@ -527,9 +527,79 @@ ALLOWLIST_PATTERNS: List[Pattern] = [
     # Common placeholder emails
     _compile(r"\b(?:example|test|noreply|info|contact)@(?:example\.com|test\.com)\b"),
 
-    # Generic IDs that are clearly not PII
-    _compile(r"\b(?:UUID|ID|REF)[-:]?\s*[a-f0-9-]{8,}\b"),
+    # Generic IDs that are clearly not PII.
+    # Case-SENSITIVE hex body (flags=0): under the module default IGNORECASE the
+    # class [0-9a-f] also matches A-F, which put every German IBAN body inside
+    # it, so four characters of "Ref " in front of a validated IBAN suppressed
+    # it. This is depth only - the load-bearing guard is that suppression runs
+    # after the validating detectors and cannot touch what they claimed.
+    _compile(
+        r"\b(?:UUID|Uuid|uuid|ID|Id|id|REF|Ref|ref)[-:]?\s*[0-9a-f][0-9a-f-]{7,}\b",
+        flags=0,
+    ),
 ]
+
+
+# -----------------------------------------------------------------------------
+# Validating detectors
+# -----------------------------------------------------------------------------
+#
+# A pattern says "this is shaped like an IBAN". A validating detector says "this
+# IS an IBAN" - mod-97, Luhn, RFC-shaped address. A finding a validating
+# detector claims is not a candidate any more, and no false-positive suppressor
+# may discard it.
+
+
+def _luhn_ok(value: str) -> bool:
+    digits = re.sub(r"[\s-]", "", value)
+    if not digits.isdigit() or not 13 <= len(digits) <= 19:
+        return False
+    total = 0
+    for index, char in enumerate(reversed(digits)):
+        digit = int(char)
+        if index % 2 == 1:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _iban_ok(value: str) -> bool:
+    compact = re.sub(r"\s", "", value).upper()
+    if not 15 <= len(compact) <= 34:
+        return False
+    if not (compact[:2].isalpha() and compact[2:4].isdigit() and compact[4:].isalnum()):
+        return False
+    rotated = compact[4:] + compact[:4]
+    try:
+        expanded = "".join(str(int(ch, 36)) if ch.isalpha() else ch for ch in rotated)
+        return int(expanded) % 97 == 1
+    except ValueError:
+        return False
+
+
+_RFC_EMAIL = re.compile(
+    r"\A[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z"
+)
+
+
+def _email_ok(value: str) -> bool:
+    return bool(_RFC_EMAIL.match(value.strip())) and len(value) <= 254
+
+
+VALIDATORS = {
+    PIIType.IBAN: _iban_ok,
+    PIIType.CREDIT_CARD: _luhn_ok,
+    PIIType.EMAIL: _email_ok,
+}
+
+
+def is_validated_identifier(pii_type: PIIType, value: str) -> bool:
+    """True when a validating detector - not merely a pattern - claims *value*."""
+    validator = VALIDATORS.get(pii_type)
+    return bool(validator) and validator(value)
 
 
 # =============================================================================
@@ -575,20 +645,44 @@ class PrivacyScanner:
         if 4 in self.layers:
             self.patterns.extend((4, p) for p in LAYER_4_PATTERNS)
 
-    def _is_allowlisted(self, text: str, start: int, end: int) -> bool:
-        """Check if a match is covered by an allowlist pattern."""
+    def _allowlist_spans(self, text: str) -> List[Tuple[int, int]]:
+        """Spans of *text* an allowlist pattern actually covers."""
         if not self.use_allowlist:
-            return False
-
-        # Get some context around the match
-        ctx_start = max(0, start - 20)
-        ctx_end = min(len(text), end + 20)
-        context = text[ctx_start:ctx_end]
-
+            return []
+        spans: List[Tuple[int, int]] = []
         for pattern in ALLOWLIST_PATTERNS:
-            if pattern.search(context):
+            for match in pattern.finditer(text):
+                spans.append((match.start(), match.end()))
+        return spans
+
+    def _is_allowlisted(
+        self,
+        start: int,
+        end: int,
+        allowlist_spans: List[Tuple[int, int]],
+    ) -> bool:
+        """True when an allowlist match CONTAINS the span [start, end).
+
+        Containment, not proximity. This used to search a +/-20 character
+        context window for any allowlist pattern, so an "Art. 6 DSGVO" or a
+        "CEO Meyer" standing next to an email address or a phone number
+        switched detection off for it.
+        """
+        for a_start, a_end in allowlist_spans:
+            if a_start <= start and end <= a_end:
                 return True
         return False
+
+    @staticmethod
+    def _overlaps_validated(
+        finding: Finding,
+        validated_spans: List[Tuple[int, int]],
+    ) -> bool:
+        """True when *finding* touches a span a validating detector claimed."""
+        return any(
+            finding.start < v_end and v_start < finding.end
+            for v_start, v_end in validated_spans
+        )
 
     def _confidence_value(self, conf: Confidence) -> int:
         """Convert confidence to numeric value for comparison."""
@@ -622,7 +716,11 @@ class PrivacyScanner:
         import time
         start_time = time.perf_counter()
 
-        findings: List[Finding] = []
+        # Pass 1 - detect. Every pattern runs; nothing is suppressed yet. The
+        # 2.0.0 release gate rejected the previous single pass, in which a
+        # candidate false-positive suppressor ran INSTEAD of the validated
+        # Layer-1 detectors and could discard them.
+        candidates: List[Finding] = []
         seen_spans: set = set()  # Avoid duplicate findings at same position
 
         min_conf_value = self._confidence_value(self.min_confidence)
@@ -641,13 +739,9 @@ class PrivacyScanner:
                 if span_key in seen_spans:
                     continue
 
-                # Skip if allowlisted
-                if self._is_allowlisted(text, start, end):
-                    continue
-
                 seen_spans.add(span_key)
 
-                findings.append(Finding(
+                candidates.append(Finding(
                     pii_type=pattern_def.pii_type,
                     value=value,
                     start=start,
@@ -658,6 +752,30 @@ class PrivacyScanner:
                     zone=zone,
                     page=page,
                 ))
+
+        # Pass 2 - validate. A validating detector (IBAN mod-97, Luhn,
+        # RFC-shaped email) either claims a candidate or it does not.
+        validated_spans = [
+            (f.start, f.end)
+            for f in candidates
+            if is_validated_identifier(f.pii_type, f.value)
+        ]
+
+        # Pass 3 - suppress, and only now. A suppressor may drop a candidate no
+        # validating detector claimed, and may not touch anything overlapping
+        # what one did.
+        allowlist_spans = self._allowlist_spans(text)
+        findings: List[Finding] = []
+        for finding in candidates:
+            if self._is_allowlisted(finding.start, finding.end, allowlist_spans):
+                if not self._overlaps_validated(finding, validated_spans):
+                    continue
+                logger.debug(
+                    "allowlist match ignored: %s at [%d,%d) is claimed by a "
+                    "validating detector",
+                    finding.pii_type.value, finding.start, finding.end,
+                )
+            findings.append(finding)
 
         # Sort by position
         findings.sort(key=lambda f: f.start)
