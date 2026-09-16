@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from privacy_shield.llm_client import get_local_client
 from privacy_shield.user_credentials import discover_local_providers
+from privacy_shield.utils.network import is_loopback_or_unix_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,6 @@ _CACHE_TTL_SECONDS = 2.0
 _DISCOVERY_CACHE: Dict[str, Any] = {"timestamp": 0.0, "providers": []}
 _PREFERRED_PROVIDER_ORDER = ["embedded", "lm_studio", "jan", "gpt4all", "ollama"]
 
-_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 _ALLOW_REMOTE_VAR = "PRIVACY_SHIELD_MODEL_ENDPOINT_ALLOW_REMOTE"
 
 
@@ -30,16 +30,6 @@ def _embedded_endpoint_var_and_raw_value() -> Tuple[str, str]:
     return "PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT", (
         os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_ENDPOINT") or ""
     ).strip()
-
-
-def _endpoint_is_local(endpoint: str) -> bool:
-    """A loopback http(s) address (127.0.0.1, ::1, localhost) or a unix-socket form."""
-    parsed = urlsplit(endpoint)
-    if parsed.scheme == "unix":
-        return True
-    if parsed.scheme in ("http", "https"):
-        return (parsed.hostname or "").lower() in _LOOPBACK_HOSTS
-    return False
 
 
 def resolve_embedded_endpoint() -> Optional[str]:
@@ -64,7 +54,7 @@ def resolve_embedded_endpoint() -> Optional[str]:
     var_name, endpoint = _embedded_endpoint_var_and_raw_value()
     if not endpoint:
         return None
-    if _endpoint_is_local(endpoint):
+    if is_loopback_or_unix_endpoint(endpoint):
         return endpoint
 
     host = urlsplit(endpoint).hostname or endpoint
@@ -91,7 +81,9 @@ def _truthy(value: str) -> bool:
 
 
 def _embedded_provider_status() -> Optional[Dict[str, Any]]:
+    _, raw_endpoint = _embedded_endpoint_var_and_raw_value()
     endpoint = resolve_embedded_endpoint() or ""
+    endpoint_was_refused = bool(raw_endpoint) and not endpoint
     command = (
         os.getenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_COMMAND")
         or os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_COMMAND")
@@ -102,6 +94,16 @@ def _embedded_provider_status() -> Optional[Dict[str, Any]]:
         or _truthy(os.getenv("PRIVACY_SHIELD_EMBEDDED_LOCAL_MODEL_AVAILABLE", ""))
     )
     if not (available_flag or endpoint or command):
+        return None
+    if endpoint_was_refused and not command:
+        # A refused (non-loopback, unauthorised) endpoint with no local
+        # subprocess fallback is not "running": returning a ghost entry
+        # here — even with endpoint=None — made this the preferred
+        # provider (embedded is first in _PREFERRED_PROVIDER_ORDER),
+        # shadowing a genuinely running loopback provider (e.g. Ollama)
+        # that discover_local_providers() found separately, and made
+        # is_local_model_available() report True for a provider that could
+        # never actually answer.
         return None
 
     model_id = (

@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
+from privacy_shield.utils.network import is_loopback_or_unix_endpoint
+
 if TYPE_CHECKING:
     pass
 
@@ -399,6 +401,19 @@ def get_local_client(
 
     # Fall back to default endpoint
     if not endpoint_url:
+        endpoint_url = LOCAL_PROVIDER_ENDPOINTS[provider]
+    elif not is_loopback_or_unix_endpoint(endpoint_url):
+        # Same guard as services/local_model_runtime.py's embedded path,
+        # applied here too: a caller-supplied endpoint_url or a stored
+        # credential's endpoint_url (BYOK, user-writable via add_credential)
+        # could otherwise name any host on the internet with nothing
+        # checking it before this "local" client sends raw text to it.
+        logger.error(
+            "get_local_client(%s): endpoint_url=%r is not a loopback address "
+            "or a unix socket; refusing it and using the provider default "
+            "(%s) instead",
+            provider, endpoint_url, LOCAL_PROVIDER_ENDPOINTS[provider],
+        )
         endpoint_url = LOCAL_PROVIDER_ENDPOINTS[provider]
 
     # Ensure endpoint has /v1 suffix for OpenAI compatibility (except raw Ollama)

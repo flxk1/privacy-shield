@@ -23,6 +23,12 @@ extract = ["PyMuPDF>=1.23", "opencv-python-headless>=4.8"]
 # get_decrypted_key / revalidate_credential raise CredentialEncryptionUnavailable
 # rather than storing a secret unencrypted.
 credentials = ["cryptography>=42"]
+# OpenAI-compatible client for the embedded/native local-model HTTP path
+# (services/local_model_runtime.py). Without it that path degrades to
+# "embedded_openai_client_unavailable"; the ..._COMMAND subprocess path is
+# unaffected. Required to run tests/test_local_model_endpoint_guard.py's
+# send-path assertions rather than skip them.
+openai = ["openai>=1"]
 # Config layer + tests
 dev = ["pyyaml>=6", "pytest>=7"]
 

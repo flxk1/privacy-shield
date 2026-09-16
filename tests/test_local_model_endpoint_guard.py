@@ -10,6 +10,7 @@ import logging
 
 import pytest
 
+from privacy_shield.services import local_model_runtime as lmr
 from privacy_shield.services.local_model_runtime import resolve_embedded_endpoint
 
 ENV_VARS = (
@@ -27,6 +28,21 @@ def _clear_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _reset_discovery_cache():
+    """`_DISCOVERY_CACHE` is a module-level dict with a 2-second TTL, never
+    reset between tests. Left alone, a test run after another test file
+    (or another test in this one) reads a stale `providers` list — under
+    which a tripwire's `assert constructed == []` passes vacuously because
+    the (stale, cached) discovery never reaches the send path at all, not
+    because the guard refused it. Reset before AND after every test."""
+    lmr._DISCOVERY_CACHE["timestamp"] = 0.0
+    lmr._DISCOVERY_CACHE["providers"] = []
+    yield
+    lmr._DISCOVERY_CACHE["timestamp"] = 0.0
+    lmr._DISCOVERY_CACHE["providers"] = []
+
+
 @pytest.mark.parametrize("endpoint", [
     "http://127.0.0.1:1234",
     "http://127.0.0.1:1234/v1",
@@ -42,6 +58,15 @@ def test_loopback_endpoints_are_accepted(endpoint, monkeypatch):
 def test_unix_socket_endpoint_is_accepted(monkeypatch):
     monkeypatch.setenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT", "unix:///tmp/local-model.sock")
     assert resolve_embedded_endpoint() == "unix:///tmp/local-model.sock"
+
+
+def test_unix_scheme_with_a_host_component_is_not_a_socket_path(monkeypatch):
+    """`unix://evil.example.com` parses with scheme="unix" but names a host,
+    not a filesystem path — a blanket "scheme == unix" accept let this
+    through (latent, since httpx happens to refuse it; tightened anyway to
+    require no netloc, matching a genuine `unix:///path` socket form)."""
+    monkeypatch.setenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT", "unix://evil.example.com/v1")
+    assert resolve_embedded_endpoint() is None
 
 
 @pytest.mark.parametrize("endpoint", [
@@ -98,6 +123,39 @@ def test_remote_endpoint_never_reaches_the_network(monkeypatch):
     assert any(f.pii_type.value == "email" for f in result.findings)
 
 
+def test_refused_endpoint_does_not_shadow_a_running_loopback_provider(monkeypatch):
+    """A refused remote endpoint with AVAILABLE=1 and no command used to
+    still return {"running": True, "endpoint": None}: a ghost "embedded"
+    entry that get_preferred_local_runtime() prefers first (embedded leads
+    _PREFERRED_PROVIDER_ORDER), shadowing a genuinely running loopback
+    provider discover_local_providers() found separately — and
+    is_local_model_available() reported True for a layer that could never
+    actually answer."""
+    monkeypatch.setenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_ENDPOINT", "http://evil.example.com")
+    monkeypatch.setenv("PRIVACY_SHIELD_NATIVE_LOCAL_MODEL_AVAILABLE", "1")
+
+    running_ollama = {
+        "provider": "ollama", "name": "Ollama (Local - CLI)", "running": True,
+        "endpoint": "http://localhost:11434", "models": ["llama3"], "error": None,
+        "setup_url": "", "setup_instructions": "", "openai_compatible": False,
+    }
+    monkeypatch.setattr(lmr, "discover_local_providers", lambda timeout=2.0: [running_ollama])
+
+    from privacy_shield.services.local_model_runtime import (
+        discover_local_model_runtimes,
+        get_preferred_local_runtime,
+        is_local_model_available,
+    )
+
+    providers = discover_local_model_runtimes(force_refresh=True)
+    assert not any(p.get("provider") == "embedded" for p in providers), \
+        f"a ghost embedded entry was returned: {providers}"
+
+    preferred = get_preferred_local_runtime()
+    assert preferred is not None and preferred["provider"] == "ollama"
+    assert is_local_model_available() is True  # true, but for the real ollama, not the ghost
+
+
 def test_remote_endpoint_allowed_reaches_the_client_construction(monkeypatch):
     """The mirror of the tripwire test: with the escape hatch set, the send
     path does reach the OpenAI client (and then fails on an unreachable
@@ -121,3 +179,59 @@ def test_remote_endpoint_allowed_reaches_the_client_construction(monkeypatch):
     scan_text_with_local_llm("Contact me at jane.roe@example.org")  # must not raise
     assert constructed, "expected the OpenAI client to be constructed once the escape hatch is set"
     assert "evil.example.com" in constructed[0]
+
+
+def test_get_local_client_refuses_an_unchecked_endpoint_url_parameter(monkeypatch):
+    """llm_client.get_local_client takes an arbitrary endpoint_url parameter
+    with no loopback check of its own — the embedded-path guard above does
+    not cover this second, separate send path."""
+    openai = pytest.importorskip("openai")
+    constructed = []
+
+    class _RecordingClient:
+        def __init__(self, *args, **kwargs):
+            constructed.append(kwargs.get("base_url"))
+
+    monkeypatch.setattr(openai, "OpenAI", _RecordingClient)
+
+    from privacy_shield.llm_client import get_local_client
+
+    get_local_client(provider="lm_studio", endpoint_url="http://evil.example.com")
+
+    assert constructed and "evil.example.com" not in constructed[0], (
+        f"get_local_client sent a remote endpoint_url straight to the client: {constructed}"
+    )
+
+
+def test_get_local_client_refuses_a_credentials_endpoint_url_override(monkeypatch):
+    """The same guard, exercised through the BYOK path: a stored credential's
+    endpoint_url (user-writable via add_credential) overrides whatever
+    endpoint_url get_local_client was called with — that override needs the
+    same check, not just the direct parameter."""
+    openai = pytest.importorskip("openai")
+    constructed = []
+
+    class _RecordingClient:
+        def __init__(self, *args, **kwargs):
+            constructed.append(kwargs.get("base_url"))
+
+    monkeypatch.setattr(openai, "OpenAI", _RecordingClient)
+
+    from privacy_shield.llm_client import get_local_client
+    from privacy_shield.user_credentials import UserCredential
+
+    fake_credential = UserCredential(
+        credential_id="c1", provider="lm_studio", label="x",
+        created_at="now", updated_at="now",
+        endpoint_url="http://evil.example.com",
+    )
+    monkeypatch.setattr(
+        "privacy_shield.user_credentials.get_credential_for_provider",
+        lambda user_id, provider: fake_credential,
+    )
+
+    get_local_client(provider="lm_studio", user_id="alice")
+
+    assert constructed and "evil.example.com" not in constructed[0], (
+        f"a credential's endpoint_url reached the client unchecked: {constructed}"
+    )
