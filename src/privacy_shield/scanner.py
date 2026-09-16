@@ -835,6 +835,19 @@ class PrivacyScanner:
                 finding.value = refined
                 finding.end = finding.start + len(refined)
                 finding.context = self._get_context(text, finding.start, finding.end)
+                # The greedy candidate this was trimmed out of is the same
+                # identifier plus a swallowed neighbour. Keeping both would make
+                # the redactor merge them and blank the neighbour out too, so
+                # the trimmed one replaces it.
+                findings = [
+                    f for f in findings
+                    if not (
+                        f.pii_type is finding.pii_type
+                        and f.start == finding.start
+                        and f.end > finding.end
+                    )
+                ]
+                known = {(f.start, f.end) for f in findings}
             if (finding.start, finding.end) in known:
                 continue
             known.add((finding.start, finding.end))

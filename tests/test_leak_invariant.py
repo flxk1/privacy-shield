@@ -204,6 +204,21 @@ def test_overlay_is_not_corrupted_by_overlapping_spans():
     assert not re.search(r"\][A-Z_]+\]", overlay), overlay
 
 
+def test_a_trimmed_identifier_does_not_blank_out_its_neighbour():
+    """Precision, not safety: a greedy match must not take the next line with it.
+
+    The IBAN pattern matches whitespace, so it absorbs the token after the
+    number ("DE71...550\\nID "). Trimming it back to the validating prefix is
+    only half the job - the untrimmed candidate has to go, or the redactor
+    merges the two and blanks the neighbour out as well.
+    """
+    text = "Ref DE89370400440532013000\nID 4111111111111111\n"
+    document = scan(text).documents[0]
+
+    assert not leaks_in(text, document)
+    assert document.overlay == "Ref [IBAN]\nID [CREDIT_CARD]\n", document.overlay
+
+
 # ---------------------------------------------------------------------------
 # Generated documents
 # ---------------------------------------------------------------------------
