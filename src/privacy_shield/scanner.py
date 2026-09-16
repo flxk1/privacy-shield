@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
+from . import identifiers
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -561,43 +562,10 @@ ALLOWLIST_PATTERNS: List[Pattern] = [
 # may discard it.
 
 
-def _luhn_ok(value: str) -> bool:
-    digits = re.sub(r"[\s-]", "", value)
-    if not digits.isdigit() or not 13 <= len(digits) <= 19:
-        return False
-    total = 0
-    for index, char in enumerate(reversed(digits)):
-        digit = int(char)
-        if index % 2 == 1:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
-
-
-def _iban_ok(value: str) -> bool:
-    compact = re.sub(r"\s", "", value).upper()
-    if not 15 <= len(compact) <= 34:
-        return False
-    if not (compact[:2].isalpha() and compact[2:4].isdigit() and compact[4:].isalnum()):
-        return False
-    rotated = compact[4:] + compact[:4]
-    try:
-        expanded = "".join(str(int(ch, 36)) if ch.isalpha() else ch for ch in rotated)
-        return int(expanded) % 97 == 1
-    except ValueError:
-        return False
-
-
-_RFC_EMAIL = re.compile(
-    r"\A[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z"
-)
-
-
-def _email_ok(value: str) -> bool:
-    return bool(_RFC_EMAIL.match(value.strip())) and len(value) <= 254
+_luhn_ok = identifiers.luhn_ok
+_iban_ok = identifiers.iban_ok
+_email_ok = identifiers.email_ok
+_RFC_EMAIL = identifiers.RFC_EMAIL
 
 
 VALIDATORS = {
@@ -779,6 +747,66 @@ class PrivacyScanner:
         suffix = "..." if ctx_end < len(text) else ""
         return prefix + text[ctx_start:ctx_end] + suffix
 
+    def _merge_run_based(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Fold the anchor-free identifier pass into *findings*.
+
+        A run-based span is the identifier itself. Where a boundary-anchored
+        finding of the same type overlaps one, it is the same identifier with a
+        neighbour swallowed or a fragment of it, and it is dropped - otherwise
+        the redactor merges the two into their union and blanks the neighbour
+        out as well, which is safe and destroys the document the caller asked
+        for back.
+        """
+        if 1 not in self.layers:
+            return findings
+        if self._confidence_value(Confidence.HIGH) < self._confidence_value(self.min_confidence):
+            return findings
+
+        iban_spans = identifiers.find_ibans(text)
+        card_spans = identifiers.find_cards(
+            text, avoid=[(start, end) for start, end, _ in iban_spans]
+        )
+        merged = list(findings)
+
+        for pii_type, spans in (
+            (PIIType.IBAN, iban_spans),
+            (PIIType.CREDIT_CARD, card_spans),
+            (PIIType.EMAIL, identifiers.find_emails(text)),
+        ):
+            for start, end, _value in spans:
+                if any(
+                    f.pii_type is pii_type and f.start == start and f.end == end
+                    for f in merged
+                ):
+                    continue
+                merged = [
+                    f for f in merged
+                    if not (f.pii_type is pii_type and f.start < end and start < f.end)
+                ]
+                merged.append(Finding(
+                    pii_type=pii_type,
+                    value=text[start:end],
+                    start=start,
+                    end=end,
+                    confidence=Confidence.HIGH,
+                    layer=1,
+                    context=self._get_context(text, start, end),
+                    zone=zone,
+                    page=page,
+                ))
+                logger.debug(
+                    "run-based %s claimed at [%d,%d) with no boundary consulted",
+                    pii_type.value, start, end,
+                )
+        return merged
+
     def scan(
         self,
         text: str,
@@ -856,6 +884,22 @@ class PrivacyScanner:
                 "validated %s at [%d,%d) reinstated over the allowlist",
                 finding.pii_type.value, finding.start, finding.end,
             )
+
+        # Pass 3 - find, without a word boundary. Passes 1 and 2 both discover
+        # candidates with `\b`-anchored patterns, which do not find an
+        # identifier so much as a place one is allowed to start. One word
+        # character glued in front of an IBAN or a card number means no
+        # boundary exists at its first character, and since the rest of the
+        # identifier is word characters too, none exists inside it either: the
+        # pattern matches nothing, the validator is never offered the
+        # candidate, and the caller is told pii_detected=False while a
+        # mod-97-valid account number goes out in the payload. Worse than the
+        # defect this replaced, which at least flagged.
+        #
+        # So for the three types that have a validator, the authoritative pass
+        # walks maximal runs of identifier characters and offers the validator
+        # every candidate substring. See identifiers.py for the precision cost.
+        findings = self._merge_run_based(text, findings, zone=zone, page=page)
 
         # Sort by position
         findings.sort(key=lambda f: f.start)
