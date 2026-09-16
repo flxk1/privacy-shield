@@ -158,6 +158,32 @@ def _compile(pattern: str, flags: int = re.IGNORECASE) -> Pattern:
 _MASK_CHAR = "\x00"
 
 
+# Horizontal whitespace - a space or a tab, never a line break.
+#
+# `\s` matches "\n", and a multi-token pattern built on it does not stop at the
+# end of a line: it runs on into the next one and claims both. On a German
+# sign-off
+#
+#     Mit freundlichen Gruessen
+#     Erika Mustermann
+#     Musterstrasse 12
+#     Anlage
+#
+# the name pattern matched "\nErika Mustermann\nMusterstrasse" as ONE name, and
+# the overlay the cloud model receives was "[NAME][NAME] 12\nAnlage" - the
+# sign-off, the street, and every line break gone. That is not a cosmetic
+# defect. The overlay is the product: fail-closed on confidentiality and
+# fail-open on the reason the thing exists.
+#
+# So every pattern whose tokens are SEPARATE FIELDS - a name, a street and its
+# number, a postal code and its city, a label and its value - is matched per
+# line. Layer 3 and Layer 4 keep `\s` deliberately: "mental health" wrapped
+# across a line break is still the phrase "mental health", and claiming it is
+# right, because nothing is being merged with a neighbour that belongs to
+# someone else.
+_H = r"[ \t]"
+
+
 # -----------------------------------------------------------------------------
 # Layer 1: Direct PII Patterns (High Confidence)
 # -----------------------------------------------------------------------------
@@ -174,7 +200,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
     # Phone - International formats
     PatternDef(
         pattern=_compile(
-            r"\b(?:\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b"
+            r"\b(?:\+?\d{1,3}[ \t.-]?)?\(?\d{2,4}\)?[ \t.-]?\d{3,4}[ \t.-]?\d{3,4}\b"
         ),
         pii_type=PIIType.PHONE,
         confidence=Confidence.HIGH,
@@ -183,7 +209,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # German phone specific
     PatternDef(
-        pattern=_compile(r"\b0\d{2,4}[\s/-]?\d{4,8}\b"),
+        pattern=_compile(r"\b0\d{2,4}[ \t/-]?\d{4,8}\b"),
         pii_type=PIIType.PHONE,
         confidence=Confidence.HIGH,
         description="German phone number",
@@ -260,8 +286,8 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     # Names - German/European format (Vorname Nachname)
     PatternDef(
         pattern=_compile(
-            r"\b(?:Herr|Frau|Dr\.|Prof\.)?\s*"
-            r"[A-ZÄÖÜ][a-zäöüß]+(?:\s+[a-zäöüß]+)?\s+"
+            rf"\b(?:Herr|Frau|Dr\.|Prof\.)?{_H}*"
+            rf"[A-ZÄÖÜ][a-zäöüß]+(?:{_H}+[a-zäöüß]+)?{_H}+"
             r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?\b"
         ),
         pii_type=PIIType.NAME,
@@ -271,7 +297,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # Names - Simple two-word capitalized
     PatternDef(
-        pattern=_compile(r"\b[A-ZÄÖÜ][a-zäöüß]{2,}\s+[A-ZÄÖÜ][a-zäöüß]{2,}\b"),
+        pattern=_compile(rf"\b[A-ZÄÖÜ][a-zäöüß]{{2,}}{_H}+[A-ZÄÖÜ][a-zäöüß]{{2,}}\b"),
         pii_type=PIIType.NAME,
         confidence=Confidence.LOW,
         description="Potential person name",
@@ -280,7 +306,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     # German street address
     PatternDef(
         pattern=_compile(
-            r"\b[A-ZÄÖÜ][a-zäöüß]+(?:straße|str\.|weg|platz|allee|gasse|ring|damm|ufer)\s+\d+[a-z]?\b"
+            rf"\b[A-ZÄÖÜ][a-zäöüß]+(?:straße|str\.|weg|platz|allee|gasse|ring|damm|ufer){_H}+\d+[a-z]?\b"
         ),
         pii_type=PIIType.ADDRESS,
         confidence=Confidence.HIGH,
@@ -289,7 +315,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # Generic street address
     PatternDef(
-        pattern=_compile(r"\b\d+\s+[A-Z][a-z]+\s+(?:Street|St\.|Avenue|Ave\.|Road|Rd\.|Lane|Ln\.)\b"),
+        pattern=_compile(rf"\b\d+{_H}+[A-Z][a-z]+{_H}+(?:Street|St\.|Avenue|Ave\.|Road|Rd\.|Lane|Ln\.)\b"),
         pii_type=PIIType.ADDRESS,
         confidence=Confidence.HIGH,
         description="Street address",
@@ -297,7 +323,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # German postal code + city
     PatternDef(
-        pattern=_compile(r"\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[a-zäöüß]+)?\b"),
+        pattern=_compile(rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+(?:{_H}+[a-zäöüß]+)?\b"),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,
         description="German postal code and city",
@@ -306,7 +332,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     # Date of birth patterns
     PatternDef(
         pattern=_compile(
-            r"\b(?:geboren|geb\.|DOB|birth|Geburtsdatum)[:\s]+\d{1,2}[./]\d{1,2}[./]\d{2,4}\b"
+            r"\b(?:geboren|geb\.|DOB|birth|Geburtsdatum)[: \t]+\d{1,2}[./]\d{1,2}[./]\d{2,4}\b"
         ),
         pii_type=PIIType.DATE_OF_BIRTH,
         confidence=Confidence.HIGH,
@@ -323,7 +349,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # Age with context
     PatternDef(
-        pattern=_compile(r"\b(?:age|Alter|Jahre?\s+alt)[:\s]+\d{1,3}\b"),
+        pattern=_compile(r"\b(?:age|Alter|Jahre?[ \t]+alt)[: \t]+\d{1,3}\b"),
         pii_type=PIIType.AGE,
         confidence=Confidence.MEDIUM,
         description="Age",
@@ -529,6 +555,23 @@ ALLOWLIST_PATTERNS: List[Pattern] = [
 
     # Public figure titles (in official capacity)
     _compile(r"\b(?:Commissioner|Minister|President|Chancellor|CEO|CFO|CTO)\s+[A-Z][a-z]+"),
+
+    # Letter salutations and closings. Fixed formulas, not names: "Mit
+    # freundlichen Gruessen" is two capitalised words to the Layer-2 name
+    # pattern, so the sign-off of every German business letter came back as
+    # [NAME] and the overlay lost the shape of the document.
+    #
+    # Only formulas that contain NO name are listed. "Sehr geehrte Frau" is
+    # deliberately absent: the name follows it, and masking the formula must
+    # never be a way of losing the name's own detection.
+    _compile(
+        r"\b(?:Mit\s+(?:freundlichen|besten|herzlichen)\s+Gr(?:ü|ue)(?:ß|ss)en"
+        r"|(?:Viele|Beste|Freundliche|Herzliche)\s+Gr(?:ü|ue)(?:ß|ss)e"
+        r"|Sehr\s+geehrte\s+Damen\s+und\s+Herren"
+        r"|(?:Best|Kind|Warm)\s+regards"
+        r"|Yours\s+(?:sincerely|faithfully|truly)"
+        r"|Dear\s+Sir\s+or\s+Madam)"
+    ),
 
     # Common placeholder emails
     _compile(r"\b(?:example|test|noreply|info|contact)@(?:example\.com|test\.com)\b"),
