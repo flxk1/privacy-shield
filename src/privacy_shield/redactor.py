@@ -101,6 +101,28 @@ FAKE_CITIES = [
 ]
 
 
+def _merge_replacements(
+    replacements: List[Tuple[int, int, str]],
+) -> List[Tuple[int, int, str]]:
+    """Collapse overlapping (start, end, text) spans into disjoint ones.
+
+    A merged span covers the union of the spans it absorbs, so nothing that any
+    contributing finding matched can survive into the output. The first span of
+    an overlapping run - earliest start, longest at equal start - supplies the
+    replacement text.
+    """
+    merged: List[Tuple[int, int, str]] = []
+    for start, end, text in sorted(
+        replacements, key=lambda r: (r[0], -(r[1] - r[0]))
+    ):
+        if merged and start < merged[-1][1]:
+            prev_start, prev_end, prev_text = merged[-1]
+            merged[-1] = (prev_start, max(prev_end, end), prev_text)
+            continue
+        merged.append((start, end, text))
+    return merged
+
+
 class Redactor:
     """
     Redact PII from text with multiple modes and selection options.
@@ -331,10 +353,19 @@ class Redactor:
             processable_chars = set(range(len(text)))
             result.regions_processed = 1
 
-        # Build replacement map (process in reverse order to maintain positions)
-        replacements: List[Tuple[int, int, str]] = []
+        # Build replacement map. Findings routinely overlap - a validated IBAN
+        # and a Steuer-ID pattern claim the same digits, a name and an address
+        # share a token. Replacements are computed on ORIGINAL offsets, so
+        # applying an overlapping pair to an already-mutated string spliced
+        # placeholder fragments into the output ("[NAME]L]ME] +[PHONE]"):
+        # corrupt text, and PII that survived because its offsets had moved.
+        # Overlaps are resolved into disjoint spans below, before anything is
+        # applied.
+        candidate_replacements: List[Tuple[int, int, str]] = []
 
-        for finding in sorted(filtered_findings, key=lambda f: f.start, reverse=True):
+        for finding in sorted(
+            filtered_findings, key=lambda f: (f.start, -(f.end - f.start))
+        ):
             # Check if finding is in processable region
             finding_chars = set(range(finding.start, finding.end))
             if not finding_chars.issubset(processable_chars):
@@ -350,12 +381,18 @@ class Redactor:
             else:
                 replacement = self._get_placeholder(finding.pii_type)
 
-            replacements.append((finding.start, finding.end, replacement))
-            result.redactions_applied += 1
+            candidate_replacements.append((finding.start, finding.end, replacement))
 
-        # Apply replacements
+        # Merge overlapping spans into disjoint ones. The merged span covers the
+        # union, so no part of an overlapped finding can survive; the earliest
+        # (and, at equal start, the longest) finding supplies the placeholder.
+        replacements = _merge_replacements(candidate_replacements)
+        result.redactions_applied = len(replacements)
+
+        # Apply right-to-left, so the offsets of spans not yet applied - all of
+        # which lie to the left - stay valid in the mutated string.
         redacted = text
-        for start, end, replacement in replacements:
+        for start, end, replacement in sorted(replacements, reverse=True):
             redacted = redacted[:start] + replacement + redacted[end:]
 
         # For OPT_IN mode, extract only included regions

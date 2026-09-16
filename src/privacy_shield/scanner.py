@@ -152,6 +152,11 @@ def _compile(pattern: str, flags: int = re.IGNORECASE) -> Pattern:
     return re.compile(pattern, flags)
 
 
+# Filler for allowlisted text during the masked detection pass. Offsets must be
+# preserved, so it is one character wide, and no detector pattern may match it.
+_MASK_CHAR = "\x00"
+
+
 # -----------------------------------------------------------------------------
 # Layer 1: Direct PII Patterns (High Confidence)
 # -----------------------------------------------------------------------------
@@ -528,13 +533,19 @@ ALLOWLIST_PATTERNS: List[Pattern] = [
     _compile(r"\b(?:example|test|noreply|info|contact)@(?:example\.com|test\.com)\b"),
 
     # Generic IDs that are clearly not PII.
-    # Case-SENSITIVE hex body (flags=0): under the module default IGNORECASE the
-    # class [0-9a-f] also matches A-F, which put every German IBAN body inside
-    # it, so four characters of "Ref " in front of a validated IBAN suppressed
-    # it. This is depth only - the load-bearing guard is that suppression runs
-    # after the validating detectors and cannot touch what they claimed.
+    # Two narrowings, both depth only - the load-bearing guard is that
+    # suppression runs after the validating detectors and cannot touch what
+    # they claimed (see tests/test_leak_invariant.py, which proves the
+    # structural guard holds with THIS pattern restored to its broken form):
+    #  - case-SENSITIVE (flags=0). Under the module default IGNORECASE the class
+    #    [a-f0-9-] also matches A-F, so every German IBAN body was inside it and
+    #    four characters of "Ref " in front of a validated IBAN suppressed it.
+    #  - the body must contain at least one hex LETTER. A run of digits behind
+    #    an "ID " prefix is a card or a phone number far more often than it is
+    #    an opaque identifier.
     _compile(
-        r"\b(?:UUID|Uuid|uuid|ID|Id|id|REF|Ref|ref)[-:]?\s*[0-9a-f][0-9a-f-]{7,}\b",
+        r"\b(?:UUID|Uuid|uuid|ID|Id|id|REF|Ref|ref)[-:]?\s*"
+        r"(?=[0-9a-f-]*[a-f])[0-9a-f][0-9a-f-]{7,}\b",
         flags=0,
     ),
 ]
@@ -602,6 +613,34 @@ def is_validated_identifier(pii_type: PIIType, value: str) -> bool:
     return bool(validator) and validator(value)
 
 
+_MIN_REFINED_LENGTH = 12
+
+
+def refine_to_validated(pii_type: PIIType, value: str) -> Optional[str]:
+    """The longest prefix of *value* a validating detector claims, if any.
+
+    Several Layer-1 patterns are greedy and case-insensitive, so an IBAN or a
+    card number routinely matches with a trailing word glued on
+    ("DE71...550\\nNr"). That breaks the checksum, which used to mean the
+    validating detector could not claim it and a suppressor could therefore
+    discard the whole span - real IBAN included. Trimming back to the
+    validating prefix keeps the identifier claimed.
+    """
+    validator = VALIDATORS.get(pii_type)
+    if validator is None:
+        return None
+    if validator(value):
+        return value
+    if pii_type is PIIType.EMAIL:
+        return None
+    for end in range(len(value) - 1, _MIN_REFINED_LENGTH, -1):
+        if not value[end - 1].isalnum():
+            continue
+        if validator(value[:end]):
+            return value[:end]
+    return None
+
+
 # =============================================================================
 # SCANNER CLASS
 # =============================================================================
@@ -661,28 +700,72 @@ class PrivacyScanner:
         end: int,
         allowlist_spans: List[Tuple[int, int]],
     ) -> bool:
-        """True when an allowlist match CONTAINS the span [start, end).
+        """True when an allowlist match OVERLAPS the span [start, end).
 
-        Containment, not proximity. This used to search a +/-20 character
-        context window for any allowlist pattern, so an "Art. 6 DSGVO" or a
-        "CEO Meyer" standing next to an email address or a phone number
-        switched detection off for it.
+        Overlap, not proximity. This used to search a +/-20 character context
+        window for any allowlist pattern and suppress on a hit anywhere in it,
+        so an "Art. 6 DSGVO" or a "CEO Meyer" standing *next to* an email
+        address or a phone number switched detection off for it. A suppressor
+        may now only speak about text it actually covers.
         """
         for a_start, a_end in allowlist_spans:
-            if a_start <= start and end <= a_end:
+            if start < a_end and a_start < end:
                 return True
         return False
 
     @staticmethod
-    def _overlaps_validated(
-        finding: Finding,
-        validated_spans: List[Tuple[int, int]],
-    ) -> bool:
-        """True when *finding* touches a span a validating detector claimed."""
-        return any(
-            finding.start < v_end and v_start < finding.end
-            for v_start, v_end in validated_spans
-        )
+    def _mask(text: str, spans: List[Tuple[int, int]]) -> str:
+        """Blank *spans* out of *text*, preserving every offset."""
+        if not spans:
+            return text
+        chars = list(text)
+        for start, end in spans:
+            for index in range(max(0, start), min(len(chars), end)):
+                chars[index] = _MASK_CHAR
+        return "".join(chars)
+
+    def _match_patterns(
+        self,
+        haystack: str,
+        original: str,
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Run every enabled pattern over *haystack*; report against *original*.
+
+        *haystack* and *original* are the same length, so offsets carry over.
+        """
+        findings: List[Finding] = []
+        seen_spans: set = set()  # Avoid duplicate findings at same position
+        min_conf_value = self._confidence_value(self.min_confidence)
+
+        for layer, pattern_def in self.patterns:
+            # Skip if confidence too low
+            if self._confidence_value(pattern_def.confidence) < min_conf_value:
+                continue
+
+            for match in pattern_def.pattern.finditer(haystack):
+                start, end = match.start(), match.end()
+
+                # Skip if already found at this position
+                span_key = (start, end)
+                if span_key in seen_spans:
+                    continue
+                seen_spans.add(span_key)
+
+                findings.append(Finding(
+                    pii_type=pattern_def.pii_type,
+                    value=original[start:end],
+                    start=start,
+                    end=end,
+                    confidence=pattern_def.confidence,
+                    layer=layer,
+                    context=self._get_context(original, start, end),
+                    zone=zone,
+                    page=page,
+                ))
+        return findings
 
     def _confidence_value(self, conf: Confidence) -> int:
         """Convert confidence to numeric value for comparison."""
@@ -716,66 +799,50 @@ class PrivacyScanner:
         import time
         start_time = time.perf_counter()
 
-        # Pass 1 - detect. Every pattern runs; nothing is suppressed yet. The
-        # 2.0.0 release gate rejected the previous single pass, in which a
+        # The 2.0.0 release gate rejected the previous single pass, in which a
         # candidate false-positive suppressor ran INSTEAD of the validated
-        # Layer-1 detectors and could discard them.
-        candidates: List[Finding] = []
-        seen_spans: set = set()  # Avoid duplicate findings at same position
+        # Layer-1 detectors and could discard them. Detection and suppression
+        # are now separate, and suppression is strictly the weaker of the two.
 
-        min_conf_value = self._confidence_value(self.min_confidence)
+        # Pass 1 - suppress, by masking. Allowlisted text is blanked out before
+        # any detector sees it, so a suppressor can only speak about the text it
+        # actually covers. It can no longer drop a finding for standing next to
+        # something it recognises, nor drop a whole greedy span because the span
+        # happened to absorb one allowlisted token.
+        allowlist_spans = self._allowlist_spans(text)
+        masked = self._mask(text, allowlist_spans)
 
-        for layer, pattern_def in self.patterns:
-            # Skip if confidence too low
-            if self._confidence_value(pattern_def.confidence) < min_conf_value:
-                continue
-
-            for match in pattern_def.pattern.finditer(text):
-                start, end = match.start(), match.end()
-                value = match.group()
-
-                # Skip if already found at this position
-                span_key = (start, end)
-                if span_key in seen_spans:
-                    continue
-
-                seen_spans.add(span_key)
-
-                candidates.append(Finding(
-                    pii_type=pattern_def.pii_type,
-                    value=value,
-                    start=start,
-                    end=end,
-                    confidence=pattern_def.confidence,
-                    layer=layer,
-                    context=self._get_context(text, start, end),
-                    zone=zone,
-                    page=page,
-                ))
-
-        # Pass 2 - validate. A validating detector (IBAN mod-97, Luhn,
-        # RFC-shaped email) either claims a candidate or it does not.
-        validated_spans = [
-            (f.start, f.end)
-            for f in candidates
-            if is_validated_identifier(f.pii_type, f.value)
+        findings = self._match_patterns(masked, text, zone=zone, page=page)
+        findings = [
+            f for f in findings
+            if not self._is_allowlisted(f.start, f.end, allowlist_spans)
         ]
 
-        # Pass 3 - suppress, and only now. A suppressor may drop a candidate no
-        # validating detector claimed, and may not touch anything overlapping
-        # what one did.
-        allowlist_spans = self._allowlist_spans(text)
-        findings: List[Finding] = []
-        for finding in candidates:
-            if self._is_allowlisted(finding.start, finding.end, allowlist_spans):
-                if not self._overlaps_validated(finding, validated_spans):
-                    continue
-                logger.debug(
-                    "allowlist match ignored: %s at [%d,%d) is claimed by a "
-                    "validating detector",
-                    finding.pii_type.value, finding.start, finding.end,
-                )
+        # Pass 2 - rescue, by validation. Masking is still a suppressor, and a
+        # suppressor must never be the last word on a high-confidence finding.
+        # So the unmasked text is scanned too, and anything a validating
+        # detector claims (IBAN mod-97, Luhn, RFC-shaped email) is reinstated
+        # whatever the allowlist thought of it. This is the load-bearing guard:
+        # it holds even with the pre-fix suppressor pattern restored.
+        known = {(f.start, f.end) for f in findings}
+        for finding in self._match_patterns(text, text, zone=zone, page=page):
+            if finding.pii_type not in VALIDATORS:
+                continue
+            refined = refine_to_validated(finding.pii_type, finding.value)
+            if refined is None:
+                continue
+            if refined != finding.value:
+                finding.value = refined
+                finding.end = finding.start + len(refined)
+                finding.context = self._get_context(text, finding.start, finding.end)
+            if (finding.start, finding.end) in known:
+                continue
+            known.add((finding.start, finding.end))
             findings.append(finding)
+            logger.debug(
+                "validated %s at [%d,%d) reinstated over the allowlist",
+                finding.pii_type.value, finding.start, finding.end,
+            )
 
         # Sort by position
         findings.sort(key=lambda f: f.start)

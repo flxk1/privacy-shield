@@ -170,6 +170,29 @@ def test_release_gate_suppressor_adjacency(text):
     assert_no_leak(text)
 
 
+@pytest.mark.parametrize("text", REJECTION_REPRODUCTIONS)
+def test_structural_guard_holds_with_the_broken_regex_restored(text, monkeypatch):
+    """The regex narrowing is depth. The restructure is what carries the fix.
+
+    Puts the exact pre-fix suppressor back - IGNORECASE hex class and all, the
+    pattern that let 'Ref ' switch the product off - and asserts the invariant
+    still holds, because suppression now runs after the validating detectors
+    and may not discard what they claimed.
+    """
+    from privacy_shield import scanner as scanner_module
+
+    broken = re.compile(r"\b(?:UUID|ID|REF)[-:]?\s*[a-f0-9-]{8,}\b", re.IGNORECASE)
+    assert broken.search("Ref DE89370400440532013000"), (
+        "the pre-fix pattern must still be the over-broad one this guards against"
+    )
+    monkeypatch.setattr(
+        scanner_module,
+        "ALLOWLIST_PATTERNS",
+        list(scanner_module.ALLOWLIST_PATTERNS) + [broken],
+    )
+    assert_no_leak(text)
+
+
 def test_overlay_is_not_corrupted_by_overlapping_spans():
     """Overlapping findings must not splice placeholder fragments into the overlay."""
     text = "Kunde Max Mueller, IBAN DE89 3704 0044 0532 0130 00, Karte 4111 1111 1111 1111"
