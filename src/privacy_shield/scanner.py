@@ -861,7 +861,59 @@ class PrivacyScanner:
                     "run-based %s claimed at [%d,%d) with no boundary consulted",
                     pii_type.value, start, end,
                 )
-        return merged
+
+        return self._yield_to_validated(merged, text)
+
+    def _yield_to_validated(
+        self, findings: List[Finding], text: str
+    ) -> List[Finding]:
+        """A checksum-validated span outranks a pattern that merely overlaps it.
+
+        A card number written with dots matched the PHONE pattern, and one
+        written with slashes matched the Unix FILE_PATH pattern, so the overlay
+        read "[PHONE].1111" and "4111[PATH]" - the identifier redacted by
+        accident, by a detector that thought it was looking at something else,
+        with fragments of it left behind. The redactor's union kept those cases
+        safe, but only incidentally: which type supplied the placeholder came
+        down to which span happened to start first. If the phone or path
+        pattern were ever narrowed, they would become leaks with nothing to
+        flag them.
+
+        So it is settled here instead. A pattern finding contained in a
+        validated span is dropped, and one that merely reaches into it is
+        trimmed back to where the validated span begins - which keeps whatever
+        it found outside and guarantees a validated claim is never swallowed
+        into another type's placeholder. A card is redacted as a card.
+        """
+        claimed = [
+            (f.start, f.end) for f in findings if f.pii_type in VALIDATORS
+        ]
+        if not claimed:
+            return findings
+
+        kept: List[Finding] = []
+        for finding in findings:
+            if finding.pii_type in VALIDATORS:
+                kept.append(finding)
+                continue
+            start, end = finding.start, finding.end
+            for claim_start, claim_end in claimed:
+                if start >= claim_end or end <= claim_start:
+                    continue
+                if start >= claim_start and end <= claim_end:
+                    end = start  # fully covered by the validated claim
+                    break
+                if start < claim_start:
+                    end = min(end, claim_start)
+                else:
+                    start = max(start, claim_end)
+            if end > start:
+                if (start, end) != (finding.start, finding.end):
+                    finding.start, finding.end = start, end
+                    finding.value = text[start:end]
+                    finding.context = self._get_context(text, start, end)
+                kept.append(finding)
+        return kept
 
     def scan(
         self,

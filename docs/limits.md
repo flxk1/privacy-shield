@@ -26,11 +26,30 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   the same corpus. A false positive can only consume digits and the separators
   written inside a number, never prose. Measured by
   `tests/test_identifier_runs.py`.
+- **What counts as one identifier, in one sentence:** *a candidate is any
+  maximal sequence of ASCII alphanumerics joined by single characters that are
+  not alphanumeric at all and not a line break, carrying at most one such
+  joiner for every two identifier characters.* Joiners are defined by exclusion
+  rather than listed, because two successive lists were walked around — first
+  the literal `" \t-"`, then the Unicode categories `Zs`/`Pd`/`Cf`, which miss
+  `Pc` (underscore) and `Po` (colon, dot, slash), so `4111_1111_1111_1111` was
+  never offered to Luhn at all. The two-to-one bound is what stops punctuated
+  prose being assembled into a checksum. Tested:
+  `tests/test_identifier_runs.py::test_every_joiner_category_groups_an_identifier`
+  (joiners generated from `unicodedata`, not from a list),
+  `::test_the_joiner_budget_rejects_punctuated_prose`.
+- **A line break is never a joiner**, so an identifier wrapped across two lines
+  is not claimed. Making it one would glue a document's lines into a single run
+  and let a column of figures be assembled into a checksum. A wrapped card is
+  today redacted only incidentally, by the phone pattern catching its first
+  half; the residue is pinned by
+  `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_a_known_gap`
+  so that narrowing that pattern fails loudly instead of leaking quietly.
 - **Detection is ASCII for the validated types.** Identifier runs are built
   from ASCII alphanumerics; an account number written in full-width or
   Arabic-Indic digits is not offered to the validators. Invisible characters
-  (`Cf`), every horizontal space (`Zs`) and every hyphen (`Pd`) inside an
-  identifier are handled.
+  (Unicode `Cf` — soft hyphen, zero-width space, BOM) are removed first and
+  never break a run.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.

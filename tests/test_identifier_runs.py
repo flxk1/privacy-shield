@@ -10,6 +10,9 @@ which widens them fails here rather than quietly shredding overlays.
 
 from __future__ import annotations
 
+import random
+import unicodedata
+
 import pytest
 
 from privacy_shield import identifiers
@@ -64,6 +67,55 @@ CARD_FALSE_POSITIVE_BUDGET = 6
 #: Beleg ...", where "ng20..." starts a 23-character window that checks out) and
 #: swallowed the line.
 IBAN_FALSE_POSITIVE_BUDGET = 0
+
+
+#: Text built to provoke a false positive: digit groups punctuated the way
+#: tables, CSV exports, version strings, timestamps and serial numbers are.
+#: The realistic corpus above says what the rule costs in ordinary documents;
+#: this says what it costs when someone is trying to break it.
+ADVERSARIAL_FP_CORPUS = [
+    "Preise: 1234,5678,9012,3456 in der Tabelle",
+    "Version 10.4.2.1 Build 2026.03.14.1157",
+    "IP 192.168.100.201 Port 8080 PID 44213",
+    "CSV: 1001,2002,3003,4004,5005,6006,7007",
+    "Koordinaten 52.520008, 13.404954 Berlin Mitte",
+    "Zeitreihe: 12:34:56.789 | 23:45:01.234 | 34:56:12.345",
+    "Matrix [[1234][5678][9012][3456]] Ausgabe",
+    "Pfad /var/log/2026/03/14/app-1234-5678-9012.log",
+    "SHA 3f2a.9b1c.4d7e.8a0f.2c5b.6e9d.1a4f.7b2c",
+    "Telefonnummern 030/1234567, 089/7654321, 0170/1112223",
+    "Betrag 1.234.567,89 EUR; Rabatt 12.345,67 EUR; Netto 1.222.222,22 EUR",
+    "Artikel 4029764001807, 4006381333931, 4007817327104, 4011200296908",
+    "Datum 14.03.2026 Zeit 09:30:45 Ticket 1234-5678-9012",
+    "Seriennummern: SN-1234-5678-9012-3456-7890",
+    "Hex 0x4111.0x1111.0x1111.0x1111 im Dump",
+]
+
+#: Measured. Three of fifteen deliberately hostile documents produce a card
+#: false positive, all of them comma- or hyphen-grouped digit blocks that are
+#: structurally indistinguishable from a grouped card number that happens to
+#: satisfy Luhn. No IBAN false positives, because the country/length registry
+#: rules them out.
+ADVERSARIAL_CARD_FP_BUDGET = 3
+ADVERSARIAL_IBAN_FP_BUDGET = 0
+
+
+def test_precision_under_deliberately_hostile_punctuation():
+    """What widening the joiner rule costs when someone is trying to break it.
+
+    Admitting every non-alphanumeric character as a joiner is what made
+    "4111_1111_1111_1111" findable. The bill for it is here, measured rather
+    than asserted to be zero.
+    """
+    cards = sum(len(identifiers.find_cards(d)) for d in ADVERSARIAL_FP_CORPUS)
+    ibans = sum(len(identifiers.find_ibans(d)) for d in ADVERSARIAL_FP_CORPUS)
+    assert cards == ADVERSARIAL_CARD_FP_BUDGET, (
+        f"{cards} card false positives on {len(ADVERSARIAL_FP_CORPUS)} hostile "
+        f"documents, budget {ADVERSARIAL_CARD_FP_BUDGET}"
+    )
+    assert ibans == ADVERSARIAL_IBAN_FP_BUDGET, (
+        f"{ibans} IBAN false positives, budget {ADVERSARIAL_IBAN_FP_BUDGET}"
+    )
 
 
 def test_iban_precision_on_clean_business_text():
@@ -204,3 +256,113 @@ def test_the_scanner_itself_reports_a_glued_identifier():
     assert any(
         f.pii_type is PIIType.CREDIT_CARD and f.value == EXAMPLE_CARD for f in findings
     ), [f.to_dict()["type"] for f in findings]
+
+
+# ---------------------------------------------------------------------------
+# Separators, generated rather than listed
+# ---------------------------------------------------------------------------
+#
+# This is the test that would have caught the underscore, and it is the same
+# lesson as the oracle: a check built from a list I typed can only find the
+# cases I already thought of. Twice a list was walked around - first the
+# literal " \t-", then the Unicode categories Zs/Pd/Cf, which missed Pc
+# (underscore) and Po (colon, dot, slash). So the candidates here are ENUMERATED
+# FROM UNICODE ITSELF: every non-alphanumeric character in the BMP, sampled
+# across every category that exists, rather than the handful anyone would list.
+
+def _all_joiner_candidates():
+    """Every non-alphanumeric, non-line-break character in the BMP, by category.
+
+    Built from `unicodedata`, not from a literal. If Unicode grows a new
+    punctuation category tomorrow, this picks it up without anyone editing a
+    list.
+    """
+    by_category: dict[str, list[str]] = {}
+    for code in range(0x20, 0x10000):
+        char = chr(code)
+        if char.isalnum() or char in identifiers._LINE_BREAKS:
+            continue
+        if not unicodedata.category(char)[0] in ("P", "S", "Z", "C"):
+            continue
+        if unicodedata.category(char) == "Cf":
+            continue  # invisible; covered by its own test
+        if not char.isprintable() and char != "\t":
+            continue
+        by_category.setdefault(unicodedata.category(char), []).append(char)
+    return by_category
+
+
+JOINER_CATEGORIES = _all_joiner_candidates()
+
+
+def test_the_generated_joiner_set_covers_the_categories_that_were_missed():
+    """Guards the generator itself.
+
+    A generator that silently produced nothing would make every test below
+    vacuous - which is exactly how the last oracle passed while leaking.
+    """
+    assert "Pc" in JOINER_CATEGORIES, "underscore's category is not represented"
+    assert "Po" in JOINER_CATEGORIES, "colon/dot/slash's category is not represented"
+    assert "Zs" in JOINER_CATEGORIES and "Pd" in JOINER_CATEGORIES
+    assert "_" in JOINER_CATEGORIES["Pc"]
+    assert set(":./") <= set(JOINER_CATEGORIES["Po"])
+    assert len(JOINER_CATEGORIES) >= 8, sorted(JOINER_CATEGORIES)
+
+
+@pytest.mark.parametrize("category", sorted(JOINER_CATEGORIES))
+def test_every_joiner_category_groups_an_identifier(category):
+    """One sampled character from every category, on both identifier types.
+
+    Sampled deterministically so a failure names a reproducible character.
+    """
+    rng = random.Random(f"joiner-{category}")
+    sample = rng.sample(
+        JOINER_CATEGORIES[category], min(12, len(JOINER_CATEGORIES[category]))
+    )
+    failures = []
+    for joiner in sample:
+        grouped_card = joiner.join(EXAMPLE_CARD[i:i + 4] for i in range(0, 16, 4))
+        grouped_iban = joiner.join(EXAMPLE_IBAN[i:i + 4] for i in range(0, 20, 4))
+        grouped_iban += joiner + EXAMPLE_IBAN[20:]
+        if not identifiers.find_cards(grouped_card):
+            failures.append(("card", hex(ord(joiner)), unicodedata.name(joiner, "?")))
+        if not identifiers.find_ibans(grouped_iban):
+            failures.append(("iban", hex(ord(joiner)), unicodedata.name(joiner, "?")))
+    assert not failures, (
+        f"a {category} character between the groups hid the identifier: {failures}"
+    )
+
+
+@pytest.mark.parametrize("category", sorted(JOINER_CATEGORIES))
+def test_a_glued_prefix_plus_any_joiner_still_finds_the_identifier(category):
+    """The combination that defeated both previous rules at once."""
+    rng = random.Random(f"prefix-{category}")
+    for joiner in rng.sample(
+        JOINER_CATEGORIES[category], min(8, len(JOINER_CATEGORIES[category]))
+    ):
+        text = "acct_" + joiner.join(
+            EXAMPLE_CARD[i:i + 4] for i in range(0, 16, 4)
+        )
+        assert identifiers.find_cards(text), (
+            f"prefix + {hex(ord(joiner))} "
+            f"({unicodedata.name(joiner, '?')}) hid the card"
+        )
+
+
+def test_the_joiner_budget_rejects_punctuated_prose():
+    """The bound that keeps "anything non-alphanumeric" from assembling text.
+
+    One joiner per two identifier characters. Sixteen digits punctuated down to
+    single characters is fifteen joiners and must not be offered to Luhn; the
+    same digits in groups of four is three and must be.
+    """
+    assert not identifiers.find_cards(".".join(EXAMPLE_CARD))
+    assert not identifiers.find_cards("-".join(EXAMPLE_CARD))
+    assert identifiers.find_cards(
+        ".".join(EXAMPLE_CARD[i:i + 4] for i in range(0, 16, 4))
+    )
+    # Groups of two is the densest real layout: seven joiners for sixteen
+    # digits, right at the budget.
+    assert identifiers.find_cards(
+        " ".join(EXAMPLE_CARD[i:i + 2] for i in range(0, 16, 2))
+    )

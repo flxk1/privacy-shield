@@ -89,11 +89,28 @@ def _oracle_transparent(char: str) -> bool:
     return unicodedata.category(char) == "Cf"
 
 
-def _oracle_separator(char: str) -> bool:
-    """Any horizontal space or hyphen a document extractor might emit."""
-    if char in _ORACLE_LINE_BREAKS:
-        return False
-    return char == "\t" or unicodedata.category(char) in ("Zs", "Pd")
+#: At most one joiner per this many identifier characters - the bound that
+#: stops punctuated prose being assembled into a checksum.
+_ORACLE_JOINER_BUDGET_DIVISOR = 2
+
+
+def _oracle_joiner(char: str) -> bool:
+    """Anything that is not an identifier character and not a line break.
+
+    Defined by exclusion, deliberately. This oracle previously asked which
+    Unicode CATEGORIES separate groups - Zs, Pd - and underscore (Pc) and colon
+    (Po) were not among them, so a card written "4111_1111_1111_1111" was
+    invisible to the oracle and to the detector at the same time. That is the
+    same vacuous-pass failure as the `\\b` anchoring, one level down: a
+    category set is still a list, and a list is still something someone typed
+    from memory.
+    """
+    return not char.isalnum() and char not in _ORACLE_LINE_BREAKS
+
+
+def _oracle_within_budget(offsets: list[int], start: int, size: int) -> bool:
+    span = offsets[start + size - 1] + 1 - offsets[start]
+    return span - size <= size // _ORACLE_JOINER_BUDGET_DIVISOR
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -149,9 +166,9 @@ def _oracle_runs(text: str) -> list[tuple[str, list[int]]]:
             offsets.append(origin)
             position += 1
             continue
-        if compact and _oracle_separator(char):
+        if compact and _oracle_joiner(char):
             ahead = position
-            while ahead < count and _oracle_separator(visible[ahead][0]):
+            while ahead < count and _oracle_joiner(visible[ahead][0]):
                 ahead += 1
             if ahead - position == 1 and ahead < count:
                 following = visible[ahead][0]
@@ -181,7 +198,7 @@ def _oracle_ibans(text: str) -> list[tuple[str, str]]:
                 position += 1
                 continue
             candidate = compact[position:position + registered]
-            if _iban_ok(candidate):
+            if _iban_ok(candidate) and _oracle_within_budget(offsets, position, registered):
                 start = offsets[position]
                 end = offsets[position + registered - 1] + 1
                 found.append((candidate, text[start:end]))
@@ -210,7 +227,7 @@ def _oracle_cards(text: str) -> list[tuple[str, str]]:
                     if position + size > run_end:
                         continue
                     candidate = compact[position:position + size]
-                    if _luhn_ok(candidate):
+                    if _luhn_ok(candidate) and _oracle_within_budget(offsets, position, size):
                         start = offsets[position]
                         end = offsets[position + size - 1] + 1
                         found.append((candidate, text[start:end]))
@@ -285,6 +302,22 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
 RESIDUE_RUN = 8
 
 
+#: Placeholders the redactor and the anonymous-JSON path write.
+_PLACEHOLDER = re.compile(r"\[(?:ANON_)?[A-Z][A-Z_0-9]*\]")
+
+
+def _without_placeholders(overlay: str) -> str:
+    """The overlay minus the tokens redaction inserted.
+
+    A placeholder is not surviving PII, and its own letters are not the
+    document's. "[ANON_ICD__1]" contains a D, which collided with a
+    single-character ICD finding and reported a leak where the value had in
+    fact been removed. Counting has to be done against what is left of the
+    document, not against the labels standing in for what was taken out.
+    """
+    return _PLACEHOLDER.sub(" ", overlay)
+
+
 def _compact(value: str) -> str:
     return "".join(char for char in value if char.isascii() and char.isalnum())
 
@@ -305,7 +338,7 @@ def _residue_run(identifier: str, overlay: str, text: str) -> str:
     the retained first copy. Nothing had leaked.
     """
     needle = _compact(identifier)
-    haystack = _compact(overlay)
+    haystack = _compact(_without_placeholders(overlay))
     source = _compact(text)
     for size in range(len(needle), RESIDUE_RUN - 1, -1):
         for start in range(0, len(needle) - size + 1):
@@ -335,6 +368,7 @@ def leaks_in(text: str, document) -> list[str]:
     # So: the overlay may keep no more copies than the input had minus the ones
     # that were claimed. Nothing is softened for a real leak - a value detected
     # once and present once in the overlay still fails.
+    residual = _without_placeholders(overlay)
     counted: dict[str, int] = {}
     for span in document.spans:
         value = (span.value or "").strip()
@@ -342,10 +376,10 @@ def leaks_in(text: str, document) -> list[str]:
             counted[value] = counted.get(value, 0) + 1
     for value, claimed in counted.items():
         allowed = max(0, text.count(value) - claimed)
-        if overlay.count(value) > allowed:
+        if residual.count(value) > allowed:
             leaks.append(
                 f"a detected span survived: overlay keeps "
-                f"{overlay.count(value)} copies, at most {allowed} expected"
+                f"{residual.count(value)} copies, at most {allowed} expected"
             )
 
     for kind, canonical, as_written in validated_identifiers(text):
@@ -435,6 +469,69 @@ def test_release_gate_rejection_reproductions(text):
 # while a mod-97-valid account number goes out verbatim.
 #
 # These are the shapes that arise in real documents, not exotic ones.
+
+#: Characters written BETWEEN the groups of an identifier. The first three
+#: were reported leaks: a full card number and a full IBAN, verbatim in the
+#: overlay with pii_detected False, because the run never formed. Underscore is
+#: Pc and colon is Po - neither was in the Zs/Pd/Cf category set that replaced
+#: the original " \t-" list, which is why a category set is still a list.
+GROUP_SEPARATORS = [
+    pytest.param("_", id="underscore"),
+    pytest.param(":", id="colon"),
+    pytest.param(".", id="dot"),
+    pytest.param("/", id="slash"),
+    pytest.param(" ", id="space"),
+    pytest.param("-", id="hyphen"),
+    pytest.param(",", id="comma"),
+    pytest.param("|", id="pipe"),
+    pytest.param("\t", id="tab"),
+    pytest.param("\u00a0", id="no_break_space"),
+]
+
+
+@pytest.mark.parametrize("separator", GROUP_SEPARATORS)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_grouped_card_is_found_whatever_separates_the_groups(separator, mode):
+    text = "Kartennummer " + separator.join(
+        EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
+    )
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+@pytest.mark.parametrize("separator", GROUP_SEPARATORS)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_grouped_iban_is_found_whatever_separates_the_groups(separator, mode):
+    body = separator.join(EXAMPLE_IBAN[index:index + 4] for index in range(0, 20, 4))
+    text = "Konto " + body + separator + EXAMPLE_IBAN[20:]
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+@pytest.mark.parametrize("separator", GROUP_SEPARATORS)
+def test_a_grouped_identifier_is_typed_as_itself(separator):
+    """Not redacted by accident by a detector that thinks it is something else.
+
+    A card written with dots matched the PHONE pattern and one written with
+    slashes matched the Unix FILE_PATH pattern, so the overlay read
+    "[PHONE].1111" and "4111[PATH]" - fragments of the card left behind, and the
+    redaction standing on a pattern that was never about cards. If that pattern
+    were ever narrowed these would become leaks, and nothing would have flagged
+    it.
+    """
+    text = "Kartennummer " + separator.join(
+        EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
+    )
+    document = scan(text).documents[0]
+    assert document.overlay == "Kartennummer [CREDIT_CARD]", document.overlay
+    assert [span.pii_type for span in document.spans] == ["credit_card"], (
+        [(s.pii_type, s.start, s.end) for s in document.spans]
+    )
+
 
 GLUED_PREFIX_SHAPES = [
     pytest.param("acct_{identifier}", id="underscore_prefixed_account_reference"),
@@ -630,11 +727,18 @@ def _make_email(rng: random.Random) -> str:
     return f"{local}@{rng.choice(['example.com', 'kanzlei.de', 'firma.org'])}"
 
 
+#: Group separators the battery writes. Not only spaces: the underscore and
+#: colon shapes were reported leaks, and a generator that only ever emits a
+#: space cannot find them.
+_BATTERY_SEPARATORS = [" ", " ", "_", "-", ".", ":", "/", ",", "|", "\u00a0", "\t"]
+
+
 def _spaced(rng: random.Random, digits: str) -> str:
-    if rng.random() < 0.5:
+    if rng.random() < 0.4:
         return digits
     size = rng.choice([4, 4, 5])
-    return " ".join(digits[i:i + size] for i in range(0, len(digits), size))
+    separator = rng.choice(_BATTERY_SEPARATORS)
+    return separator.join(digits[i:i + size] for i in range(0, len(digits), size))
 
 
 def generate_document(rng: random.Random) -> tuple[str, list[str], list[str]]:
@@ -774,9 +878,13 @@ def test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans():
     # digits of the value standing immediately behind its own placeholder.
     # Pre-fix this read "[ANON_IBAN_1]30 00, Karte ...".
     assert not re.search(r"\]\s?\d", overlay), overlay
+    # PHONE_1, not PHONE_4. The three phone patterns that used to match digit
+    # groups inside the IBAN and the card are dropped now that a validated span
+    # outranks a pattern overlapping it, so they no longer burn placeholder
+    # numbers on findings that were never separate data.
     assert overlay == (
         "[ANON_NAME_1], IBAN [ANON_IBAN_1], Karte [ANON_CC_1], "
-        "Tel. [ANON_PHONE_4]"
+        "Tel. [ANON_PHONE_1]"
     ), overlay
 
 
@@ -885,3 +993,50 @@ def test_a_line_break_is_never_an_inline_separator():
     for line_break in "\n\r  ":
         runs = list(identifiers.identifier_runs(f"DE89{line_break}3704"))
         assert len(runs) == 2, (line_break.encode("unicode_escape"), runs)
+
+
+# ---------------------------------------------------------------------------
+# A known gap, pinned rather than hidden
+# ---------------------------------------------------------------------------
+
+def test_a_line_wrapped_identifier_is_a_known_gap():
+    """An identifier broken across two lines is NOT claimed by the run pass.
+
+    A line break is deliberately not a joiner: making it one would glue every
+    line of a document into a single run and let a column of figures in a table
+    be assembled into a checksum. The cost is that a card number wrapped across
+    two lines - which PDF extraction does produce - is not claimed as a card.
+
+    What redacts it today is the PHONE pattern catching the first half by
+    coincidence. That is the accidental-redaction seam, and this test exists so
+    that it cannot quietly become a leak: if the phone pattern is ever narrowed,
+    the surviving residue grows and this fails, rather than the gate staying
+    green while an account number goes out.
+
+    The assertion is the CURRENT measured residue, not an aspiration. Lowering
+    it is the fix; raising it is a regression that has to be argued for.
+    """
+    from privacy_shield import identifiers
+
+    wrapped = EXAMPLE_CARD[:10] + "\n" + EXAMPLE_CARD[10:]
+    assert not identifiers.find_cards(wrapped), (
+        "a run now spans a line break - if that was deliberate, re-measure the "
+        "prose-assembly false-positive rate before keeping it"
+    )
+
+    document = scan(wrapped).documents[0]
+    assert document.pii_detected, document.overlay
+    surviving = _compact(EXAMPLE_CARD)
+    residue = max(
+        (
+            len(surviving[start:start + size])
+            for size in range(len(surviving), 0, -1)
+            for start in range(0, len(surviving) - size + 1)
+            if surviving[start:start + size] in _compact(document.overlay)
+        ),
+        default=0,
+    )
+    assert residue <= 6, (
+        f"{residue} consecutive characters of a line-wrapped card survive in "
+        "the overlay; the coincidental cover has weakened"
+    )

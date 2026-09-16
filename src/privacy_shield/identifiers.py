@@ -70,33 +70,60 @@ MAX_IBAN_LENGTH = 34
 MIN_CARD_LENGTH = 13
 MAX_CARD_LENGTH = 19
 
-# What may sit inside an identifier, by CHARACTER PROPERTY rather than by a
-# list someone remembered. The first version of this module enumerated
-# " \t-", and an adversarial pass walked straight through it: a no-break space
-# between the groups of an IBAN, a soft hyphen from a justified paragraph, a
-# zero-width space from an HTML paste. All three ended the run early, and the
-# identifier behind a glued prefix went out again. Enumerating separators from
-# memory is the same mistake as enumerating leak inputs from memory.
+# THE RULE, in one sentence:
 #
-# Cf is the invisible class - soft hyphen, zero-width space and joiners, BOM.
-# These are not separators at all: they are not there, so they are skipped
-# without interrupting the run and without using up its one separator.
+#   A candidate is any maximal sequence of ASCII alphanumerics joined by single
+#   characters that are not alphanumeric at all and not a line break, carrying
+#   at most one such joiner for every two identifier characters.
 #
-# Zs is every horizontal space, which is what a PDF or DOCX extractor actually
-# emits between the groups of a printed account number - no-break, thin, narrow
-# and figure spaces included. Pd is every hyphen, including the non-breaking
-# one. A line break is never either.
-_LINE_BREAKS = "\n\r\v\f  "
+# Not a list of separators. Twice now a list has been walked around. The first
+# version enumerated " \t-", and a no-break space, a soft hyphen and a
+# zero-width space went straight through it. The second replaced that with
+# Unicode CATEGORIES - Zs space, Pd dash, Cf invisible - which is a better list
+# and still a list: underscore is Pc and colon is Po, so
+# "4111_1111_1111_1111" and "4111:1111:1111:1111" never formed a run at all,
+# the validator was never offered the candidate, and a full card number went
+# out with pii_detected=False. Underscore separation is ordinary in log lines,
+# machine exports, filenames and code, and `.log` is in the default extension
+# set.
+#
+# So the question is not "which characters separate groups" - which invites a
+# fresh enumeration every time - but "what can sit between two identifier
+# characters without destroying the identifier". The answer is: anything that
+# is not one. A joiner is defined by what it is NOT, so there is no list left
+# to be short.
+#
+# The bound is what stops prose being assembled into a false positive. Real
+# grouping is sparse - sixteen digits in fours is three joiners, an IBAN in
+# fours is five - while text punctuated down to single characters ("4.1.1.1")
+# is fifteen joiners for sixteen characters. Requiring an identifier's own
+# characters to outnumber its punctuation two to one admits every real grouping
+# and rejects assembled prose.
+#
+# Invisible characters (Unicode Cf - soft hyphen, zero-width space, joiners,
+# BOM) are removed before any of this and count for nothing: they are not
+# there. A line break is never a joiner. A NON-ASCII alphanumeric - an umlaut,
+# a CJK character - is not a joiner either; it ends the run, because it is a
+# letter in a word rather than punctuation between digits.
+_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
+
+#: At most one joiner per this many identifier characters.
+JOINER_BUDGET_DIVISOR = 2
 
 
 def _is_transparent(char: str) -> bool:
+    """Invisible. Not a separator, because it is not anything."""
     return unicodedata.category(char) == "Cf"
 
 
-def _is_inline_separator(char: str) -> bool:
-    if char in _LINE_BREAKS:
-        return False
-    return char == "\t" or unicodedata.category(char) in ("Zs", "Pd")
+def _is_joiner(char: str) -> bool:
+    """May sit between two identifier characters without ending the run.
+
+    Defined by exclusion on purpose: anything that is not alphanumeric and not
+    a line break. Underscore, colon, dot, slash, comma, pipe, every bracket and
+    every kind of space - including the ones nobody thinks to list.
+    """
+    return not char.isalnum() and char not in _LINE_BREAKS
 
 _LOCAL_PART_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
@@ -181,9 +208,9 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
             offsets.append(origin)
             position += 1
             continue
-        if compact and _is_inline_separator(char):
+        if compact and _is_joiner(char):
             ahead = position
-            while ahead < count and _is_inline_separator(visible[ahead][0]):
+            while ahead < count and _is_joiner(visible[ahead][0]):
                 ahead += 1
             if ahead - position == 1 and ahead < count:
                 following = visible[ahead][0]
@@ -196,6 +223,24 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
         position += 1
     if compact:
         yield "".join(compact), offsets
+
+
+def _within_joiner_budget(offsets: List[int], start: int, size: int) -> bool:
+    """Does this candidate carry more punctuation than identifier?
+
+    The joiner budget is what keeps "anything that is not an identifier
+    character" from assembling prose into a checksum. Real grouping is sparse -
+    three joiners for a sixteen-digit card, five for an IBAN written in fours -
+    so requiring the identifier's own characters to outnumber its punctuation
+    two to one admits every real layout and rejects text that has been
+    punctuated down to single characters.
+
+    Counted from the ORIGINAL offsets, which is where the punctuation actually
+    is; invisible characters were dropped before the run was built and are
+    correctly invisible here too.
+    """
+    span = offsets[start + size - 1] + 1 - offsets[start]
+    return span - size <= size // JOINER_BUDGET_DIVISOR
 
 
 def _iban_spans_in_run(compact: str, offsets: List[int]) -> List[Span]:
@@ -217,7 +262,7 @@ def _iban_spans_in_run(compact: str, offsets: List[int]) -> List[Span]:
             position += 1
             continue
         candidate = compact[position:position + registered]
-        if iban_ok(candidate):
+        if iban_ok(candidate) and _within_joiner_budget(offsets, position, registered):
             spans.append(
                 (offsets[position], offsets[position + registered - 1] + 1, candidate)
             )
@@ -257,7 +302,9 @@ def _card_spans_in_run(
             for size in range(MAX_CARD_LENGTH, MIN_CARD_LENGTH - 1, -1):
                 if position + size > run_end:
                     continue
-                if luhn_ok(compact[position:position + size]):
+                if luhn_ok(compact[position:position + size]) and _within_joiner_budget(
+                    offsets, position, size
+                ):
                     if intervals and position <= intervals[-1][1]:
                         intervals[-1][1] = max(intervals[-1][1], position + size)
                     else:
