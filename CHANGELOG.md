@@ -51,21 +51,42 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
   is not installed, storing or reading a credential raises
   `CredentialEncryptionUnavailable` instead of silently writing cleartext.
   CI gained a dedicated `credentials` job installing `.[dev,credentials]`
-  and running `tests/test_user_credentials.py`: every other job installs
-  without it, so those tests only ever exercised a `_FakeFernet` stand-in,
-  never `cryptography.fernet.Fernet` itself — that gap is why this defect
-  class was still findable after four prior rounds meant to close it.
+  and running `tests/test_user_credentials.py` against real
+  `cryptography.fernet.Fernet` (every other job's `_FakeFernet`-mocked
+  cases don't exercise it), which is what catches bugs *inside* the real
+  Fernet error surface (e.g. `ValueError` on a corrupted salt, below) —
+  it is **not**, and would not have been, what catches the original
+  plaintext-fallback defect, since it installs the exact opposite
+  configuration (`cryptography` present) to the one that produced it
+  (`cryptography` absent, the default). The `tests` job — no `credentials`
+  extra, i.e. `cryptography` genuinely absent — is what actually asserts
+  the write refuses, via `test_add_credential_raises_when_cryptography_is_unavailable`.
   `key_salt="fallback"` is still accepted on *read*, for any credential a
   pre-fix install already wrote insecurely — refusing it would lock out
   exactly the operators the bug harmed — but a successful read of one is
   now the one moment this system can know a secret sat in cleartext on
   disk, and it is no longer silent: `get_decrypted_key` and
   `revalidate_credential` both `logger.warning` the credential id and
-  provider, and `revalidate_credential` additionally re-encrypts the record
-  under a real salt while it already has the plaintext in hand and is
-  rewriting the record anyway — an operator should re-run it (or re-add the
-  credential) for anything stored before this fix, and rotate the
-  underlying provider key regardless, since it has been on disk unencrypted.
+  provider, and name `pip install "privacy-shield[credentials]"` as the
+  remedy. **A fallback record can only exist because cryptography was
+  absent when it was written, and cryptography is still absent by
+  default** — an unconditional re-encrypt attempt would call
+  `_encrypt_key` -> `_get_fernet`, which raises
+  `CredentialEncryptionUnavailable` when `Fernet is None`, crashing
+  `revalidate_credential` (typed `-> Tuple[bool, str]`) for exactly the
+  operators the warning is trying to help; `get_decrypted_key`'s warning
+  routed straight into that trap. `revalidate_credential` now only
+  attempts the re-encrypt when `cryptography` is actually available in
+  the *current* process (not merely "the CHANGELOG says to install it"),
+  and even then round-trip verifies the new ciphertext decrypts back to
+  the original secret before overwriting the record — `_master_secret_bytes`
+  can silently (debug-level) mint a fresh random master key when the
+  persisted one is unreadable or unwritable, which would otherwise turn a
+  recoverable (base64) cleartext record into permanently lost ciphertext.
+  An operator should run `pip install "privacy-shield[credentials]"` then
+  call `revalidate_credential` for anything stored before this fix, and
+  rotate the underlying provider key regardless, since it has been on disk
+  unencrypted in the meantime.
   A third, undocumented seed also feeds the master-key derivation:
   `COCKPIT_SESSION_SECRET` (`user_credentials.py`), tried after
   `PRIVACY_SHIELD_CREDENTIALS_MASTER_KEY` and
@@ -155,6 +176,27 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
   this "local" layer was at least loosely anticipated by whoever built it;
   nothing else in the module assumes a remote provider (no TLS/proxy
   handling, no remote-specific retries).
+  Two follow-on fixes to the same guard: `_embedded_provider_status()`
+  used to still report `running: True, endpoint: None` for a refused
+  endpoint with no `..._COMMAND` fallback — a ghost entry that
+  `get_preferred_local_runtime()` preferred first (`embedded` leads the
+  provider order), shadowing a genuinely running loopback provider (e.g.
+  Ollama) found separately, so `is_local_model_available()` reported True
+  for a layer that could never actually answer; it now correctly reports
+  absent in that state. And the guard covered only the embedded path:
+  `llm_client.get_local_client` takes an arbitrary `endpoint_url`
+  parameter, overridden again by a stored BYOK credential's
+  `endpoint_url` (user-writable via `add_credential`), with no loopback
+  check of its own — both now go through the same shared check
+  (`privacy_shield.utils.network.is_loopback_or_unix_endpoint`, factored
+  out so `llm_client.py` and `services/local_model_runtime.py` — which
+  imports *from* `llm_client.py` — can share it without a circular
+  import) and fall back to the provider's default loopback endpoint,
+  logged, rather than send. That check also now requires a `unix://` URL
+  to have no host component (`unix:///path`, not `unix://host/path`):
+  `unix://evil.example.com` previously passed as "local" on scheme alone
+  — latent rather than live, since `httpx` happens to refuse that form,
+  but not something to depend on.
 
 ### Other changes
 
@@ -166,6 +208,18 @@ variable are renamed, and `AUDIT_LOG_PATH` changes semantics. Installs of
   no longer create their evidence/log directories at import time; both are made
   on first write (same shape as the embeddings cache).
 - NOTICE lists the optional third-party extras and states authorship.
+- New `openai` extra (`openai>=1`) declares the dependency
+  `services/local_model_runtime.py`'s embedded/native HTTP path already
+  imported optionally; installed by CI's `tests` job so
+  `tests/test_local_model_endpoint_guard.py`'s send-path assertions
+  actually run instead of skipping in every leg (`openai` was previously
+  required by no extra and no job). Its module-level `_DISCOVERY_CACHE`
+  (2-second TTL, never reset) also made those tests order-dependent — run
+  after another file exercising local-model discovery, a stale cached
+  provider list let a tripwire's `assert constructed == []` pass
+  vacuously, because the (cached) discovery never reached the send path
+  at all. `tests/test_local_model_endpoint_guard.py` now resets it in an
+  autouse fixture before and after every test.
 
 ### Migration
 
