@@ -157,17 +157,16 @@ def _oracle_ibans(text: str) -> list[tuple[str, str]]:
                 position += 1
                 continue
             registered = _IBAN_LENGTHS.get(compact[position:position + 2].upper())
-            lengths = (registered,) if registered else range(34, 14, -1)
-            for size in lengths:
-                if position + size > len(compact):
-                    continue
-                candidate = compact[position:position + size]
-                if _iban_ok(candidate):
-                    start = offsets[position]
-                    end = offsets[position + size - 1] + 1
-                    found.append((candidate, text[start:end]))
-                    position += size - 1
-                    break
+            if registered is None or position + registered > len(compact):
+                position += 1
+                continue
+            candidate = compact[position:position + registered]
+            if _iban_ok(candidate):
+                start = offsets[position]
+                end = offsets[position + registered - 1] + 1
+                found.append((candidate, text[start:end]))
+                position += registered
+                continue
             position += 1
     return found
 
@@ -698,3 +697,35 @@ if given is not None:  # pragma: no branch
             f"mode={mode.value}\ninput={text!r}\noverlay={document.overlay!r}\n"
             + "; ".join(leaks)
         )
+
+
+def test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans():
+    """The cloud-egress mode had its own, unfixed copy of the overlap bug.
+
+    `anonymous_json.anonymize_text` applied findings computed on ORIGINAL
+    offsets to an already-mutated string. The redactor was fixed for exactly
+    this; this path was byte-identical to the pre-fix tip while the CHANGELOG
+    declared the defect fixed - and it is the mode whose entire purpose is
+    sending the result to a cloud model.
+
+    The phone pattern overlaps the IBAN's digit groups here, so the two
+    replacements collide. Applied on stale offsets, the tail of the account
+    number is spliced back in directly behind its own placeholder.
+    """
+    text = (
+        f"Kunde Max Mueller, IBAN {EXAMPLE_IBAN_SPACED}, "
+        f"Karte {EXAMPLE_CARD_SPACED}, Tel. 0170 1234567"
+    )
+    document = scan(text, mode=PrivacyMode.ANONYMOUS_JSON).documents[0]
+    overlay = document.overlay
+
+    assert not leaks_in(text, document)
+    assert overlay.count("[") == overlay.count("]"), overlay
+    # The signal of a replacement applied at an offset that had already moved:
+    # digits of the value standing immediately behind its own placeholder.
+    # Pre-fix this read "[ANON_IBAN_1]30 00, Karte ...".
+    assert not re.search(r"\]\s?\d", overlay), overlay
+    assert overlay == (
+        "[ANON_NAME_1], IBAN [ANON_IBAN_1], Karte [ANON_CC_1], "
+        "Tel. [ANON_PHONE_4]"
+    ), overlay

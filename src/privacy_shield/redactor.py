@@ -101,7 +101,7 @@ FAKE_CITIES = [
 ]
 
 
-def _merge_replacements(
+def merge_replacements(
     replacements: List[Tuple[int, int, str]],
 ) -> List[Tuple[int, int, str]]:
     """Collapse overlapping (start, end, text) spans into disjoint ones.
@@ -386,7 +386,7 @@ class Redactor:
         # Merge overlapping spans into disjoint ones. The merged span covers the
         # union, so no part of an overlapped finding can survive; the earliest
         # (and, at equal start, the longest) finding supplies the placeholder.
-        replacements = _merge_replacements(candidate_replacements)
+        replacements = merge_replacements(candidate_replacements)
         result.redactions_applied = len(replacements)
 
         # Apply right-to-left, so the offsets of spans not yet applied - all of

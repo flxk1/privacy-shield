@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from .redactor import merge_replacements
 from .scanner import Finding, PIIType, ScanResult
 
 logger = logging.getLogger(__name__)
@@ -330,21 +331,32 @@ class AnonymousJsonProcessor:
         Returns:
             Tuple of (anonymized_text, placeholder_mappings).
         """
-        result = text
-
-        # Sort findings by position (reverse order to maintain positions)
-        sorted_findings = sorted(
-            scan_result.findings,
-            key=lambda f: f.start,
-            reverse=True,
-        )
-
-        for finding in sorted_findings:
-            placeholder = self._get_or_create_placeholder(
-                finding.pii_type,
-                finding.value,
+        # Findings routinely overlap - a validated IBAN and a Steuer-ID pattern
+        # claim the same digits, a run-based card claim and a phone pattern
+        # share a digit run. Replacements are computed on ORIGINAL offsets, so
+        # applying an overlapping pair to an already-mutated string splices
+        # placeholder fragments into the output and leaves the second finding's
+        # value standing where its offsets used to be.
+        #
+        # The redactor was fixed for this; this path was not, and it is the one
+        # whose entire purpose is cloud egress. It now shares the redactor's
+        # merge instead of keeping a second, broken copy of the same loop.
+        candidates: List[Tuple[int, int, str]] = [
+            (
+                finding.start,
+                finding.end,
+                self._get_or_create_placeholder(finding.pii_type, finding.value),
             )
-            result = result[:finding.start] + placeholder + result[finding.end:]
+            for finding in sorted(
+                scan_result.findings, key=lambda f: (f.start, -(f.end - f.start))
+            )
+        ]
+
+        result = text
+        for start, end, placeholder in sorted(
+            merge_replacements(candidates), reverse=True
+        ):
+            result = result[:start] + placeholder + result[end:]
 
         return result, dict(self._placeholder_to_value)
 
