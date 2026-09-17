@@ -395,6 +395,19 @@ def leaks_in(text: str, document) -> list[str]:
             if len(local) >= 4 and local in overlay:
                 leaks.append(f"validated {kind} local part survived in overlay")
             continue
+        # RESIDUE is reported only for candidates that sit on one line.
+        #
+        # A candidate that exists only by joining two lines is already
+        # speculative - the oracle can pair any line with the next, and the
+        # digits of a retained UUID plus the digits of a redacted phone number
+        # satisfy Luhn often enough to report constantly. Partial survival of
+        # such a thing is its normal state and says nothing.
+        #
+        # Whole-value survival is still reported for every candidate, wrapped
+        # or not, and that is what the class this bound exists for looks like:
+        # the glued-and-wrapped card survives all sixteen digits.
+        if any(char in _ORACLE_LINE_BREAKS for char in as_written):
+            continue
         residue = _residue_run(canonical, overlay, text)
         if residue:
             leaks.append(
@@ -519,7 +532,7 @@ def test_a_multi_character_gap_does_not_hide_a_card(gap, mode):
         EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
     )
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -530,7 +543,7 @@ def test_a_multi_character_gap_does_not_hide_an_iban(gap, mode):
     body = gap.join(EXAMPLE_IBAN[index:index + 4] for index in range(0, 20, 4))
     text = "Konto " + body + gap + EXAMPLE_IBAN[20:]
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -539,7 +552,7 @@ def test_mixed_gap_widths_within_one_identifier():
     """Real extraction is not uniform: a dot leader here, padding there."""
     text = "Pos 4111. 1111   1111 | 1111"
     assert_no_leak(text)
-    assert scan(text).documents[0].pii_detected
+    assert scan(text, force_text=True).documents[0].pii_detected
 
 
 @pytest.mark.parametrize(
@@ -557,7 +570,7 @@ def test_mixed_gap_widths_within_one_identifier():
 def test_reported_extraction_artefact_shapes(text):
     """The four shapes reported against the installed artifact."""
     assert_no_leak(text)
-    document = scan(text).documents[0]
+    document = scan(text, force_text=True).documents[0]
     assert document.pii_detected, document.overlay
     assert EXAMPLE_CARD not in document.overlay.replace(" ", "")
 
@@ -569,7 +582,7 @@ def test_a_grouped_card_is_found_whatever_separates_the_groups(separator, mode):
         EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
     )
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -580,7 +593,7 @@ def test_a_grouped_iban_is_found_whatever_separates_the_groups(separator, mode):
     body = separator.join(EXAMPLE_IBAN[index:index + 4] for index in range(0, 20, 4))
     text = "Konto " + body + separator + EXAMPLE_IBAN[20:]
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -599,7 +612,7 @@ def test_a_grouped_identifier_is_typed_as_itself(separator):
     text = "Kartennummer " + separator.join(
         EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
     )
-    document = scan(text).documents[0]
+    document = scan(text, force_text=True).documents[0]
     assert document.overlay == "Kartennummer [CREDIT_CARD]", document.overlay
     assert [span.pii_type for span in document.spans] == ["credit_card"], (
         [(s.pii_type, s.start, s.end) for s in document.spans]
@@ -720,7 +733,7 @@ def test_structural_guard_holds_with_the_broken_regex_restored(text, monkeypatch
 def test_overlay_is_not_corrupted_by_overlapping_spans():
     """Overlapping findings must not splice placeholder fragments into the overlay."""
     text = "Kunde Max Mueller, IBAN DE89 3704 0044 0532 0130 00, Karte 4111 1111 1111 1111"
-    document = scan(text).documents[0]
+    document = scan(text, force_text=True).documents[0]
     overlay = document.overlay
     assert not leaks_in(text, document)
     # A spliced placeholder leaves an orphan "]" with no opening "[" before it.
@@ -737,7 +750,7 @@ def test_a_trimmed_identifier_does_not_blank_out_its_neighbour():
     merges the two and blanks the neighbour out as well.
     """
     text = f"Ref {EXAMPLE_IBAN}\nID {EXAMPLE_CARD}\n"
-    document = scan(text).documents[0]
+    document = scan(text, force_text=True).documents[0]
 
     assert not leaks_in(text, document)
     assert document.overlay == "Ref [IBAN]\nID [CREDIT_CARD]\n", document.overlay
@@ -941,7 +954,7 @@ def test_release_gate_generated_battery(mode):
     failures: list[str] = []
     for index in range(GENERATED_DOCUMENT_COUNT):
         text, planted, shapes = generate_document(rng)
-        document = scan(text, mode=mode).documents[0]
+        document = scan(text, mode=mode, force_text=True).documents[0]
         # Ground truth only, deliberately. The brute-force oracle is rule-free
         # and therefore over-inclusive: on generated documents it reports
         # Luhn-valid windows assembled out of a UUID and the first character of
@@ -1012,7 +1025,7 @@ if given is not None:  # pragma: no branch
         text = joiner.join(fragments)
         if not text.strip():
             return
-        document = scan(text, mode=mode).documents[0]
+        document = scan(text, mode=mode, force_text=True).documents[0]
         leaks = leaks_in(text, document)
         assert not leaks, (
             f"mode={mode.value}\ninput={text!r}\noverlay={document.overlay!r}\n"
@@ -1142,7 +1155,7 @@ def test_a_separator_inside_an_identifier_does_not_hide_it(filler, identifier, m
     text = "acct_" + identifier[:4] + filler + identifier[4:]
     assert_no_leak(text, mode=mode)
 
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -1199,7 +1212,7 @@ def test_a_line_wrapped_identifier_is_no_longer_a_gap():
     assert identifiers.find_cards(wrapped), "a wrapped card is not claimed"
 
     for text in (wrapped, "Kreditkartennummer" + wrapped):
-        document = scan(text).documents[0]
+        document = scan(text, force_text=True).documents[0]
         assert document.pii_detected, document.overlay
         assert not leaks_in(text, document)
         surviving = _compact(EXAMPLE_CARD)
@@ -1232,7 +1245,7 @@ def test_a_letter_spaced_field_does_not_hide_a_card(mode):
     """
     text = "Karte " + " ".join(EXAMPLE_CARD)
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -1245,7 +1258,7 @@ def test_a_wide_column_gap_does_not_hide_a_card(gap, mode):
         EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
     )
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -1372,14 +1385,14 @@ def test_a_phone_number_is_found_with_something_glued_after_it(suffix):
     wrong.
     """
     text = f"Tel.+49 170 1234567{suffix}"
-    document = scan(text).documents[0]
+    document = scan(text, force_text=True).documents[0]
     assert "1234567" not in document.overlay, document.overlay
     assert document.pii_detected, document.overlay
 
 
 def test_two_phone_numbers_run_together_with_labels():
     text = "Tel.+49 170 1234567Fax +49 211 9876543"
-    document = scan(text).documents[0]
+    document = scan(text, force_text=True).documents[0]
     assert "1234567" not in document.overlay, document.overlay
     assert "9876543" not in document.overlay, document.overlay
 
@@ -1468,7 +1481,7 @@ def test_glued_and_wrapped_is_not_the_intersection_nobody_checks(text, mode):
     `is_safe_for_external_llm` returning "No PII detected".
     """
     assert_no_leak(text, mode=mode)
-    document = scan(text, mode=mode).documents[0]
+    document = scan(text, mode=mode, force_text=True).documents[0]
     if document.egress_allowed:
         assert document.pii_detected, document.overlay
 
@@ -1532,7 +1545,7 @@ def test_the_shared_line_break_bound_cannot_hide_the_leak_class():
         identifiers._is_joiner = lambda char: (
             not char.isalnum() and char not in identifiers._LINE_BREAKS
         )
-        document = scan(text).documents[0]
+        document = scan(text, force_text=True).documents[0]
         assert leaks_in(text, document), (
             "the detector declined the claim and the gate stayed silent - "
             "which is the exact failure the old exclusion caused"

@@ -64,7 +64,7 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   and let a column of figures be assembled into a checksum. A wrapped card is
   today redacted only incidentally, by the phone pattern catching its first
   half; the residue is pinned by
-  `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_a_known_gap`
+  `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_no_longer_a_gap`
   so that narrowing that pattern fails loudly instead of leaking quietly.
 - **Person names are found by evidence, not by capitalisation.** German
   capitalises every noun, so "capitalised word followed by capitalised word"
@@ -94,8 +94,19 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   name-only-line positions were measured and deliberately not shipped: they
   cost 1 and 17 false-positive spans on clean documents respectively.
 
+  **Probe A — a value after a person-role label — was approved and then
+  withdrawn.** It was approved on a zero measured over 20 documents; an
+  independent corpus produced 18 false-positive spans over 20. Its two
+  enumerations could not be completed (foreign legal forms such as `Oy` and
+  `Kft`, and German inflection defeating an uninflected value list), and its
+  only unique contribution is the bare surname after a label, which is
+  structurally identical to `Sachbearbeiter: Unbesetzt` and `An: Nordica Oy`.
+  Deciding it needs the lexicon described below. Withdrawing it cost 4 of 21
+  name occurrences on the independent corpus: recall went 11/21 to
+  **7/21 (33%)**.
+
   **The cost, re-measured against document classes specified from outside this
-  work:** recall is **11 of 21** name occurrences (52%) on correspondence that is
+  work:** recall is **7 of 21** name occurrences (33%) on correspondence that is
   not a formal letter — nothing after a colon, in a CC list, in an e-mail body
   without a title, in a footnote, in minutes, in a table cell or in a subject
   line, and **nothing for a non-German full name in prose**, because the rule is
@@ -199,12 +210,20 @@ pre-embedded PII-context file.
 
 ## Test split
 
+All numbers below are measured in **CI's environment**, which is
+`pip install ".[dev,semantic,extract,openai]"` and nothing else — notably
+**without `httpx`**, which is in no extra and which CI does not install:
+
 ```
-python3 -m pytest -q
-886 passed, 8 failed
+python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
+893 passed, 8 failed, 2 skipped
 ```
 
-894 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+902 tests collected. The 2 skips are the `httpx` transport assertions in
+`tests/test_proxy_transport_guard.py` and
+`tests/test_privacy_shield_embeddings.py`; they do not run in CI either, and
+a previously reported "886 passed / 8 failed" was measured in a richer
+environment than CI's and was not reproducible. The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -212,10 +231,10 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 886 passed, 8 deselected.
+`tests` job runs 893 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 372 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 383 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
 

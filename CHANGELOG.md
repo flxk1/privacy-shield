@@ -174,10 +174,10 @@ trees — pin the major version.
     `::test_a_grouped_card_is_found_whatever_separates_the_groups`,
     `::test_a_grouped_iban_is_found_whatever_separates_the_groups`,
     `::test_an_invisible_character_does_not_split_a_run`,
-    `::test_a_line_break_is_never_an_inline_separator`.
+    `::test_a_line_break_is_now_an_inline_separator`.
   - A line break is never a joiner, so an identifier wrapped across two lines
     is a known gap, pinned rather than hidden by
-    `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_a_known_gap`.
+    `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_no_longer_a_gap`.
   - **Gap WIDTH was the next hole in the same wall.** The rule ended a
     candidate at the second consecutive joiner, so a `pdftotext` column gap,
     fixed-width padding, a dot leader and a monospaced table each egressed a

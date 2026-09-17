@@ -23,6 +23,7 @@ decides locally and records to the standalone :mod:`privacy_shield.audit_log`.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -33,6 +34,8 @@ from .anonymous_json import anonymize_for_cloud
 from .gate import PrivacyGate
 from .redactor import RedactionMode, SelectionMode
 from .scanner import Confidence, ScanResult
+logger = logging.getLogger(__name__)
+
 from .shield import (
     MediaType,
     PrivacyMode,
@@ -169,8 +172,23 @@ def _iter_files(
     """Collect candidate document files under *root* (deterministic order)."""
     files: List[Path] = []
     walker = root.rglob("*") if recursive else root.glob("*")
-    for path in walker:
-        if not path.is_file():
+    # A directory the process cannot read must not end the walk. Scanning a
+    # folder that contains one unreadable entry used to raise PermissionError
+    # out of `scan()` and abandon every document, read or not - found by the
+    # property test handing `scan()` the one-character string "/", which is an
+    # existing path and so becomes a recursive walk of the filesystem root.
+    while True:
+        try:
+            path = next(walker)
+        except StopIteration:
+            break
+        except OSError as exc:  # unreadable directory, broken link, cycle
+            logger.debug("skipping unreadable entry during walk: %s", exc)
+            continue
+        try:
+            if not path.is_file():
+                continue
+        except OSError:
             continue
         # Skip hidden files/dirs and python caches.
         parts = path.relative_to(root).parts
