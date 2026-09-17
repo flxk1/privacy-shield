@@ -489,7 +489,15 @@ def find_emails(text: str) -> List[Span]:
         for start in range(left, at):
             for end in range(right, at + 1, -1):
                 candidate = text[start:end]
-                if email_ok(candidate):
+                # SHAPE only, not `email_ok`. The validator also caps the whole
+                # address at RFC 5321's 254 characters, and using it here made
+                # the search shorten the DOMAIN to get under the cap: a
+                # 243-character local part produced a span ending
+                # "...aaa@example.co", leaving the final "m" of the TLD in the
+                # overlay, silently, because "example.co" is a valid domain
+                # shape too. Length is a property of the address, not a way to
+                # choose where it ends. An over-long address is claimed whole.
+                if RFC_EMAIL.match(candidate):
                     spans.append((start, end, candidate))
                     claimed_to = end
                     found = True

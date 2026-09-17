@@ -64,11 +64,45 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   half; the residue is pinned by
   `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_a_known_gap`
   so that narrowing that pattern fails loudly instead of leaking quietly.
+- **Person names are found by evidence, not by capitalisation.** German
+  capitalises every noun, so "capitalised word followed by capitalised word"
+  claimed 75% of every character of ordinary business documents containing no
+  personal data — 121 spans across twenty documents, 90% on one memo. A name is
+  now claimed only where a title, a signature block, an addressee position or a
+  known given name says a person is being named. Measured on a development and
+  a held-out corpus: false positives on clean documents went 73/48 spans to
+  **0**, precision 24%/25% to **100%**, recall 86%/89% to **100%**.
+  **The cost:** a bare surname in running prose with nothing around it — "die
+  Pruefung durch Weber ergab" — is NOT found. That is a real privacy cost,
+  it is deliberate, and it is asserted in
+  `tests/test_name_layer_precision.py::test_the_recall_this_buys_the_precision_with`
+  so it cannot drift unnoticed in either direction.
+- **The layout bound has a cliff at about eighty characters of gap.** An
+  identifier whose groups are spaced further apart than that is not found.
+  Sweeping the bound from 4x to 1000x the identifier length does not change the
+  false-positive count at all, so it buys no precision; it is kept only to stop
+  two numbers at opposite ends of a long line being assembled, and set where no
+  real column reaches. Pinned by
+  `tests/test_leak_invariant.py::test_the_span_bound_has_a_cliff_and_this_is_where_it_is`.
+- **Single-character groups are accepted, so dotted prose is over-redacted.**
+  "4 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1" is what `pdftotext` emits for a
+  letter-spaced form field, and "4.1.1.1..." is punctuated prose. Nothing in
+  the text separates them, so both are redacted.
+- **The IBAN country/length table is a transcription and cannot self-check.**
+  ISO 13616 is amended about twice a year; the table was missing 40
+  registrations including Honduras and Yemen, whose IBANs were therefore not
+  IBANs to this package, with every test green.
+  `tests/test_iban_registry.py` compares it against `schwifty`, a maintained
+  external implementation, and fails on any drift. Without that dependency
+  installed the check skips loudly rather than passing.
 - **Detection is ASCII for the validated types.** Identifier runs are built
   from ASCII alphanumerics; an account number written in full-width or
   Arabic-Indic digits is not offered to the validators. Invisible characters
   (Unicode `Cf` — soft hyphen, zero-width space, BOM) are removed first and
-  never break a run.
+  never break a run. ASCII is a FINDING rule and not a definition here:
+  `luhn_ok` accepts Arabic-Indic and full-width digits that neither the
+  detector nor the gate's oracle will ever offer it. Pinned by
+  `tests/test_leak_invariant.py::test_non_ascii_digits_are_a_documented_limit_not_a_silent_one`.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.
@@ -103,10 +137,10 @@ pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-751 passed, 8 failed
+793 passed, 8 failed
 ```
 
-759 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+801 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -114,16 +148,16 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 751 passed, 8 deselected.
+`tests` job runs 793 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 299 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 325 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
 
-**What the gate costs: about 3 seconds.** Measured with `--durations`: 2.9s
-total, of which the property run is 0.8s and each 300-document battery is
-0.2s. Its oracle is deliberately quadratic — every subsequence of alphanumerics
+**What the gate costs: about 3.6 seconds**, with every extra installed as
+CI now installs them. Measured with `--durations`: 3.6s total, of which the
+property run is 0.9s and each 300-document battery is 0.2s. Its oracle is deliberately quadratic — every subsequence of alphanumerics
 within 136 characters of each position — and that is still cheap, because the
 documents are short.
 

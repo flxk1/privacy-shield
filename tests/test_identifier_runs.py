@@ -394,6 +394,29 @@ def test_the_layout_bounds_reject_assembled_prose():
     assert identifiers.find_cards(EXAMPLE_CARD)         # solid
 
 
+@pytest.mark.parametrize("local_length", [60, 242, 243, 250, 300])
+def test_a_long_local_part_does_not_truncate_the_domain(local_length):
+    """The reported shortfall, with the input that produces it.
+
+    `email_ok` caps the whole address at RFC 5321's 254 characters. Using it to
+    choose where the address ENDS made the search shorten the domain to get
+    under the cap, so a 243-character local part gave a span ending
+    "...aaa@example.co" and left the final "m" of the TLD behind. Silent,
+    because "example.co" is a valid domain shape. The threshold was exact: 242
+    clean, 243 and above short.
+    """
+    text = "Kontakt " + ("a" * local_length) + "@example.com bitte"
+    spans = identifiers.find_emails(text)
+    assert spans, "no address found at all"
+    claimed = spans[0][2]
+    assert claimed.endswith("@example.com"), (
+        f"the domain was truncated to {claimed[-16:]!r}"
+    )
+    assert text[spans[0][1]:] == " bitte", (
+        f"the span stopped short, leaving {text[spans[0][1]:][:4]!r} behind"
+    )
+
+
 def test_a_claimed_address_is_never_shorter_than_the_longest_valid_one():
     """The claimed span must reach the end of the TLD, not stop one short.
 

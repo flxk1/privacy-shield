@@ -27,8 +27,10 @@ extract = ["PyMuPDF>=1.23", "opencv-python-headless>=4.8"]
 openai = ["openai>=1"]
 # Config layer + tests. hypothesis drives the property-based half of the
 # leak invariant (tests/test_leak_invariant.py); the deterministic battery
-# in the same file runs without it.
-dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6"]
+# in the same file runs without it. schwifty is the external IBAN registry
+# tests/test_iban_registry.py checks the country/length table against - nothing
+# inside this package can notice that table going stale.
+dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
