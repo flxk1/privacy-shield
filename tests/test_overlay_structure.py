@@ -8,6 +8,8 @@ fail-closed on confidentiality and fail-open on the reason the thing exists.
 
 from __future__ import annotations
 
+import pytest
+
 from privacy_shield import scan
 from privacy_shield.scanner import Confidence, PIIType, PrivacyScanner
 
@@ -180,3 +182,33 @@ def test_precedence_never_reduces_redacted_coverage(monkeypatch):
         assert without <= with_precedence, (
             f"precedence uncovered {sorted(without - with_precedence)} in {text!r}"
         )
+
+
+@pytest.mark.parametrize(
+    "amount",
+    ["1.200,00", "12.500,00", "1.234.567,89", "1.200", "999,00"],
+)
+def test_a_german_amount_is_not_a_version_string(amount):
+    """The cloud path claimed the integer part of every four-figure amount.
+
+    `anonymize_for_cloud` scans at the default LOW floor, where the Layer-4
+    version pattern is live, and "1.200,00" is a thousands separator and a
+    decimal comma - not a version. "Betrag 1.200,00 EUR" went out as
+    "Betrag [ANON_VERS_1],00 EUR", so the claim of zero character loss on clean
+    documents could not hold for any invoice.
+    """
+    from privacy_shield.anonymous_json import anonymize_for_cloud
+
+    text = f"Betrag {amount} EUR"
+    overlay, _placeholders = anonymize_for_cloud(text)
+    assert overlay == text, overlay
+
+
+@pytest.mark.parametrize(
+    "version", ["v2.0", "v1.4.2-beta2", "2.1.0", "v10.4.2"]
+)
+def test_a_real_version_is_still_found(version):
+    from privacy_shield.anonymous_json import anonymize_for_cloud
+
+    overlay, _placeholders = anonymize_for_cloud(f"Release {version} heute")
+    assert "ANON_VERS" in overlay, overlay

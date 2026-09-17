@@ -184,6 +184,27 @@ _MASK_CHAR = "\x00"
 _H = r"[ \t]"
 
 
+# A digit-run identifier is bounded by DIGITS, not by word characters.
+#
+# `\b` sits between a word character and a non-word character, so a number
+# immediately followed by a LETTER has no boundary after it and a
+# `\b`-terminated pattern does not match at all. "+49 170 1234567Ref " - an
+# ordinary `pdftotext` letterhead footer, where the field label runs into the
+# value - was not detected as a phone number, and the whole number egressed.
+#
+# Every layout fix before this one was about what may sit BETWEEN or BEFORE an
+# identifier. This is the trailing side, and it is the same mistake: the thing
+# that must not be adjacent to a digit run is another DIGIT, because that would
+# mean the match had clipped a longer number. A letter is not a continuation of
+# a number, it is the next word.
+#
+# The validated types do not need this - the run-based pass in identifiers.py
+# already finds them regardless of what is glued on - so it is the types with
+# no validator that were exposed.
+_NOT_DIGIT_BEFORE = r"(?<!\d)"
+_NOT_DIGIT_AFTER = r"(?!\d)"
+
+
 # -----------------------------------------------------------------------------
 # Layer 1: Direct PII Patterns (High Confidence)
 # -----------------------------------------------------------------------------
@@ -200,7 +221,9 @@ LAYER_1_PATTERNS: List[PatternDef] = [
     # Phone - International formats
     PatternDef(
         pattern=_compile(
-            r"\b(?:\+?\d{1,3}[ \t.-]?)?\(?\d{2,4}\)?[ \t.-]?\d{3,4}[ \t.-]?\d{3,4}\b"
+            _NOT_DIGIT_BEFORE
+            + r"(?:\+?\d{1,3}[ \t.-]?)?\(?\d{2,4}\)?[ \t.-]?\d{3,4}[ \t.-]?\d{3,4}"
+            + _NOT_DIGIT_AFTER
         ),
         pii_type=PIIType.PHONE,
         confidence=Confidence.HIGH,
@@ -209,7 +232,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # German phone specific
     PatternDef(
-        pattern=_compile(r"\b0\d{2,4}[ \t/-]?\d{4,8}\b"),
+        pattern=_compile(_NOT_DIGIT_BEFORE + r"0\d{2,4}[ \t/-]?\d{4,8}" + _NOT_DIGIT_AFTER),
         pii_type=PIIType.PHONE,
         confidence=Confidence.HIGH,
         description="German phone number",
@@ -238,7 +261,11 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # IP Address - IPv4
     PatternDef(
-        pattern=_compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"),
+        pattern=_compile(
+            _NOT_DIGIT_BEFORE
+            + r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"
+            + _NOT_DIGIT_AFTER
+        ),
         pii_type=PIIType.IP_ADDRESS,
         confidence=Confidence.HIGH,
         description="IPv4 address",
@@ -246,7 +273,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # German Tax ID (Steuer-ID) - 11 digits
     PatternDef(
-        pattern=_compile(r"\b\d{2}\s?\d{3}\s?\d{3}\s?\d{3}\b"),
+        pattern=_compile(_NOT_DIGIT_BEFORE + r"\d{2}\s?\d{3}\s?\d{3}\s?\d{3}" + _NOT_DIGIT_AFTER),
         pii_type=PIIType.STEUER_ID,
         confidence=Confidence.MEDIUM,  # Could be other 11-digit numbers
         description="German tax ID (Steuer-ID)",
@@ -254,7 +281,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # German Social Security Number (SVNR)
     PatternDef(
-        pattern=_compile(r"\b\d{2}[A-Z]\d{6}[A-Z]\d{3}\b"),
+        pattern=_compile(_NOT_DIGIT_BEFORE + r"\d{2}[A-Z]\d{6}[A-Z]\d{3}" + _NOT_DIGIT_AFTER),
         pii_type=PIIType.SVNR,
         confidence=Confidence.HIGH,
         description="German social security number",
@@ -262,7 +289,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # Passport numbers (EU format)
     PatternDef(
-        pattern=_compile(r"\b[A-Z]{1,2}\d{6,9}\b"),
+        pattern=_compile(r"\b[A-Z]{1,2}\d{6,9}" + _NOT_DIGIT_AFTER),
         pii_type=PIIType.PASSPORT,
         confidence=Confidence.LOW,  # Many false positives
         description="Passport number",
@@ -270,7 +297,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 
     # German ID card (Personalausweis) - new format
     PatternDef(
-        pattern=_compile(r"\b[CFGHJKLMNPRTVWXYZ0-9]{9}\d\b"),
+        pattern=_compile(r"\b[CFGHJKLMNPRTVWXYZ0-9]{9}\d" + _NOT_DIGIT_AFTER),
         pii_type=PIIType.ID_CARD,
         confidence=Confidence.MEDIUM,
         description="German ID card number",
@@ -518,9 +545,25 @@ LAYER_4_PATTERNS: List[PatternDef] = [
         description="Draft/confidential marker",
     ),
 
-    # Version strings
+    # Version strings.
+    #
+    # NOT a German-notation amount. "1.200,00" and "12.500,00" are a thousands
+    # separator and a decimal comma, and this pattern claimed the integer part
+    # of every four-figure amount on an invoice - in the cloud path, where the
+    # scanner runs at its default LOW floor, "Betrag 1.200,00 EUR" went out as
+    # "Betrag [ANON_VERS_1],00 EUR".
+    #
+    # So a version may not be preceded by a digit or a separator, may not be
+    # followed by a decimal comma or a further dotted group, and has to LOOK
+    # like a version: a leading "v", or three components. That costs the
+    # two-component form written without a "v" - "Version 2.1" is no longer
+    # claimed - which is a Layer-4 internal reference at the lowest confidence,
+    # weighed against every four-figure amount on every invoice.
     PatternDef(
-        pattern=_compile(r"\bv?\d+\.\d+(?:\.\d+)?(?:-(?:alpha|beta|rc|draft)\d*)?\b"),
+        pattern=_compile(
+            r"(?<![\d.,])(?:v\d+\.\d+(?:\.\d+)?|\d+\.\d+\.\d+)"
+            r"(?:-(?:alpha|beta|rc|draft)\d*)?(?![\d,]|\.\d)"
+        ),
         pii_type=PIIType.VERSION_STRING,
         confidence=Confidence.LOW,
         description="Version string",

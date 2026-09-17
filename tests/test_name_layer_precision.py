@@ -164,3 +164,61 @@ def test_the_signature_role_and_department_are_not_claimed():
     assert [f.value for f in findings] == ["Laura Wagner"], [
         f.value for f in findings
     ]
+
+
+# ---------------------------------------------------------------------------
+# The rule must do what its docstring says
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Max. Laufzeit 36 Monate", id="max_as_maximal"),
+        pytest.param("Rechnungsdatum: Jan 2026", id="jan_as_januar"),
+        pytest.param("Frank furt am Main", id="given_name_then_lowercase"),
+        pytest.param("Lieferung bis Mai 2026", id="month"),
+        pytest.param("Die Marie-Curie-Strasse ist gesperrt", id="street_named_after"),
+    ],
+)
+def test_a_bare_given_name_without_a_surname_is_not_a_name(text):
+    """GIVEN requires the surname its docstring promises.
+
+    The first version claimed the given name whether or not one followed, so
+    the shipped rule was "a known given name, OPTIONALLY followed by
+    capitalised words". "Max." for maximal and "Jan" for Januar are in every
+    German offer, invoice and specification.
+    """
+    scanner = PrivacyScanner(min_confidence=Confidence.MEDIUM)
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert not claimed, claimed
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Abteilung Vertrieb",
+        "Leitung Einkauf",
+        "Zentrale Verwaltung",
+        "Sekretariat Geschaeftsfuehrung",
+    ],
+)
+def test_a_department_does_not_sign_a_letter(line):
+    """The docstring said roles and departments are evidence, not data."""
+    scanner = PrivacyScanner(min_confidence=Confidence.MEDIUM)
+    text = f"Mit freundlichen Gruessen\n{line}\n"
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert not claimed, claimed
+
+
+def test_a_person_still_signs_a_letter():
+    """The department exclusion must not cost the signature rule."""
+    scanner = PrivacyScanner(min_confidence=Confidence.MEDIUM)
+    text = "Mit freundlichen Gruessen\nLaura Wagner\nLeiterin Einkauf\n"
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert claimed == ["Laura Wagner"], claimed

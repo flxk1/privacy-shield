@@ -102,6 +102,26 @@ Vanessa Verena Volker Walter Werner Wolfgang Yvonne
 SINGLE_WORD = re.compile(rf"\b{_WORD}\b")
 
 
+#: Words that make a line a ROLE or a DEPARTMENT rather than a person. The
+#: signature rule claimed "Abteilung Vertrieb", which its own docstring said it
+#: would not: titles, roles and departments are evidence, not data.
+ORGANISATIONAL = frozenset("""
+Abteilung Bereich Referat Sachgebiet Team Gruppe Stabsstelle Sekretariat
+Geschaeftsfuehrung Geschäftsführung Vorstand Buchhaltung Einkauf Vertrieb
+Verkauf Marketing Personal Personalabteilung Rechnungswesen Controlling
+Logistik Lager Versand Produktion Technik Entwicklung Konstruktion Qualitaet
+Qualität Service Kundendienst Support Innendienst Aussendienst Außendienst
+Recht Rechtsabteilung Datenschutz Compliance Revision Leitung Leiter Leiterin
+Direktion Niederlassung Zentrale Filiale Werk Standort Poststelle Empfang
+Verwaltung Organisation Projektbuero Projektbüro Veranstaltungsbuero
+Veranstaltungsbüro Beschaffung Disposition Fuhrpark Werkstatt
+""".split())
+
+
+def _is_organisational(candidate: str) -> bool:
+    return any(word in ORGANISATIONAL for word in candidate.split())
+
+
 def _line_spans(text: str) -> List[Tuple[int, int, str]]:
     spans: List[Tuple[int, int, str]] = []
     start = 0
@@ -139,7 +159,11 @@ def find_names(text: str) -> List[Span]:
             if not candidate.strip():
                 continue
             match = NAME_LINE.match(candidate)
-            if match and len(match.group(1).split()) >= 2:
+            if (
+                match
+                and len(match.group(1).split()) >= 2
+                and not _is_organisational(match.group(1))
+            ):
                 _claim(
                     spans,
                     line_start + match.start(1),
@@ -170,14 +194,22 @@ def find_names(text: str) -> List[Span]:
     for index, word in enumerate(words):
         if word.group() not in GIVEN_NAMES:
             continue
-        end = word.end()
+        # A SURNAME IS REQUIRED. The first version claimed the given name
+        # whether or not one followed, so the shipped rule was "a known given
+        # name, optionally followed by capitalised words" - not what its own
+        # docstring said. "Max." for maximal and "Jan" for Januar are in every
+        # German offer, invoice and specification, and both came back as
+        # [NAME]. A bare given name on its own is not claimed at all.
+        end = None
         following = index + 1
         while following < len(words) and following - index <= 2:
-            gap = text[end:words[following].start()]
+            gap = text[(end if end is not None else word.end()):words[following].start()]
             if gap not in (" ", "\t"):
                 break
             end = words[following].end()
             following += 1
+        if end is None:
+            continue
         _claim(spans, word.start(), end, text)
 
     spans.sort(key=lambda span: span[0])

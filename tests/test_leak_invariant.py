@@ -730,6 +730,17 @@ _PREFIXES = [
     "acct_", "Rechnung2026", "id-a3f", "Konto=20", "Gesch=E4ftskonto=20",
     "x", "7", "Beleg-", "KTO/",
 ]
+
+#: What TERMINATES an identifier on the right. This axis had never been
+#: generated at all: every prefix above varies the leading side, and the whole
+#: of the layout work varied what sits between the groups, but nothing ever
+#: put a character after the last one. A `\b`-terminated pattern does not match
+#: when a LETTER follows, and "+49 170 1234567Ref " - a letterhead footer where
+#: the label runs into the value - egressed a whole phone number.
+_SUFFIXES = [
+    "", "", "", "Ref", "Fax", "x", "Nr", "EUR", "ff", "GmbH",
+    ".", ",", ")", "/", "-", "=20", "\u00a0", "2",
+]
 _NOISE = [
     "Art. 6 DSGVO",
     "Gemaess GDPR",
@@ -853,9 +864,14 @@ def generate_document(rng: random.Random) -> tuple[str, list[str], list[str]]:
             else:
                 value = _make_email(rng)
                 written = value
+            suffix = rng.choice(_SUFFIXES)
             planted.append((value, written))
-            shapes.append(f"{kind}/{prefix.strip() or 'bare'}/{'spaced' if written != value else 'compact'}")
-            lines.append(f"{prefix}{written}")
+            shapes.append(
+                f"{kind}/{prefix.strip() or 'bare'}/"
+                f"{'spaced' if written != value else 'compact'}/"
+                f"{suffix or 'bare'}"
+            )
+            lines.append(f"{prefix}{written}{suffix}")
         elif kind == "name":
             lines.append(f"{rng.choice(_NAMES)}, Tel. +49 170 {rng.randint(1000000, 9999999)}")
         else:
@@ -1272,3 +1288,49 @@ def test_non_ascii_digits_are_a_documented_limit_not_a_silent_one(digits, label)
     # ...and neither finder offers them.
     assert not identifiers.find_cards(digits), label
     assert not validated_identifiers(digits), label
+
+
+# ---------------------------------------------------------------------------
+# Trailing-side termination - the axis nothing had ever varied
+# ---------------------------------------------------------------------------
+
+TRAILING = [
+    pytest.param("Ref", id="letters"),
+    pytest.param("Fax", id="next_field_label"),
+    pytest.param("x", id="single_letter"),
+    pytest.param("EUR", id="currency"),
+    pytest.param("GmbH", id="company_suffix"),
+    pytest.param("=20", id="quoted_printable"),
+    pytest.param(" ", id="no_break_space"),
+]
+
+
+@pytest.mark.parametrize("suffix", TRAILING)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_something_glued_after_an_identifier_does_not_hide_it(suffix, mode):
+    for identifier in (EXAMPLE_CARD, EXAMPLE_IBAN):
+        assert_no_leak(f"Konto {identifier}{suffix}", mode=mode)
+
+
+@pytest.mark.parametrize("suffix", TRAILING)
+def test_a_phone_number_is_found_with_something_glued_after_it(suffix):
+    """The reported case: a letterhead footer where the label runs into the
+    value. `\\b` sits between a word character and a non-word character, so a
+    number followed by a LETTER has no boundary after it and the pattern did
+    not match at all.
+
+    Phones have no checksum, so the run-based pass cannot rescue them the way
+    it rescues an IBAN - the pattern boundary is all there is, and it was
+    wrong.
+    """
+    text = f"Tel.+49 170 1234567{suffix}"
+    document = scan(text).documents[0]
+    assert "1234567" not in document.overlay, document.overlay
+    assert document.pii_detected, document.overlay
+
+
+def test_two_phone_numbers_run_together_with_labels():
+    text = "Tel.+49 170 1234567Fax +49 211 9876543"
+    document = scan(text).documents[0]
+    assert "1234567" not in document.overlay, document.overlay
+    assert "9876543" not in document.overlay, document.overlay
