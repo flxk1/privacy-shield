@@ -44,6 +44,19 @@ Span = Tuple[int, int, str]
 #: A capitalised word, including hyphenated surnames (Mueller-Lang).
 _WORD = r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?"
 
+#: Nobiliary and toponymic particles, which are lowercase and sit INSIDE a
+#: surname: "Karl-Heinz von der Tann", "Ludwig van Beethoven", "Anna de Vries".
+#: Without them the name stopped at the last capitalised word before the
+#: particle and the surname - the most identifying token - egressed.
+#:
+#: A closed grammatical class, not a list of names, and it fails closed: a
+#: particle missing from it costs a truncated name, never a false claim on a
+#: clean document. Same asymmetry that lets the table-header list ship.
+_PARTICLE = r"(?:von|van|vom|zu|zur|zum|de|del|della|di|da|dos|das|du|den|der|ter|op|of|af|al|ibn|bin)"
+
+#: A surname, possibly carrying particles: "von der Tann", "van den Berg".
+_SURNAME = rf"(?:{_PARTICLE}[ \t]+){{0,2}}{_WORD}"
+
 #: Address forms and titles. Not claimed - they are the evidence, not the data.
 _TITLE = r"(?:Herrn|Herr|Frau|Fr\.|Hr\.|Dr\.|Prof\.|Dipl\.-[A-Za-zÄÖÜäöü]+\.?|Mag\.|Ing\.)"
 
@@ -52,7 +65,8 @@ _TITLE = r"(?:Herrn|Herr|Frau|Fr\.|Hr\.|Dr\.|Prof\.|Dipl\.-[A-Za-zÄÖÜäöü]+
 #: the surname - the most identifying token of the five - in the overlay,
 #: while pii_detected said True.
 TITLE_ANCHORED = re.compile(
-    rf"\b(?:{_TITLE}[ \t]+)+({_WORD}(?:[ \t]+{_WORD}){{0,4}})"
+    rf"\b(?:{_TITLE}[ \t]+)+({_WORD}(?:[ \t]+{_WORD}){{0,3}}"
+    rf"(?:[ \t]+{_SURNAME})?)"
 )
 
 #: A line that is nothing but a name: one to three capitalised words, with any
@@ -144,12 +158,24 @@ def _claim(spans: List[Span], start: int, end: int, text: str) -> None:
     wider claim that would have included the surname was refused and the
     surname egressed. A narrower claim is now replaced rather than defended.
     """
-    for index, (existing_start, existing_end, _value) in enumerate(spans):
-        if start < existing_end and existing_start < end:
-            if start <= existing_start and end >= existing_end:
-                spans[index] = (start, end, text[start:end])
-            return
-    spans.append((start, end, text[start:end]))
+    overlapping = [
+        index
+        for index, (existing_start, existing_end, _value) in enumerate(spans)
+        if start < existing_end and existing_start < end
+    ]
+    if not overlapping:
+        spans.append((start, end, text[start:end]))
+        return
+    # Only a claim that covers EVERY span it overlaps may replace them. The
+    # previous version inspected the first overlap and returned, so a correct
+    # later claim was discarded on the strength of one earlier partial one.
+    if all(
+        start <= spans[index][0] and end >= spans[index][1]
+        for index in overlapping
+    ):
+        for index in reversed(overlapping):
+            del spans[index]
+        spans.append((start, end, text[start:end]))
 
 
 def find_names(text: str) -> List[Span]:
@@ -218,6 +244,13 @@ def find_names(text: str) -> List[Span]:
         while following < len(words) and following - index <= 2:
             gap = text[(end if end is not None else word.end()):words[following].start()]
             if gap not in (" ", "\t"):
+                break
+            # A KNOWN GIVEN NAME STARTS A NEW PERSON. Extending through it
+            # merged two people: "Teilnehmer: Anna Schmidt Peter Weber" was
+            # claimed as "Anna Schmidt Peter" and the second surname egressed.
+            # Participant lists, CC lines and minutes are full of adjacent
+            # pairs, and this is a listed covered position.
+            if words[following].group() in GIVEN_NAMES:
                 break
             end = words[following].end()
             following += 1

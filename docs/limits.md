@@ -59,31 +59,49 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   `::test_the_layout_bounds_reject_assembled_prose`,
   `tests/test_leak_invariant.py::test_a_multi_character_gap_does_not_hide_a_card`,
   `::test_reported_extraction_artefact_shapes`.
-- **A single line break inside an identifier is a joiner; two are not — and
-  `\r\n` counts as two. THIS IS A KNOWN DEFECT, not a designed limit.** An
-  identifier wrapped across two lines is claimed when the terminator is one
-  character (`\n`, or a bare `\r`), and is NOT claimed when it is the
-  two-character CRLF sequence, because the bound counts `\r` and `\n`
-  separately. Measured on the installed package:
+- **One line TERMINATOR inside an identifier is a joiner; two are not.** A
+  terminator is one break however it is written — `\n`, `\r`, `\r\n`, `\n\r`,
+  `\u2028`, `\u2029` — because the bound counts terminators and not
+  characters. It counted characters until round 17, so a single CRLF scored two
+  and a wrapped identifier terminated the ordinary Windows and MIME way was
+  refused: `is_safe_for_external_llm` returned "No PII detected" for an e-mail
+  body containing all sixteen digits of a card, while the same body with `\n`
+  was detected. That was the eighth leak class in this package's history and it
+  is fixed; the entry that described it as a live defect is gone because the
+  defect is gone, not because the wording softened.
 
-  ```
-  is_safe_for_external_llm("Kreditkartennummer 4111 1111\r\n1111 1111\r\n…")
-    -> (True, 'No PII detected', [])      all sixteen digits in the overlay
-  the same string with \n
-    -> (False, 'PII detected by pattern matching', ['credit_card'])
-  ```
+  The gate could not see it either — its oracle applied the same arithmetic to
+  the same two characters, the sixth time the checker shared an assumption with
+  the checked. The oracle now counts terminators with its own implementation,
+  the terminator set in the tests is derived from Unicode rather than typed,
+  and the generator emits CRLF, `\n\r` and mixtures within one document.
+  Tested: `tests/test_leak_invariant.py::test_a_wrapped_identifier_is_found_whatever_ends_the_line`,
+  `::test_is_safe_for_external_llm_agrees_across_terminators`,
+  `::test_the_terminator_set_is_derived_not_typed`,
+  `::test_a_mixture_of_terminators_in_one_document`.
 
-  CRLF is the line terminator of MIME e-mail bodies by specification and of
-  Windows text generally, and `is_safe_for_external_llm` on an e-mail body is a
-  documented use, so this is not a corner. The leak gate does not catch it
-  because its oracle applies the same arithmetic to the same two characters —
-  the sixth time in this package's history that the checker has shared an
-  assumption with the detector. Do not rely on the egress verdict for CRLF
-  documents until this entry is gone.
-
-  The reason a bound exists at all: making every line break a joiner without
-  limit would glue a document's lines into a single run and let a column of
-  figures be assembled into a checksum.
+  **The bound itself remains**, and so does what it costs: an identifier
+  interrupted more than once — needing a column narrower than about eight
+  characters — is not found. A bound exists at all because making every line
+  break a joiner without limit would glue a document's lines into one run and
+  let a column of figures be assembled into a checksum. Pinned by
+  `::test_the_line_break_bound_is_one_and_this_is_what_it_costs`.
+- **A folder scan that could not read everything is not a clean result.**
+  `walk_errors` lists the directories the walk could not enter,
+  `scan_complete` is False when it is non-empty, and `all_allowed` is False as
+  well — "every document is cleared" cannot be asserted about documents that
+  were never read. Until round 17 the walk caught `OSError` around `next()` on
+  a generator, which cannot work (a generator that raises is finished), so on
+  Python 3.10 an unreadable directory produced a silent partial scan certified
+  `all_allowed=True`. Tested:
+  `tests/test_privacy_shield_runner.py::test_an_unreadable_directory_does_not_silently_truncate_the_scan`.
+- **A local part may contain non-ASCII letters** (RFC 6531), so
+  `müller@kanzlei.de` is claimed whole. Expanding over ASCII only clipped it
+  to `ller@kanzlei.de` and let the first two characters egress. A letter
+  directly before ASCII local-part characters may be part of the mailbox name
+  or a word run into it, and nothing in the characters tells them apart, so the
+  whole run is claimed — which over-redacts a glued word rather than clipping
+  an address.
 - **Person names are found by evidence, not by capitalisation.** German
   capitalises every noun, so "capitalised word followed by capitalised word"
   claimed 75% of every character of ordinary business documents containing no
@@ -97,9 +115,12 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   title or address form (`Herr Dr. Baumann`, `von Herrn Stefan Braun`); the
   first name-shaped line after a closing formula; an addressee block above a
   street or postcode or below a bare `An`; a known German given name followed
-  by a surname in running prose, except where two names are adjacent (the
-  second name's given name is swallowed); and a table cell whose column header
-  names a person's role.
+  by a surname in running prose, INCLUDING two names side by side
+  (`Anna Schmidt Peter Weber`) — the second name's given name used to be
+  swallowed; a surname carrying a nobiliary or toponymic particle
+  (`Karl-Heinz von der Tann`, `Ludwig van Beethoven`); and a table cell whose
+  column header names a person's role, including the second and later tables
+  in a document and tables with no blank line between them.
 
   **Positions it does NOT cover**, also by name: a value after a label that
   names a person's role (`Sachbearbeiter:`, `Von:`, `An:`, `CC:`,
@@ -238,10 +259,10 @@ All numbers below are measured in **CI's environment**, which is
 
 ```
 python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
-893 passed, 8 failed, 2 skipped
+937 passed, 8 failed, 3 skipped
 ```
 
-902 tests collected. The 2 skips are the `httpx` transport assertions in
+947 tests collected. The 2 skips are the `httpx` transport assertions in
 `tests/test_proxy_transport_guard.py` and
 `tests/test_privacy_shield_embeddings.py`; they do not run in CI either, and
 a previously reported "886 passed / 8 failed" was measured in a richer
@@ -253,10 +274,10 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 893 passed, 8 deselected.
+`tests` job runs 937 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 383 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 417 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
 

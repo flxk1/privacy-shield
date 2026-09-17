@@ -133,6 +133,9 @@ class ScanReport:
     destination: str
     root: str
     documents: List[DocumentScan] = field(default_factory=list)
+    #: Directories the walk could not read. Non-empty means the document list
+    #: is INCOMPLETE, so nothing about the folder as a whole is certified.
+    walk_errors: List[str] = field(default_factory=list)
 
     @property
     def document_count(self) -> int:
@@ -143,8 +146,20 @@ class ScanReport:
         return sum(d.span_count for d in self.documents)
 
     @property
+    def scan_complete(self) -> bool:
+        """False when part of the tree could not be read."""
+        return not self.walk_errors
+
+    @property
     def all_allowed(self) -> bool:
-        """True iff every document's overlay is cleared for egress."""
+        """True iff every document's overlay is cleared for egress.
+
+        False when the walk was incomplete. "Every document is cleared" cannot
+        be asserted about documents that were never read, and a folder scan
+        that skipped an unreadable directory used to report exactly that.
+        """
+        if self.walk_errors:
+            return False
         return all(d.egress_allowed for d in self.documents)
 
     @property
@@ -159,6 +174,8 @@ class ScanReport:
             "document_count": self.document_count,
             "total_spans": self.total_spans,
             "all_allowed": self.all_allowed,
+            "scan_complete": self.scan_complete,
+            "walk_errors": self.walk_errors,
             "documents": [d.to_dict() for d in self.documents],
         }
 
@@ -169,35 +186,58 @@ def _iter_files(
     recursive: bool,
     extensions: Optional[frozenset],
 ) -> List[Path]:
-    """Collect candidate document files under *root* (deterministic order)."""
+    """Collect candidate document files under *root*, and what went unread.
+
+    Returns ``(files, unreadable)``. The second value is not decoration: a
+    folder scan that silently skipped part of the tree must not be reported as
+    a clean result, so ``ScanReport.all_allowed`` is False whenever it is
+    non-empty.
+
+    This used to call ``rglob`` and catch OSError around ``next()``. A
+    generator that raises is finished - the following ``next()`` raises
+    StopIteration and the loop exits - so the handler could not do what it
+    said. On 3.14 ``rglob`` swallows the error internally and the handler never
+    fired at all; on 3.10, where PermissionError propagates, it turned a loud
+    crash into a SILENT PARTIAL SCAN certified ``all_allowed=True``. For an
+    egress gate that is worse than the crash it replaced.
+
+    ``os.walk`` reports per-directory errors through ``onerror`` and keeps
+    going, which is the behaviour the old comment claimed.
+    """
+    import os
+
     files: List[Path] = []
-    walker = root.rglob("*") if recursive else root.glob("*")
-    # A directory the process cannot read must not end the walk. Scanning a
-    # folder that contains one unreadable entry used to raise PermissionError
-    # out of `scan()` and abandon every document, read or not - found by the
-    # property test handing `scan()` the one-character string "/", which is an
-    # existing path and so becomes a recursive walk of the filesystem root.
-    while True:
-        try:
-            path = next(walker)
-        except StopIteration:
-            break
-        except OSError as exc:  # unreadable directory, broken link, cycle
-            logger.debug("skipping unreadable entry during walk: %s", exc)
+    unreadable: List[str] = []
+
+    def _record(error: OSError) -> None:
+        unreadable.append(f"{getattr(error, 'filename', root)}: {error.strerror}")
+
+    for directory, subdirectories, names in os.walk(root, onerror=_record):
+        here = Path(directory)
+        # Prune hidden directories and caches in place, so os.walk does not
+        # descend into them at all.
+        subdirectories[:] = [
+            name for name in subdirectories
+            if not name.startswith(".") and name != "__pycache__"
+        ]
+        if not recursive and here != root:
+            subdirectories[:] = []
             continue
-        try:
-            if not path.is_file():
+        for name in names:
+            if name.startswith("."):
                 continue
-        except OSError:
-            continue
-        # Skip hidden files/dirs and python caches.
-        parts = path.relative_to(root).parts
-        if any(p.startswith(".") for p in parts) or "__pycache__" in parts:
-            continue
-        if extensions is not None and path.suffix.lower() not in extensions:
-            continue
-        files.append(path)
-    return sorted(files)
+            path = here / name
+            try:
+                if not path.is_file():
+                    continue
+            except OSError as error:
+                _record(error)
+                continue
+            if extensions is not None and path.suffix.lower() not in extensions:
+                continue
+            files.append(path)
+
+    return sorted(files), unreadable
 
 
 def _build_overlay(
@@ -335,6 +375,7 @@ def scan(
         )
 
         documents: List[DocumentScan] = []
+        walk_errors: List[str] = []
 
         if not is_path:
             # Raw text.
@@ -351,9 +392,11 @@ def scan(
             path = Path(target)
             if path.is_dir():
                 root_label = str(path)
-                for file_path in _iter_files(
+                walked, unreadable = _iter_files(
                     path, recursive=recursive, extensions=extensions
-                ):
+                )
+                walk_errors.extend(unreadable)
+                for file_path in walked:
                     result = shield.process_file(file_path)
                     documents.append(
                         _process_one(
@@ -381,6 +424,7 @@ def scan(
             destination=destination,
             root=root_label,
             documents=documents,
+            walk_errors=walk_errors,
         )
     finally:
         set_global_privacy_mode(previous_mode)

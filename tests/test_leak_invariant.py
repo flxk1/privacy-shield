@@ -80,6 +80,27 @@ from privacy_shield.identifiers import IBAN_LENGTHS as _IBAN_LENGTHS
 
 _ORACLE_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
+#: One line TERMINATOR, however many characters it is written with.
+#:
+#: The bound used to count characters, so a single CRLF scored two and a
+#: wrapped identifier terminated the normal Windows and MIME way was refused -
+#: by the detector AND by this oracle, which applied the identical arithmetic
+#: to the identical two characters. Counting the sequence is the fix; adding
+#: "\r\n" to a list of characters would not have been, because the next
+#: sequence would be missing again.
+#:
+#: Longest-first alternation, so "\r\n" is never counted as two.
+_ORACLE_TERMINATOR = re.compile(
+    "|".join(
+        [r"\r\n", r"\n\r"] + [re.escape(c) for c in _ORACLE_LINE_BREAKS]
+    )
+)
+
+
+def _oracle_terminators(value: str) -> int:
+    """How many line terminators *value* contains, counting sequences."""
+    return len(_ORACLE_TERMINATOR.findall(value))
+
 #: How far the brute-force search may reach for one identifier.
 #:
 #: This was 136, which is exactly the detector's own MAX_SPAN_MULTIPLE (4)
@@ -289,10 +310,7 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
         found.append(("iban", canonical, as_written))
     for canonical, as_written in _oracle_cards(text):
         found.append(("credit_card", canonical, as_written))
-    return [
-        row for row in found
-        if sum(row[2].count(char) for char in _ORACLE_LINE_BREAKS) <= 1
-    ]
+    return [row for row in found if _oracle_terminators(row[2]) <= 1]
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +424,7 @@ def leaks_in(text: str, document) -> list[str]:
         # Whole-value survival is still reported for every candidate, wrapped
         # or not, and that is what the class this bound exists for looks like:
         # the glued-and-wrapped card survives all sixteen digits.
-        if any(char in _ORACLE_LINE_BREAKS for char in as_written):
+        if _oracle_terminators(as_written):
             continue
         residue = _residue_run(canonical, overlay, text)
         if residue:
@@ -832,7 +850,20 @@ _BATTERY_SEPARATORS = [" ", " ", "_", "-", ".", ":", "/", ",", "|", "\u00a0", "\
 #: A line break INSIDE an identifier, which `pdftotext` produces whenever a
 #: value wraps in a narrow column. This was never generated: the gap widths
 #: below are horizontal only.
-_BATTERY_INTERNAL_BREAKS = ["", "", "", "\n", "\n", "-\n", " \n", "\n "]
+_BATTERY_INTERNAL_BREAKS = [
+    "", "", "",
+    "\n", "-\n", " \n", "\n ",
+    # TERMINATORS, not just "\n". This axis had never been varied: every
+    # internal break the generator emitted was a bare newline, so the bound
+    # that counted characters instead of terminators - which refuses a single
+    # CRLF - was unreachable however long the battery ran. CRLF is the MIME
+    # and Windows line terminator.
+    "\r\n", "\r\n", "-\r\n", "\r", "\n\r",
+]
+
+#: Terminators used BETWEEN fragments, so one document can mix them the way a
+#: pasted-together e-mail thread does.
+_BATTERY_TERMINATORS = ["\n", "\r\n", "\r", "\n", "\r\n"]
 
 #: WIDTHS the battery writes between groups, and GROUP SIZES below. Every
 #: generated test once used `joiner.join(...)` - exactly one character per gap,
@@ -935,7 +966,7 @@ def generate_document(rng: random.Random) -> tuple[str, list[str], list[str]]:
     # for the generator however long it ran.
     out = lines[0] if lines else ""
     for line in lines[1:]:
-        out += rng.choice(["\n", " ", ", ", "", "\t"]) + line
+        out += rng.choice(_BATTERY_TERMINATORS + [" ", ", ", "", "\t"]) + line
     return out, planted, shapes
 
 
@@ -1552,3 +1583,92 @@ def test_the_shared_line_break_bound_cannot_hide_the_leak_class():
         )
     finally:
         identifiers._is_joiner = original
+
+
+# ---------------------------------------------------------------------------
+# The eighth class: a line terminator written with two characters
+# ---------------------------------------------------------------------------
+
+
+def _every_terminator():
+    """Every way a line can end, DERIVED rather than typed.
+
+    A list of terminators is the same kind of list as a list of separators and
+    a list of Unicode categories, and each of those was walked around in turn.
+    The singles come from Unicode (Zl, Zp, and the ASCII controls); the
+    two-character sequences are the pairs of CR and LF.
+    """
+    import unicodedata
+
+    singles = [
+        chr(code)
+        for code in range(0x3000)
+        if chr(code) in "\n\r\v\f\u0085"
+        or unicodedata.category(chr(code)) in ("Zl", "Zp")
+    ]
+    return singles + ["\r\n", "\n\r"]
+
+
+TERMINATORS = _every_terminator()
+
+
+def test_the_terminator_set_is_derived_not_typed():
+    """Guards the enumeration, so nothing built on it can be vacuous."""
+    assert "\r\n" in TERMINATORS and "\n\r" in TERMINATORS
+    assert "\n" in TERMINATORS and "\r" in TERMINATORS
+    assert "\u2028" in TERMINATORS and "\u2029" in TERMINATORS
+    assert len(TERMINATORS) >= 8, TERMINATORS
+
+
+@pytest.mark.parametrize("terminator", TERMINATORS, ids=lambda s: repr(s))
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_wrapped_identifier_is_found_whatever_ends_the_line(terminator, mode):
+    """A line terminator is ONE break however many characters it is written
+    with.
+
+    The bound counted characters, so a single CRLF scored two and the wrapped
+    identifier was refused: found under a bare LF and under a bare CR, not
+    found under CRLF. CRLF is the line terminator of MIME e-mail bodies by
+    specification and of Windows text generally, and
+    `is_safe_for_external_llm` on an e-mail body is a documented use of this
+    package.
+    """
+    # The reported grouping: four-digit groups either side of the wrap. A
+    # different grouping is no good here - with eight digits before the wrap
+    # the phone pattern claims part of it and the card is only partly
+    # exposed, so the test would pass for the wrong reason.
+    text = (
+        "Kreditkartennummer " + EXAMPLE_CARD[:4] + " " + EXAMPLE_CARD[4:8]
+        + terminator + EXAMPLE_CARD[8:12] + " " + EXAMPLE_CARD[12:]
+        + terminator + "Betrag 1.240,00 EUR"
+    )
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+@pytest.mark.parametrize("terminator", ["\r\n", "\n\r"], ids=["crlf", "lfcr"])
+def test_is_safe_for_external_llm_agrees_across_terminators(terminator):
+    """The reported asymmetry, on the documented entry point."""
+    from privacy_shield.scanner import is_safe_for_external_llm
+
+    body = "Kreditkartennummer 4111 1111{0}1111 1111{0}Betrag 1.240,00 EUR{0}"
+    safe_lf = is_safe_for_external_llm(body.format("\n"))[0]
+    safe_other = is_safe_for_external_llm(body.format(terminator))[0]
+    assert safe_lf is False, "the single-character baseline stopped detecting"
+    assert safe_other is False, (
+        "a two-character terminator is certified safe while a one-character "
+        "terminator is not"
+    )
+
+
+def test_a_mixture_of_terminators_in_one_document():
+    """A pasted-together thread does not use one terminator throughout."""
+    text = (
+        "Von: Buchhaltung\r\n"
+        "Kreditkartennummer4111 1111\n1111 1111\r\n"
+        "Betrag 1.240,00 EUR\r"
+    )
+    assert_no_leak(text)
+    assert scan(text, force_text=True).documents[0].pii_detected

@@ -228,3 +228,52 @@ def test_cli_reads_text_from_stdin(temp_audit, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["documents"][0]["source"] == "text_input"
     assert FAKE_EMAIL not in payload["documents"][0]["overlay"]
+
+from privacy_shield import scan
+
+
+# ---------------------------------------------------------------------------
+# A folder scan that could not read everything is not a clean result
+# ---------------------------------------------------------------------------
+
+def test_an_unreadable_directory_does_not_silently_truncate_the_scan(tmp_path):
+    """A generator that raises is finished.
+
+    The walk caught OSError around `next()`, which cannot work: the following
+    `next()` raises StopIteration and the loop exits. On 3.14 `rglob` swallows
+    the error internally so the handler never fired; on 3.10, where
+    PermissionError propagates, it turned a loud crash into a silent partial
+    scan certified `all_allowed=True`. For an egress gate that is worse than
+    the crash it replaced.
+    """
+    import os
+
+    readable = tmp_path / "readable.txt"
+    readable.write_text("Karte 4111 1111 1111 1111\n", encoding="utf-8")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "hidden.txt").write_text("nichts", encoding="utf-8")
+    os.chmod(locked, 0o000)
+    try:
+        report = scan(str(tmp_path))
+        # The readable document is still scanned...
+        assert report.document_count >= 1
+        # ...and the gap is REPORTED, not swallowed.
+        assert report.walk_errors, "an unreadable directory was not reported"
+        assert report.scan_complete is False
+        # ...and nothing about the folder is certified.
+        assert report.all_allowed is False, (
+            "a folder scan that skipped an unreadable directory was certified "
+            "as cleared for egress"
+        )
+        assert report.to_dict()["walk_errors"], "not surfaced in the report dict"
+    finally:
+        os.chmod(locked, 0o755)
+
+
+def test_a_complete_folder_scan_is_still_certifiable(tmp_path):
+    """The incompleteness rule must not make every folder uncertifiable."""
+    (tmp_path / "a.txt").write_text("Nur Text ohne Daten.\n", encoding="utf-8")
+    report = scan(str(tmp_path))
+    assert report.walk_errors == []
+    assert report.scan_complete is True

@@ -170,7 +170,29 @@ MAX_SPAN_MULTIPLE = 16
 #: A candidate with fewer than three groups has no interior and is unbounded.
 MAX_INTERIOR_GROUP = 12
 
-#: How many line breaks a single candidate may contain.
+#: One line TERMINATOR, however many characters it is written with.
+#:
+#: The bound below used to count CHARACTERS in _LINE_BREAKS, so a single CRLF
+#: scored two and a wrapped identifier terminated the ordinary Windows and MIME
+#: way was refused: found under a bare LF and under a bare CR, not found under
+#: CRLF. `is_safe_for_external_llm` returned "No PII detected" for an e-mail
+#: body with all sixteen digits of a card in it.
+#:
+#: Counting the sequence is the fix. Adding "\r\n" to a list of characters
+#: would not have been - that is the same move as adding a separator to a
+#: separator list, and the next sequence would be missing again. Longest-first
+#: alternation, so CRLF can never be counted as two.
+LINE_TERMINATOR = re.compile(
+    "|".join([r"\r\n", r"\n\r"] + [re.escape(c) for c in "\n\r\v\f\u0085\u2028\u2029"])
+)
+
+
+def count_terminators(value: str) -> int:
+    """How many line terminators *value* contains, counting sequences."""
+    return len(LINE_TERMINATOR.findall(value))
+
+
+#: How many line terminators a single candidate may contain.
 #:
 #: One. A value that wraps in a narrow column is continued on the NEXT line -
 #: it breaks once. A column of separate numbers stacked in a table breaks
@@ -204,9 +226,26 @@ def _is_joiner(char: str) -> bool:
     """
     return not char.isalnum()
 
-_LOCAL_PART_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
-)
+#: Characters a local part may contain. Non-ASCII letters included, because
+#: RFC 6531 addresses exist and "mueller" is spelt with an umlaut in Germany.
+#:
+#: Expanding left from the "@" over ASCII only truncated the local part at the
+#: umlaut, so "m\u00fcller@kanzlei.de" was claimed as "ller@kanzlei.de" and the
+#: first two characters of the address egressed. The docstring claimed
+#: expanding from the "@" handled an umlaut glued in front; it handled an
+#: umlaut that is not part of the address, and silently clipped one that is.
+#:
+#: The two cases are indistinguishable from the characters alone - a letter
+#: directly before ASCII local-part characters may be part of the mailbox name
+#: or a word run into it - so the address is claimed WHOLE. Where that absorbs
+#: a glued word it over-redacts, which is the safe direction.
+_LOCAL_PART_CHARS = None  # see _is_local_part_char
+
+
+def _is_local_part_char(char: str) -> bool:
+    if char in "._%+-":
+        return True
+    return char.isalnum() and not char.isspace()
 _DOMAIN_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-"
 )
@@ -252,9 +291,13 @@ _DOMAIN_AFTER_AT = re.compile(
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}"
 )
 
+#: The local part accepts non-ASCII letters (RFC 6531); the domain stays
+#: ASCII, since an internationalised domain reaches this code already
+#: punycoded.
 RFC_EMAIL = re.compile(
-    r"\A[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z"
+    r"\A[^\W]*[\w._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z",
+    re.UNICODE,
 )
 
 
@@ -339,7 +382,7 @@ def _within_layout_bounds(
         return False
 
     claimed = text[offsets[start]:offsets[start + size - 1] + 1]
-    if sum(claimed.count(char) for char in _LINE_BREAKS) > MAX_LINE_BREAKS:
+    if count_terminators(claimed) > MAX_LINE_BREAKS:
         return False
 
     groups: List[int] = []
@@ -414,7 +457,7 @@ def _card_spans_in_run(
     text: str,
     compact: str,
     offsets: List[int],
-    claimed: List[Tuple[int, int]],
+    claimed: "set[int]",
 ) -> List[Span]:
     """Every Luhn-valid window in every digit run, merged where they overlap.
 
@@ -436,7 +479,7 @@ def _card_spans_in_run(
         if run_end - run_start < MIN_CARD_LENGTH:
             continue
         for position in range(run_start, run_end - MIN_CARD_LENGTH + 1):
-            if any(start <= position < end for start, end in claimed):
+            if position in claimed:
                 continue
             for size in range(MAX_CARD_LENGTH, MIN_CARD_LENGTH - 1, -1):
                 if position + size > run_end:
@@ -457,7 +500,7 @@ def _card_spans_in_run(
     spans: List[Span] = []
     for start, end in intervals:
         origin, finish = offsets[start], offsets[end - 1] + 1
-        if sum(text.count(char, origin, finish) for char in _LINE_BREAKS) > MAX_LINE_BREAKS:
+        if count_terminators(text[origin:finish]) > MAX_LINE_BREAKS:
             continue
         spans.append((origin, finish, compact[start:end]))
     return spans
@@ -478,16 +521,30 @@ def find_cards(text: str, avoid: Optional[List[Tuple[int, int]]] = None) -> List
     IBANs, whose 18-digit national body would otherwise throw off Luhn-valid
     windows of its own and bury a real finding under a duplicate.
     """
-    avoid = avoid or []
+    # One pass over the offsets per run, with a binary search into the avoid
+    # list. It used to loop every offset for every avoid span, which is
+    # quadratic in the number of validated IBANs on the page: 200 IBANs took
+    # 0.32s and 800 took 4.5s, on the egress path.
+    import bisect
+
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(avoid or []):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    starts = [start for start, _end in merged]
+
     spans: List[Span] = []
     for compact, offsets in identifier_runs(text):
         if not offsets:
             continue
-        blocked: List[Tuple[int, int]] = []
-        for start, end in avoid:
+        blocked = set()
+        if merged:
             for position, origin in enumerate(offsets):
-                if start <= origin < end:
-                    blocked.append((position, position + 1))
+                index = bisect.bisect_right(starts, origin) - 1
+                if index >= 0 and origin < merged[index][1]:
+                    blocked.add(position)
         spans.extend(_card_spans_in_run(text, compact, offsets, blocked))
     return spans
 
@@ -516,7 +573,7 @@ def find_emails(text: str) -> List[Span]:
     claimed_to = 0
     for at in (index for index, char in enumerate(text) if char == "@"):
         left = at
-        while left > 0 and text[left - 1] in _LOCAL_PART_CHARS:
+        while left > 0 and _is_local_part_char(text[left - 1]):
             left -= 1
         left = max(left, claimed_to)
         right = at + 1

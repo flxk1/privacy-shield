@@ -39,7 +39,17 @@ def is_loopback_or_unix_endpoint(endpoint: str) -> bool:
     return False
 
 
-def no_proxy_http_client(timeout: float | None = None):
+#: Default send-path timeout, in seconds.
+#:
+#: The helper defaulted to None, which `httpx` reads as "wait forever" and
+#: which the `openai` client adopts, so none of the three send paths had a
+#: timeout at all. A local model that accepts the connection and never answers
+#: hung the scan indefinitely - and this is the path the privacy gate sits on,
+#: so hanging it is a denial of the gate rather than of a feature.
+DEFAULT_SEND_TIMEOUT = 30.0
+
+
+def no_proxy_http_client(timeout: float | None = DEFAULT_SEND_TIMEOUT):
     """An `httpx.Client` that ignores the environment's proxy settings.
 
     Checking the endpoint STRING is only half the guard. `httpx` (and the
@@ -55,6 +65,8 @@ def no_proxy_http_client(timeout: float | None = None):
         import httpx
     except ImportError:
         return None
+    # An explicit None from a caller still means "no timeout"; the DEFAULT is
+    # what changed.
     return httpx.Client(trust_env=False, timeout=timeout)
 
 

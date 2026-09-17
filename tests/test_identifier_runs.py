@@ -250,9 +250,34 @@ def test_unregistered_country_code_is_not_an_iban():
 
 
 def test_email_found_behind_a_non_ascii_word_character():
+    """Reversal: the address is claimed WHOLE now, umlaut included.
+
+    Expanding left over ASCII only truncated a local part that
+    legitimately contains an umlaut: "müller@kanzlei.de" was claimed as
+    "ller@kanzlei.de" and the first two characters of a real address
+    egressed. RFC 6531 addresses exist, and "mueller" is spelt with an
+    umlaut in Germany.
+
+    A letter directly before ASCII local-part characters may be part of
+    the mailbox name or a word run into it, and the characters cannot
+    tell the two apart - so the whole thing is claimed. Absorbing a glued
+    word over-redacts, which is the safe direction; clipping an address
+    leaked.
+    """
     spans = identifiers.find_emails("Muelleräerika@example.com")
     assert len(spans) == 1, spans
-    assert spans[0][2] == "erika@example.com"
+    assert spans[0][2] == "Muelleräerika@example.com"
+
+    assert [
+        v for _s, _e, v in identifiers.find_emails("Vertrag an müller@kanzlei.de senden")
+    ] == ["müller@kanzlei.de"]
+    # A space still ends the local part.
+    assert [
+        v
+        for _s, _e, v in identifiers.find_emails(
+            "Grüße an erika@example.com"
+        )
+    ] == ["erika@example.com"]
 
 
 def test_email_prefix_that_is_part_of_the_address_is_kept():
@@ -515,7 +540,7 @@ def test_the_email_search_is_still_correct_after_being_made_linear():
     for text, expected in [
         ("erika@example.com", ["erika@example.com"]),
         ("acct_erika@example.com", ["acct_erika@example.com"]),
-        ("Muelleräerika@example.com", ["erika@example.com"]),
+        ("Muelleräerika@example.com", ["Muelleräerika@example.com"]),
         ("erika@example.com.", ["erika@example.com"]),
         ("Mail erika.mustermann@example.com, danke", ["erika.mustermann@example.com"]),
     ]:
@@ -526,3 +551,44 @@ def test_the_email_search_is_still_correct_after_being_made_linear():
     for start, end, _v in spans:
         covered.update(range(start, end))
     assert covered == set(range(44)), sorted(set(range(44)) - covered)
+
+
+@pytest.mark.parametrize("count", [200, 800])
+def test_many_validated_ibans_do_not_make_the_scan_quadratic(count):
+    """`find_cards` looped every offset for every avoided IBAN span.
+
+    Quadratic in the number of validated IBANs on the page - 200 took 0.32s
+    and 800 took 4.5s, on the egress path. A statement of account is exactly
+    the document that has hundreds. One pass with a binary search into the
+    sorted avoid list instead.
+    """
+    import time
+
+    text = " ".join([EXAMPLE_IBAN] * count)
+    avoided = [(start, end) for start, end, _v in identifiers.find_ibans(text)]
+    assert len(avoided) == count, len(avoided)
+
+    started = time.perf_counter()
+    identifiers.find_cards(text, avoid=avoided)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, (
+        f"{count} IBANs took {elapsed:.2f}s; the quadratic avoid loop is back"
+    )
+
+
+def test_the_send_paths_have_a_timeout():
+    """`no_proxy_http_client()` defaulted to None, which httpx reads as
+    "wait forever" and which the openai client adopts - so none of the three
+    send paths had a timeout. Hanging the scan is a denial of the privacy
+    gate, not of a feature."""
+    pytest.importorskip("httpx")
+
+    from privacy_shield.utils.network import DEFAULT_SEND_TIMEOUT, no_proxy_http_client
+
+    assert DEFAULT_SEND_TIMEOUT and DEFAULT_SEND_TIMEOUT > 0
+    with no_proxy_http_client() as client:
+        assert client.timeout.connect is not None, "no connect timeout"
+        assert client.timeout.read is not None, "no read timeout"
+    # An explicit None is still honoured for callers that want to wait.
+    with no_proxy_http_client(timeout=None) as client:
+        assert client.timeout.read is None

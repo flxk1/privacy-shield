@@ -505,3 +505,72 @@ def test_a_four_part_name_keeps_its_surname():
     ]
     assert claimed == ["Anna Maria Luise Schmidt"], claimed
     assert "Schmidt" not in scanner.scan(text).text.replace(text, "")
+
+
+# ---------------------------------------------------------------------------
+# Adjacent people, and surnames with particles
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Teilnehmer: Anna Schmidt Peter Weber", ["Anna Schmidt", "Peter Weber"]),
+        ("Anwesend: Maria Hoffmann Klaus Weber", ["Maria Hoffmann", "Klaus Weber"]),
+        ("Von Thomas Fischer an Sabine Richter", ["Thomas Fischer", "Sabine Richter"]),
+    ],
+)
+def test_two_people_side_by_side_are_two_names(text, expected, scanner):
+    """A known given name starts a NEW person.
+
+    GIVEN extended through up to two following words, so it swallowed the next
+    person's given name: "Anna Schmidt Peter Weber" was claimed as
+    "Anna Schmidt Peter" and the second surname egressed. `_claim` then made it
+    permanent - it inspected the first overlapping span and returned, so the
+    correct later claim was discarded on the strength of one earlier partial
+    one. Participant lists, CC lines and minutes are full of adjacent pairs,
+    and this is a listed covered position.
+    """
+    claimed = sorted(
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    )
+    assert claimed == sorted(expected), claimed
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Herr Dr. Karl-Heinz von der Tann", "Karl-Heinz von der Tann"),
+        ("Herr Ludwig van Beethoven", "Ludwig van Beethoven"),
+        ("Frau Anna de Vries", "Anna de Vries"),
+        ("Herrn Otto zu Guttenberg", "Otto zu Guttenberg"),
+        ("Frau Anna Maria Luise Schmidt", "Anna Maria Luise Schmidt"),
+    ],
+)
+def test_a_surname_with_a_particle_is_not_truncated(text, expected, scanner):
+    """The particle is lowercase, so the name stopped before it.
+
+    "Herr Dr. Karl-Heinz von der Tann" claimed "Karl-Heinz" and let
+    "von der Tann" - the surname, the most identifying part - egress.
+    Nobiliary and toponymic particles are a closed grammatical class and the
+    list fails closed: a missing particle truncates a name, it never invents
+    one on a clean document.
+    """
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert claimed == [expected], claimed
+
+
+def test_a_particle_after_a_title_may_over_redact_one_noun(scanner):
+    """The measured cost of admitting particles, stated rather than hidden.
+
+    "Herr Schmidt von der Firma Nordstern" claims "Schmidt von der Firma":
+    "von der" is a particle here by shape and "Firma" is the capitalised word
+    after it. It over-redacts one common noun inside a name context, and it
+    produced no false positive on any of the 42 clean documents.
+    """
+    text = "Herr Schmidt von der Firma Nordstern"
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert claimed == ["Schmidt von der Firma"], claimed
