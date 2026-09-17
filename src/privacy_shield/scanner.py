@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
@@ -891,28 +891,52 @@ class PrivacyScanner:
         if not claimed:
             return findings
 
+        merged: List[List[int]] = []
+        for claim_start, claim_end in sorted(claimed):
+            if merged and claim_start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], claim_end)
+            else:
+                merged.append([claim_start, claim_end])
+
         kept: List[Finding] = []
         for finding in findings:
             if finding.pii_type in VALIDATORS:
                 kept.append(finding)
                 continue
-            start, end = finding.start, finding.end
-            for claim_start, claim_end in claimed:
-                if start >= claim_end or end <= claim_start:
-                    continue
-                if start >= claim_start and end <= claim_end:
-                    end = start  # fully covered by the validated claim
-                    break
-                if start < claim_start:
-                    end = min(end, claim_start)
-                else:
-                    start = max(start, claim_end)
-            if end > start:
-                if (start, end) != (finding.start, finding.end):
-                    finding.start, finding.end = start, end
-                    finding.value = text[start:end]
-                    finding.context = self._get_context(text, start, end)
+
+            # Everything of this finding that the validated claims do NOT
+            # cover - which can be TWO pieces, one either side. The first
+            # version trimmed to a single interval and dropped whatever lay
+            # beyond the claim's right edge, so a path or a project codename
+            # with an address in the middle of it lost its tail into the
+            # overlay: "Datei [PATH][EMAIL]\geheim-2027.docx". Layer 4 exists
+            # to keep exactly that out.
+            remainders: List[Tuple[int, int]] = [(finding.start, finding.end)]
+            for claim_start, claim_end in merged:
+                nxt: List[Tuple[int, int]] = []
+                for start, end in remainders:
+                    if end <= claim_start or start >= claim_end:
+                        nxt.append((start, end))
+                        continue
+                    if start < claim_start:
+                        nxt.append((start, claim_start))
+                    if end > claim_end:
+                        nxt.append((claim_end, end))
+                remainders = nxt
+
+            if remainders == [(finding.start, finding.end)]:
                 kept.append(finding)
+                continue
+            for start, end in remainders:
+                if end <= start:
+                    continue
+                kept.append(replace(
+                    finding,
+                    start=start,
+                    end=end,
+                    value=text[start:end],
+                    context=self._get_context(text, start, end),
+                ))
         return kept
 
     def scan(

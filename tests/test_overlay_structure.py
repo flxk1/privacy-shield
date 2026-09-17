@@ -110,3 +110,73 @@ def test_label_and_value_patterns_still_match_on_one_line():
             f"{text!r} no longer matches {expected.value}: "
             f"{[(f.pii_type.value, f.value) for f in findings]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Precedence must not cost coverage
+# ---------------------------------------------------------------------------
+
+def test_a_pattern_straddling_a_validated_span_keeps_both_remainders():
+    """Giving a validated span precedence must not drop the other span's tail.
+
+    A Windows path may legally contain "@", so one FILE_PATH finding can
+    straddle an e-mail. Trimming it to a single interval kept the part before
+    the address and silently discarded everything after it, so the rest of the
+    path egressed: "Datei [PATH][EMAIL]\\geheim-2027.docx". Layer 4 exists to
+    keep internal paths out of the overlay.
+
+    A straddled span yields TWO remainders, one either side.
+    """
+    text = r"Datei C:\Users\mueller@example.com\geheim-2027.docx"
+    document = scan(text).documents[0]
+
+    assert document.overlay == "Datei [PATH][EMAIL][PATH]", document.overlay
+    assert "geheim" not in document.overlay
+    assert "Users" not in document.overlay
+
+    kinds = [span.pii_type for span in document.spans]
+    assert kinds.count("file_path") == 2, [
+        (s.pii_type, s.start, s.end, s.value) for s in document.spans
+    ]
+
+
+def test_precedence_never_reduces_redacted_coverage(monkeypatch):
+    """Whatever the labels, the redacted region may only grow, never shrink.
+
+    Property rather than an example, and measured against precedence turned
+    OFF rather than against raw pattern matches - the scan legitimately drops
+    allowlisted and superseded findings, and comparing to those would be
+    comparing to the wrong thing.
+    """
+    from privacy_shield.scanner import Confidence, PrivacyScanner
+
+    documents = [
+        r"Datei C:\Users\mueller@example.com\geheim-2027.docx",
+        "Erika Mustermann erika@example.com/projekt-nordstern-2027 offen",
+        "Datei /var/log/app/kunde/mueller@example.com Ende",
+        "Karte 4111.1111.1111.1111 Projekt Nordstern",
+        "Konto DE89 3704 0044 0532 0130 00 Tel. 0170 1234567",
+        "Pfad C:\\Projekt\\erika@example.com\\plan-2027.xlsx Ende",
+    ]
+
+    def covered(text, *, precedence):
+        scanner = PrivacyScanner(min_confidence=Confidence.MEDIUM)
+        if not precedence:
+            monkeypatch.setattr(
+                PrivacyScanner,
+                "_yield_to_validated",
+                lambda self, findings, text: findings,
+            )
+        else:
+            monkeypatch.undo()
+        chars = set()
+        for finding in scanner.scan(text).findings:
+            chars.update(range(finding.start, finding.end))
+        return chars
+
+    for text in documents:
+        without = covered(text, precedence=False)
+        with_precedence = covered(text, precedence=True)
+        assert without <= with_precedence, (
+            f"precedence uncovered {sorted(without - with_precedence)} in {text!r}"
+        )
