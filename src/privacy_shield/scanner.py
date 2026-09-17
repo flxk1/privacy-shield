@@ -867,16 +867,28 @@ class PrivacyScanner:
             (PIIType.CREDIT_CARD, card_spans),
             (PIIType.EMAIL, identifiers.find_emails(text)),
         ):
+            if not spans:
+                continue
+            # Evict overlapping PATTERN findings once, against the whole set of
+            # run-based spans - not once per span. Two run-based spans of the
+            # same type can overlap each other now that card intervals are no
+            # longer merged across a line terminator, and evicting per span
+            # meant the second one deleted the first: a card claimed at
+            # [57,122) vanished because another was claimed at [119,149), and
+            # sixty-five characters of the document went out unredacted.
+            merged = [
+                f for f in merged
+                if not (
+                    f.pii_type is pii_type
+                    and any(f.start < end and start < f.end for start, end, _v in spans)
+                )
+            ]
             for start, end, _value in spans:
                 if any(
                     f.pii_type is pii_type and f.start == start and f.end == end
                     for f in merged
                 ):
                     continue
-                merged = [
-                    f for f in merged
-                    if not (f.pii_type is pii_type and f.start < end and start < f.end)
-                ]
                 merged.append(Finding(
                     pii_type=pii_type,
                     value=text[start:end],
@@ -1045,6 +1057,47 @@ class PrivacyScanner:
             f for f in findings
             if not self._is_allowlisted(f.start, f.end, allowlist_spans)
         ]
+
+        # A PATTERN MAY NOT OUTRANK A CHECKSUM.
+        #
+        # For the three types that have a validator, the Layer-1 regex is a
+        # candidate generator and nothing more: if the validator does not
+        # accept what it matched, the finding goes. It used to be emitted at
+        # HIGH confidence unvalidated, so the pattern layer and the validated
+        # run-based layer disagreed about what an IBAN is and the one with no
+        # checksum won:
+        #
+        #     "USt-IdNr. DE136695976\nGesamtbetrag 1.349,00 EUR"
+        #       -> iban, HIGH, value "DE136695976\nGesamtbetrag 1"
+        #
+        # A German VAT number is not an IBAN, `find_ibans` correctly returned
+        # nothing for it, and the span crossed a line terminator besides. An
+        # unvalidated HIGH-confidence finding overruling a checksum is the same
+        # structure as the suppressor that opened this programme.
+        #
+        # Ownership, stated: the run-based layer in identifiers.py OWNS IBAN,
+        # card and e-mail detection. It is anchor-free, it validates, and it
+        # finds these regardless of what is glued to them. The patterns are
+        # kept because they match layouts the run pass reaches differently, but
+        # only as candidates.
+        validated: List[Finding] = []
+        for finding in findings:
+            if finding.pii_type not in VALIDATORS:
+                validated.append(finding)
+                continue
+            refined = refine_to_validated(finding.pii_type, finding.value)
+            if refined is None:
+                logger.debug(
+                    "dropped unvalidated %s candidate at [%d,%d)",
+                    finding.pii_type.value, finding.start, finding.end,
+                )
+                continue
+            if refined != finding.value:
+                finding.value = refined
+                finding.end = finding.start + len(refined)
+                finding.context = self._get_context(text, finding.start, finding.end)
+            validated.append(finding)
+        findings = validated
 
         # Pass 2 - rescue, by validation. Masking is still a suppressor, and a
         # suppressor must never be the last word on a high-confidence finding.

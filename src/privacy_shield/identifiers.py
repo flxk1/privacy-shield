@@ -484,26 +484,40 @@ def _card_spans_in_run(
             for size in range(MAX_CARD_LENGTH, MIN_CARD_LENGTH - 1, -1):
                 if position + size > run_end:
                     continue
+                # No character may belong to two identifiers. Skipping only a
+                # window that STARTS inside a claimed span let a window start
+                # before an IBAN and run across it, reusing the IBAN's own
+                # digits as part of a "card".
+                if any(index in claimed for index in range(position, position + size)):
+                    continue
                 if luhn_ok(compact[position:position + size]) and _within_layout_bounds(
                     text, offsets, position, size
                 ):
+                    # Extend the previous interval only if the UNION still
+                    # respects the terminator bound. Merging without that
+                    # check produced a union spanning two terminators, which
+                    # the re-check below then discarded WHOLE - throwing away
+                    # the valid window that started it. A card padded with
+                    # underscores on a line of its own went out that way,
+                    # while the same card in isolation was claimed.
                     if intervals and position <= intervals[-1][1]:
-                        intervals[-1][1] = max(intervals[-1][1], position + size)
-                    else:
-                        intervals.append([position, position + size])
+                        union_end = max(intervals[-1][1], position + size)
+                        union = text[
+                            offsets[intervals[-1][0]]:offsets[union_end - 1] + 1
+                        ]
+                        if count_terminators(union) <= MAX_LINE_BREAKS:
+                            intervals[-1][1] = union_end
+                            break
+                    intervals.append([position, position + size])
                     break
 
-    # The bound is re-checked on the MERGED interval, not only on each window
-    # that fed it. Three article numbers on three lines each contributed a
-    # window with one break, and their union - which is what gets claimed -
-    # carried two and covered all three numbers.
-    spans: List[Span] = []
-    for start, end in intervals:
-        origin, finish = offsets[start], offsets[end - 1] + 1
-        if count_terminators(text[origin:finish]) > MAX_LINE_BREAKS:
-            continue
-        spans.append((origin, finish, compact[start:end]))
-    return spans
+    # No post-hoc filter. The bound is enforced when intervals are extended,
+    # above, so an interval can never exceed it - and discarding a whole
+    # interval after the fact threw away the valid window that started it.
+    return [
+        (offsets[start], offsets[end - 1] + 1, compact[start:end])
+        for start, end in intervals
+    ]
 
 
 def find_ibans(text: str) -> List[Span]:

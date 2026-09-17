@@ -231,11 +231,18 @@ def test_a_run_crosses_a_newline_and_the_bounds_are_what_hold_it():
     """
     runs = list(identifiers.identifier_runs("DE89 3704\n0044 0532"))
     assert len(runs) == 1, runs
-    # ...and the bounds still refuse an identifier assembled out of two lines
-    # of a table column.
-    assert not identifiers.find_cards(
-        "4029764001807\n4006381333931\n4007817327104"
+    # ...and no single claim may cross more than one terminator, however many
+    # lines the column has. A pair of adjacent lines IS claimed, because a card
+    # wrapped once is the same shape; the cost of that is measured in
+    # test_stacked_numeric_columns_are_over_redacted.
+    column = "\n".join(
+        ["4029764001807", "4006381333931", "4007817327104", "4011200296908"]
     )
+    for start, end, _value in identifiers.find_cards(column):
+        assert identifiers.count_terminators(column[start:end]) <= 1, (
+            f"a claim spanned {identifiers.count_terminators(column[start:end])} "
+            f"terminators: {column[start:end]!r}"
+        )
 
 
 def test_unregistered_country_code_is_not_an_iban():
@@ -592,3 +599,35 @@ def test_the_send_paths_have_a_timeout():
     # An explicit None is still honoured for callers that want to wait.
     with no_proxy_http_client(timeout=None) as client:
         assert client.timeout.read is None
+
+
+#: Stacked numeric columns, which a wrapped identifier is indistinguishable
+#: from. Every hit is over-redaction.
+STACKED_COLUMN_CORPUS = [
+    "Artikelnummern\n4029764001807\n4006381333931\n4007817327104\n4011200296908",
+    "| Artikel |\n| 4029764001807 |\n| 4006381333931 |\n| 4007817327104 |",
+    "Belege\n5100004821\n5100004822\n5100004823\n5100004824",
+    "Tracking\n00340434161094015123\n00340434161094015124",
+    "Zaehler\n0088123456\n0087001299\n0086554120",
+]
+
+#: Measured. The cost of accepting assembly across ONE line terminator, which
+#: has to be accepted because a card wrapped once is the same shape.
+STACKED_COLUMN_CARD_BUDGET = 11
+
+
+def test_stacked_numeric_columns_are_over_redacted():
+    """The honest cost of admitting a wrapped identifier.
+
+    "4111111111\\n111111" is a card wrapped once; "5100004821\\n5100004822" is
+    two document numbers. Nothing in the text separates them, so accepting the
+    first means accepting the second. Bounding every group rather than only the
+    interior ones was tried and refused nothing the baseline accepted.
+    """
+    cards = sum(len(identifiers.find_cards(d)) for d in STACKED_COLUMN_CORPUS)
+    ibans = sum(len(identifiers.find_ibans(d)) for d in STACKED_COLUMN_CORPUS)
+    assert cards == STACKED_COLUMN_CARD_BUDGET, (
+        f"{cards} card spans on {len(STACKED_COLUMN_CORPUS)} stacked-column "
+        f"documents, budget {STACKED_COLUMN_CARD_BUDGET}"
+    )
+    assert ibans == 0, ibans

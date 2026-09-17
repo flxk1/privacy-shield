@@ -175,8 +175,21 @@ def _iban_ok(candidate: str) -> bool:
 # shape. Nothing about spacing, grouping, boundaries or punctuation.
 
 
-def _oracle_cards(text: str) -> list[tuple[str, str]]:
+def _oracle_cards(text: str, claimed: "list[tuple[int, int]]" = ()) -> list[tuple[str, str]]:
     """Every Luhn-valid run of 13-19 digits, whatever lies between them.
+
+    *claimed* holds spans already established as some OTHER validated
+    identifier. A window overlapping one is refused, because no character can
+    belong to two identifiers at once: an IBAN's digits are the IBAN's, and a
+    Luhn-valid window made of an IBAN's tail plus the digits after it is not a
+    third identifier, it is the same characters counted twice.
+
+    This is definitional, in the same way that "a letter cannot appear inside a
+    card number" is, and the detector has enforced it from the start via its
+    `avoid` argument. The oracle did not, so it reported residue for candidates
+    the detector rightly declined - and because the property test draws such a
+    line at random, `leak-gate` went red on some runs and green on others. An
+    intermittent gate is worse than a red one; it teaches people to re-run.
 
     Punctuation of any width is skipped - two spaces, ten spaces, a dot and a
     space, a pipe with spaces either side. A letter ends the search, because a
@@ -197,7 +210,10 @@ def _oracle_cards(text: str) -> list[tuple[str, str]]:
                     break
                 if len(digits) >= 13:
                     candidate = "".join(digits)
-                    if _luhn_ok(candidate):
+                    if _luhn_ok(candidate) and not any(
+                        start < claim_end and claim_start <= index
+                        for claim_start, claim_end in claimed
+                    ):
                         found.append((candidate, text[start:index + 1]))
             elif char.isalnum():
                 break
@@ -308,7 +324,13 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
         found.append(("email", canonical, as_written))
     for canonical, as_written in _oracle_ibans(text):
         found.append(("iban", canonical, as_written))
-    for canonical, as_written in _oracle_cards(text):
+    # Cards last, and told what the other validated layers already own.
+    already = [
+        (text.index(written), text.index(written) + len(written))
+        for _kind, _canonical, written in found
+        if written in text
+    ]
+    for canonical, as_written in _oracle_cards(text, already):
         found.append(("credit_card", canonical, as_written))
     return [row for row in found if _oracle_terminators(row[2]) <= 1]
 
@@ -1518,31 +1540,62 @@ def test_glued_and_wrapped_is_not_the_intersection_nobody_checks(text, mode):
 
 
 def test_the_line_break_bound_is_one_and_this_is_what_it_costs():
-    """Pinned, like the span cliff, rather than left to be discovered.
+    """Pinned, with the cost re-measured after round 18.
 
-    A value that wraps in a narrow column is continued on the NEXT line: it is
-    interrupted once. A column of separate numbers stacked in a table is
-    interrupted between every pair, and without this bound three article
-    numbers on three lines were claimed as one card - which is the assembly
-    failure the interior-group rule exists to refuse.
+    The bound is one terminator. Two or more is refused, which is what stops a
+    column of stacked numbers being assembled into one identifier; an
+    identifier wrapped more than once - needing a column narrower than about
+    eight characters - is therefore not found.
 
-    The cost is an identifier wrapped more than once, which needs a column
-    narrower than about eight characters. Measured, bounded, and stated.
+    ASSEMBLY ACROSS ONE TERMINATOR IS ACCEPTED, and that is not a choice so
+    much as an admission: "4111111111\\n111111" is a card wrapped once and
+    "5100004821\\n5100004822" is two document numbers, and nothing in the text
+    separates them. Bounding every group rather than only the interior ones was
+    tried and refused nothing the baseline accepted, so it was reverted rather
+    than kept as decoration. The cost is measured in
+    tests/test_identifier_runs.py::test_stacked_numeric_columns_are_over_redacted
+    at eleven spans over five documents built for it, and the main corpora do
+    not move.
+
+    This test previously asserted that three stacked article numbers were NOT
+    claimed. They were not - but only because the merge produced one
+    over-terminator interval and then discarded the whole thing, which also
+    discarded the valid window that started it. That is what let a real card
+    out (see test_a_card_on_its_own_line_is_not_lost_to_a_merge below), so the
+    discarding is gone and the over-redaction is the honest consequence.
     """
     from privacy_shield import identifiers
 
     once = EXAMPLE_CARD[:10] + "\n" + EXAMPLE_CARD[10:]
     twice = EXAMPLE_CARD[:6] + "\n" + EXAMPLE_CARD[6:11] + "\n" + EXAMPLE_CARD[11:]
 
-    assert identifiers.find_cards(once), "one break must be claimed"
+    assert identifiers.find_cards(once), "one terminator must be claimed"
     assert not identifiers.find_cards(twice), (
-        "two breaks are now claimed; re-measure the stacked-column corpus in "
-        "tests/test_identifier_runs.py before keeping this"
+        "two terminators are now claimed; re-measure the stacked-column corpus "
+        "in tests/test_identifier_runs.py before keeping this"
     )
-    # ...and the assembly case the bound exists for.
-    assert not identifiers.find_cards(
-        "4029764001807\n4006381333931\n4007817327104"
+
+
+def test_a_card_on_its_own_line_is_not_lost_to_a_merge():
+    """The defect the over-redaction above buys off.
+
+    Card windows are merged so that no validating window is left partly
+    uncovered. The merge used to extend an interval without re-checking the
+    terminator bound on the UNION, and a post-hoc filter then dropped the whole
+    interval for exceeding it - throwing away the valid window that started it.
+    A card padded with underscores on a line of its own went out unredacted
+    while the same card in isolation was claimed. The bound is enforced when
+    intervals are extended instead, and nothing is discarded after the fact.
+    """
+    text = (
+        "Erika Mustermann, Tel. +49 170 2920143\r"
+        "Gesch=E4ftskonto=2040______81______21______75______52______68"
+        "______18______62/\n74697 \n.   3080.   8547.   1628-"
     )
+    document = scan(text, force_text=True).documents[0]
+    assert not leaks_in(text, document), document.overlay
+    assert document.pii_detected
+
 
 
 def test_the_shared_line_break_bound_cannot_hide_the_leak_class():
@@ -1672,3 +1725,87 @@ def test_a_mixture_of_terminators_in_one_document():
     )
     assert_no_leak(text)
     assert scan(text, force_text=True).documents[0].pii_detected
+
+
+# ---------------------------------------------------------------------------
+# No character belongs to two identifiers
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "UUID 550e8400-e29b-41d4-a716-446655440000 "
+            + EXAMPLE_IBAN + " 00 00 7",
+            id="uuid_then_iban_then_trailing_digits",
+        ),
+        pytest.param(
+            EXAMPLE_IBAN + " 00 00 7",
+            id="iban_then_trailing_digits",
+        ),
+        pytest.param(
+            "Konto " + EXAMPLE_IBAN + " Ref 0000000",
+            id="iban_then_reference_digits",
+        ),
+    ],
+)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_card_may_not_be_assembled_from_another_identifiers_digits(text, mode):
+    """The residue class that made the gate INTERMITTENT.
+
+    A Luhn-valid window built from an IBAN's tail plus the digits after it is
+    not a third identifier; it is the same characters counted twice. The
+    detector has refused this from the start through its `avoid` argument, the
+    oracle did not, and the property test draws such a line at random - so
+    `leak-gate` went red on some runs and green on others. An intermittent gate
+    is worse than a red one, because it teaches people to re-run.
+
+    A UUID beside an account number beside trailing digits is an ordinary
+    machine-generated line, not a 130-character concatenation, so this is not
+    the artefact it was accepted as two rounds ago.
+    """
+    assert_no_leak(text, mode=mode)
+    assert not [
+        canonical
+        for kind, canonical, _written in validated_identifiers(text)
+        if kind == "credit_card"
+    ], "a card was assembled out of the IBAN's own digits"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Konto " + EXAMPLE_IBAN + " Karte " + EXAMPLE_CARD,
+        "Karte " + EXAMPLE_CARD + " Konto " + EXAMPLE_IBAN,
+        EXAMPLE_IBAN + "Karte" + EXAMPLE_CARD,
+    ],
+)
+def test_the_rule_does_not_blind_the_gate_to_a_real_card(text):
+    """The bound must refuse re-used characters, not adjacent identifiers.
+
+    A card standing next to an IBAN - with or without anything between them -
+    is two identifiers, and the oracle must still see both or the fix above
+    would have bought determinism with blindness.
+    """
+    kinds = {kind for kind, _c, _w in validated_identifiers(text)}
+    assert kinds == {"iban", "credit_card"}, kinds
+    assert_no_leak(text)
+
+
+def test_the_leak_gate_is_deterministic_across_seeds():
+    """The property half must not depend on which examples it draws.
+
+    Run the deterministic battery's own generator over a different seed from
+    the pinned one; the residue class above was reachable at random, so a
+    second seed is the cheapest standing check that it no longer is.
+    """
+    rng = random.Random(18)
+    for _ in range(200):
+        text, planted, _shapes = generate_document(rng)
+        document = scan(text, force_text=True).documents[0]
+        assert not leaks_in(text, document), text[:80]
+        if document.egress_allowed:
+            residual = _without_placeholders(document.overlay)
+            for value, written in planted:
+                assert written not in residual
+                assert value not in _compact(residual)
