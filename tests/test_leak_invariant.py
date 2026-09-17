@@ -772,18 +772,32 @@ def _make_email(rng: random.Random) -> str:
 #: cannot find them.
 _BATTERY_SEPARATORS = [" ", " ", "_", "-", ".", ":", "/", ",", "|", "\u00a0", "\t"]
 
-#: WIDTHS the battery writes between groups. Every generated test used
-#: `joiner.join(...)` - exactly one character per gap, always - so the
-#: generator was exhaustive on the axis that was broken one round ago and
-#: constant on the axis that was broken the next. A column gap from
-#: `pdftotext`, fixed-width padding, a dot leader and a monospaced table are
-#: all two or more characters, and all four leaked whole card numbers.
-_BATTERY_GAP_WIDTHS = [1, 1, 2, 3, 4, 6, 9]
+#: WIDTHS the battery writes between groups, and GROUP SIZES below. Every
+#: generated test once used `joiner.join(...)` - exactly one character per gap,
+#: always - so the generator was exhaustive on the axis that was broken one
+#: round ago and constant on the axis that was broken the next. Then the widths
+#: stopped at 9 and the group sizes at 4 and 5, and the next two leaks were a
+#: seventeen-space column gap and a letter-spaced field of single characters.
+#:
+#: Both axes of the layout bound are now generated across their whole supported
+#: range, up to the cliff: gaps to 80 characters, groups from 1 to 6. Where
+#: each cliff sits is asserted separately by name, because a bound that has a
+#: cliff and no test for it is a bound nobody knows the shape of.
+_BATTERY_GAP_WIDTHS = [1, 1, 1, 2, 3, 4, 6, 9, 12, 17, 24, 40, 60, 79]
+
+#: Group sizes. One character per group is what `pdftotext` emits for a
+#: letter-spaced form field; six is the middle group of an Amex.
+_BATTERY_GROUP_SIZES = [4, 4, 5, 1, 2, 3, 6]
 
 
-def _gap(rng: random.Random) -> str:
-    """One gap: a character repeated, or a punctuation mark then padding."""
-    width = rng.choice(_BATTERY_GAP_WIDTHS)
+def _gap(rng: random.Random, budget: int = 79) -> str:
+    """One gap: a character repeated, or a punctuation mark then padding.
+
+    *budget* keeps the whole identifier inside the documented span bound. A
+    generator that strays past the cliff would be generating the known limit
+    rather than testing the supported range; the cliff has its own test.
+    """
+    width = rng.choice([w for w in _BATTERY_GAP_WIDTHS if w <= budget] or [1])
     separator = rng.choice(_BATTERY_SEPARATORS)
     if width > 1 and rng.random() < 0.5:
         # "4111. 1111" - a dot leader, then spaces. Mixed characters in one gap.
@@ -795,13 +809,16 @@ def _spaced(rng: random.Random, digits: str) -> str:
     """Group *digits*, with gap widths varying WITHIN one identifier."""
     if rng.random() < 0.35:
         return digits
-    size = rng.choice([4, 4, 5])
+    size = rng.choice(_BATTERY_GROUP_SIZES)
     groups = [digits[i:i + size] for i in range(0, len(digits), size)]
+    gaps = max(1, len(groups) - 1)
+    # 16 x length is the span bound; keep the sum of gaps inside it.
+    budget = max(1, (len(digits) * 16 - len(digits)) // gaps)
     if rng.random() < 0.5:
-        return _gap(rng).join(groups)  # uniform gap
-    out = groups[0]                    # mixed gaps within one identifier
+        return _gap(rng, budget).join(groups)  # uniform gap
+    out = groups[0]                            # mixed gaps within one identifier
     for group in groups[1:]:
-        out += _gap(rng) + group
+        out += _gap(rng, budget) + group
     return out
 
 
@@ -1125,4 +1142,64 @@ def test_a_line_wrapped_identifier_is_a_known_gap():
     assert residue <= 6, (
         f"{residue} consecutive characters of a line-wrapped card survive in "
         "the overlay; the coincidental cover has weakened"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Extraction artefacts that defeated the layout bound
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_letter_spaced_field_does_not_hide_a_card(mode):
+    """One character per group - what `pdftotext` emits for a spaced field.
+
+    A bound on the NUMBER of groups refused this. It was there to reject text
+    punctuated down to single characters ("4.1.1.1..."), and the two shapes are
+    identical: nothing in the text separates a letter-spaced form field from
+    dotted prose. The bound is gone and the prose shape is over-redacted along
+    with it.
+    """
+    text = "Karte " + " ".join(EXAMPLE_CARD)
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+@pytest.mark.parametrize("gap", [10, 17, 24, 40, 60, 80], ids=lambda g: f"{g}_spaces")
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_wide_column_gap_does_not_hide_a_card(gap, mode):
+    """A wide column in a monospaced report. The cliff used to be at 17."""
+    text = "Pos " + (" " * gap).join(
+        EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
+    )
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+def test_the_span_bound_has_a_cliff_and_this_is_where_it_is():
+    """Pinned, not discovered.
+
+    Any bound on how far a candidate may span has a width past which an
+    identifier is no longer found. Sweeping the multiplier from 4 to 1000
+    against both precision corpora does not move the false-positive count at
+    all - eight cards, no IBANs, at every value - so the bound buys no
+    precision and only sets where the cliff is. It is set at sixteen times the
+    identifier's length, which puts the cliff far past any real column, and it
+    is asserted here so that the next person to change it sees what they are
+    moving.
+    """
+    from privacy_shield import identifiers
+
+    def caught(gap):
+        return bool(identifiers.find_cards(
+            (" " * gap).join(EXAMPLE_CARD[i:i + 4] for i in range(0, 16, 4))
+        ))
+
+    assert caught(80), "a gap inside the documented range is no longer found"
+    assert not caught(81), (
+        "the cliff moved; re-measure the false-positive corpora and update "
+        "docs/limits.md before keeping this"
     )

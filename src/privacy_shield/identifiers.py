@@ -107,16 +107,29 @@ MAX_CARD_LENGTH = 19
 # letter in a word rather than punctuation between digits.
 _LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
-#: A candidate may span at most this many times its own length. At most three
-#: characters of punctuation for every identifier character, so a sixteen-digit
-#: card may occupy sixty-four columns - enough for nine-space column gaps, dot
-#: leaders and table pipes, and not enough to reach across a sentence.
+#: A candidate may span at most this many times its own length, so a
+#: sixteen-digit card may occupy 256 columns and tolerate gaps of up to eighty
+#: characters.
+#:
+#: The number is high because measurement said the bound buys nothing. Swept
+#: from 4 to 1000 against both corpora, the false-positive count does not move
+#: at all - eight cards and no IBANs at every value. All the bound does is
+#: create a cliff, and at 4 the cliff was at exactly seventeen spaces:
+#: sixteen-space column gaps were claimed and seventeen-space ones egressed the
+#: card whole. A wide column in a monospaced report is an ordinary shape.
+#:
+#: It is not removed altogether because without any span limit two numbers at
+#: opposite ends of a long line could be assembled into one candidate. It is
+#: set where no real layout reaches. THE CLIFF STILL EXISTS - it is now at
+#: about eighty characters of gap - and it is pinned by
+#: test_the_span_bound_has_a_cliff_and_this_is_where_it_is rather than left to
+#: be discovered.
 #:
 #: This replaced "at most one joiner per two identifier characters", which was
 #: a bound on the TOTAL and still implied a hard limit of one per gap once the
 #: run rule required single joiners. Three-space padding is nine joiners for
 #: sixteen digits and was refused by it.
-MAX_SPAN_MULTIPLE = 4
+MAX_SPAN_MULTIPLE = 16
 
 #: The longest INTERIOR group a multi-group candidate may contain.
 #:
@@ -301,12 +314,13 @@ def _within_layout_bounds(
     if longest == size:
         return True
 
-    # Nobody writes an identifier one character at a time. Requiring the
-    # average group to hold at least two characters rejects text punctuated
-    # down to singles ("4.1.1.1.1...") while admitting the densest real layout,
-    # a number grouped in twos.
-    if len(groups) > (size // 2) + 1:
-        return False
+    # There is deliberately NO bound on the number of groups. One was tried -
+    # "the average group must hold at least two characters", to reject text
+    # punctuated down to singles like "4.1.1.1.1..." - and it refused
+    # "4 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1", which is what `pdftotext` emits for a
+    # letter-spaced field on a form. The two shapes are identical; nothing in
+    # the text separates them. So single-character groups are accepted and the
+    # dotted-prose shape is over-redacted with them.
 
     # No condition on the EDGES. Requiring at least one of them to sit on a
     # group boundary was tried and is wrong: text glued to BOTH ends of a
