@@ -59,13 +59,31 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   `::test_the_layout_bounds_reject_assembled_prose`,
   `tests/test_leak_invariant.py::test_a_multi_character_gap_does_not_hide_a_card`,
   `::test_reported_extraction_artefact_shapes`.
-- **A line break is never a joiner**, so an identifier wrapped across two lines
-  is not claimed. Making it one would glue a document's lines into a single run
-  and let a column of figures be assembled into a checksum. A wrapped card is
-  today redacted only incidentally, by the phone pattern catching its first
-  half; the residue is pinned by
-  `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_no_longer_a_gap`
-  so that narrowing that pattern fails loudly instead of leaking quietly.
+- **A single line break inside an identifier is a joiner; two are not — and
+  `\r\n` counts as two. THIS IS A KNOWN DEFECT, not a designed limit.** An
+  identifier wrapped across two lines is claimed when the terminator is one
+  character (`\n`, or a bare `\r`), and is NOT claimed when it is the
+  two-character CRLF sequence, because the bound counts `\r` and `\n`
+  separately. Measured on the installed package:
+
+  ```
+  is_safe_for_external_llm("Kreditkartennummer 4111 1111\r\n1111 1111\r\n…")
+    -> (True, 'No PII detected', [])      all sixteen digits in the overlay
+  the same string with \n
+    -> (False, 'PII detected by pattern matching', ['credit_card'])
+  ```
+
+  CRLF is the line terminator of MIME e-mail bodies by specification and of
+  Windows text generally, and `is_safe_for_external_llm` on an e-mail body is a
+  documented use, so this is not a corner. The leak gate does not catch it
+  because its oracle applies the same arithmetic to the same two characters —
+  the sixth time in this package's history that the checker has shared an
+  assumption with the detector. Do not rely on the egress verdict for CRLF
+  documents until this entry is gone.
+
+  The reason a bound exists at all: making every line break a joiner without
+  limit would glue a document's lines into a single run and let a column of
+  figures be assembled into a checksum.
 - **Person names are found by evidence, not by capitalisation.** German
   capitalises every noun, so "capitalised word followed by capitalised word"
   claimed 75% of every character of ordinary business documents containing no
@@ -79,12 +97,16 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   title or address form (`Herr Dr. Baumann`, `von Herrn Stefan Braun`); the
   first name-shaped line after a closing formula; an addressee block above a
   street or postcode or below a bare `An`; a known German given name followed
-  by a surname in running prose; a value after a label that names a person's
-  role (`Sachbearbeiter:`, `Von:`, `An:`, `CC:`, `Im Auftrag von:`), including
-  comma-separated lists; and a table cell whose column header names a person's
-  role.
+  by a surname in running prose, except where two names are adjacent (the
+  second name's given name is swallowed); and a table cell whose column header
+  names a person's role.
 
-  **Positions it does NOT cover**, also by name: a bare surname in running
+  **Positions it does NOT cover**, also by name: a value after a label that
+  names a person's role (`Sachbearbeiter:`, `Von:`, `An:`, `CC:`,
+  `Im Auftrag von:`) and comma-separated lists after one — this probe was
+  approved, then withdrawn before release because a label and a colon are
+  evidence that a value follows and not that it is a person, so it claimed
+  company names, systems and statuses; a bare surname in running
   prose with nothing around it; a speaker attribution (`Ebersbach: Der Termin
   …`); a line that is only a name outside a signature or address block (a bare
   participant list); a footnote citation (`Vgl. Kowalczyk, Gutachten …`); a
