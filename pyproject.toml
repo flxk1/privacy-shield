@@ -30,7 +30,7 @@ openai = ["openai>=1"]
 # in the same file runs without it. schwifty is the external IBAN registry
 # tests/test_iban_registry.py checks the country/length table against - nothing
 # inside this package can notice that table going stale.
-dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024"]
+dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024", "tomli>=2; python_version<'3.11'"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }

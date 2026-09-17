@@ -5,8 +5,12 @@ stops being true.
 """
 
 import importlib
-import tomllib
 from pathlib import Path
+
+try:  # tomllib is stdlib from 3.11; the package supports 3.10
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 
 import pytest
 
