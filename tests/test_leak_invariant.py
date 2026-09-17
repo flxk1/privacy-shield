@@ -965,8 +965,11 @@ def test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans():
     # groups inside the IBAN and the card are dropped now that a validated span
     # outranks a pattern overlapping it, so they no longer burn placeholder
     # numbers on findings that were never separate data.
+    # "Kunde" survives now: the name layer claims "Max Mueller" on the evidence
+    # of a known given name, where the old capitalisation pattern swallowed the
+    # noun in front of it too.
     assert overlay == (
-        "[ANON_NAME_1], IBAN [ANON_IBAN_1], Karte [ANON_CC_1], "
+        "Kunde [ANON_NAME_1], IBAN [ANON_IBAN_1], Karte [ANON_CC_1], "
         "Tel. [ANON_PHONE_1]"
     ), overlay
 

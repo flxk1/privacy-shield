@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
-from . import identifiers
+from . import identifiers, names as names_module
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -283,25 +283,13 @@ LAYER_1_PATTERNS: List[PatternDef] = [
 # -----------------------------------------------------------------------------
 
 LAYER_2_PATTERNS: List[PatternDef] = [
-    # Names - German/European format (Vorname Nachname)
-    PatternDef(
-        pattern=_compile(
-            rf"\b(?:Herr|Frau|Dr\.|Prof\.)?{_H}*"
-            rf"[A-ZÄÖÜ][a-zäöüß]+(?:{_H}+[a-zäöüß]+)?{_H}+"
-            r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?\b"
-        ),
-        pii_type=PIIType.NAME,
-        confidence=Confidence.MEDIUM,
-        description="Person name (German format)",
-    ),
-
-    # Names - Simple two-word capitalized
-    PatternDef(
-        pattern=_compile(rf"\b[A-ZÄÖÜ][a-zäöüß]{{2,}}{_H}+[A-ZÄÖÜ][a-zäöüß]{{2,}}\b"),
-        pii_type=PIIType.NAME,
-        confidence=Confidence.LOW,
-        description="Potential person name",
-    ),
+    # Person names are NOT a pattern here. German capitalises every noun, so
+    # "capitalised word followed by capitalised word" claimed 75% of the
+    # characters of ordinary business documents containing no personal data at
+    # all. They are found in names.py, by the evidence around them - a title, a
+    # signature block, an addressee position, a known given name - and folded
+    # in by _merge_names below. See tests/test_name_layer_precision.py for what
+    # that costs in recall.
 
     # German street address
     PatternDef(
@@ -939,6 +927,43 @@ class PrivacyScanner:
                 ))
         return kept
 
+    def _merge_names(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Fold in the evidence-based name pass (see names.py)."""
+        if 2 not in self.layers:
+            return findings
+        if self._confidence_value(Confidence.MEDIUM) < self._confidence_value(
+            self.min_confidence
+        ):
+            return findings
+
+        merged = list(findings)
+        for start, end, value in names_module.find_names(text):
+            if any(
+                f.pii_type is PIIType.NAME and f.start < end and start < f.end
+                for f in merged
+            ):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.NAME,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.MEDIUM,
+                layer=2,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def scan(
         self,
         text: str,
@@ -1032,6 +1057,7 @@ class PrivacyScanner:
         # walks maximal runs of identifier characters and offers the validator
         # every candidate substring. See identifiers.py for the precision cost.
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
+        findings = self._merge_names(text, findings, zone=zone, page=page)
 
         # Sort by position
         findings.sort(key=lambda f: f.start)
