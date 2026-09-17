@@ -359,16 +359,20 @@ def test_a_glued_prefix_plus_any_joiner_still_finds_the_identifier(category):
 def test_the_layout_bounds_reject_assembled_prose():
     """What keeps "anything non-alphanumeric, however much of it" in check.
 
-    Two bounds, neither of them a limit on gap width - gap width is layout and
-    varies. A candidate may span at most four times its own length, and where
-    it covers three groups or more the INTERIOR ones must be small, because an
-    interior group is never clipped by the candidate's edges and so is a whole
-    token: in a real layout that is four digits, in a list of article numbers
-    it is thirteen.
+    One bound does the work: where a candidate covers three groups or more the
+    INTERIOR ones must be small, because an interior group is never clipped by
+    the candidate's edges and so is a whole token - four digits in a real
+    layout, thirteen in a list of article numbers. The span bound is a
+    far-off backstop rather than a discriminator; sweeping it changes no
+    false-positive count at all.
     """
-    # Punctuated down to single characters: not one identifier.
-    assert not identifiers.find_cards(".".join(EXAMPLE_CARD))
-    assert not identifiers.find_cards("-".join(EXAMPLE_CARD))
+    # Single-character groups ARE accepted, and that is a reversal worth
+    # naming: text punctuated down to singles ("4.1.1.1...") is redacted along
+    # with the letter-spaced form field it is indistinguishable from. The bound
+    # that refused both was removed when the form field turned out to leak a
+    # whole card number.
+    assert identifiers.find_cards(".".join(EXAMPLE_CARD))
+    assert identifiers.find_cards(" ".join(EXAMPLE_CARD))
     # An interior group is a whole token, so where a candidate covers three
     # groups or more the middle ones must be small. A list of thirteen-digit
     # article codes must not be claimed as one card spanning all of them.

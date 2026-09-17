@@ -62,33 +62,40 @@ EXAMPLE_CARD_SPACED = "4111 1111 1111 1111"
 # Independent oracle - no privacy_shield imports below this line
 # ---------------------------------------------------------------------------
 
-# ISO 13616: the registered IBAN length per country. This is the specification,
-# not a heuristic - a 23-character string beginning "NG20" is not an IBAN
-# because Nigeria has no IBAN, however the checksum comes out.
-_IBAN_LENGTHS = {
-    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16,
-    "BG": 22, "BH": 22, "BI": 27, "BR": 29, "BY": 28, "CH": 21, "CR": 22,
-    "CY": 28, "CZ": 24, "DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20,
-    "EG": 29, "ES": 24, "FI": 18, "FK": 18, "FO": 18, "FR": 27, "GB": 22,
-    "GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28, "HR": 21, "HU": 28,
-    "IE": 22, "IL": 23, "IQ": 23, "IS": 26, "IT": 27, "JO": 30, "KW": 30,
-    "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20, "LV": 21,
-    "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20, "MR": 27,
-    "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23, "PK": 24,
-    "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "RU": 33,
-    "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24, "SM": 27,
-    "SO": 23, "ST": 25, "SV": 28, "TL": 23, "TN": 24, "TR": 26, "UA": 29,
-    "VA": 22, "VG": 24, "XK": 20,
-}
+# The IBAN country/length registry. IMPORTED, not transcribed a second time.
+#
+# It used to be copied here byte for byte, 87 entries, on the reasoning that an
+# independent oracle should not share the detector's tables. That reasoning was
+# wrong twice over: two copies of a transcription drift against each other AND
+# against reality, and both copies were in fact missing the same 40 countries,
+# so the duplication bought no independence at all - it only doubled the
+# maintenance.
+#
+# Independence that matters is independence of METHOD - how a candidate is
+# found - and that is what this oracle has. What an IBAN IS, by ISO 13616, is a
+# specification; the guard against it going stale is
+# tests/test_iban_registry.py, which checks it against a maintained external
+# implementation rather than against another copy of itself.
+from privacy_shield.identifiers import IBAN_LENGTHS as _IBAN_LENGTHS
 
 _ORACLE_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
-#: How far the brute-force search may reach for one identifier. The longest
-#: thing validated here is a 34-character IBAN; the allowance is three
-#: characters of interior punctuation for every identifier character, which
-#: covers column gaps, dot leaders, table pipes and fixed-width padding with
-#: room to spare. 34 + 34*3 = 136.
-ORACLE_WINDOW = 136
+#: How far the brute-force search may reach for one identifier.
+#:
+#: This was 136, which is exactly the detector's own MAX_SPAN_MULTIPLE (4)
+#: times its MAX_IBAN_LENGTH (34), arrived at by a different-sounding
+#: rationalisation in this docstring. A number the detector also uses is not
+#: independent however it is described, and it was already wrong: a 33-character
+#: IBAN in four-groups with 16-space gaps spans 161, past the window, and the
+#: oracle could not see it.
+#:
+#: There is no layout-free way to derive a window, because how far an
+#: identifier reaches IS a fact about layout. So this is not derived from one.
+#: It is a SAFETY CAP on a quadratic search, set so the oracle can always see
+#: further than the detector can claim, whatever the detector's bounds become.
+#: test_the_oracle_outranges_the_detector asserts that relation, so this can
+#: never silently shrink into the detector's blind spot.
+ORACLE_WINDOW = 600
 
 #: How far either side of an "@" the e-mail search looks.
 ORACLE_EMAIL_SPAN = 64
@@ -1203,3 +1210,65 @@ def test_the_span_bound_has_a_cliff_and_this_is_where_it_is():
         "the cliff moved; re-measure the false-positive corpora and update "
         "docs/limits.md before keeping this"
     )
+
+
+# ---------------------------------------------------------------------------
+# What the oracle shares with the detector, pinned
+# ---------------------------------------------------------------------------
+
+def test_the_oracle_outranges_the_detector():
+    """The search window must always reach further than the detector claims.
+
+    It was 136, which is exactly the detector's MAX_SPAN_MULTIPLE times its
+    MAX_IBAN_LENGTH, reached by a different-sounding rationalisation. That is
+    not independence, and it was already too small: a 33-character IBAN in
+    four-groups with 16-space gaps spans 161.
+
+    There is no layout-free way to derive a window - how far an identifier
+    reaches IS a fact about layout - so the window is a safety cap on a
+    quadratic search, and the property that matters is this relation.
+    """
+    from privacy_shield import identifiers
+
+    furthest = identifiers.MAX_IBAN_LENGTH * identifiers.MAX_SPAN_MULTIPLE
+    assert ORACLE_WINDOW > furthest, (
+        f"the oracle sees {ORACLE_WINDOW} characters and the detector can "
+        f"claim a span of {furthest}; the oracle is blind to what the detector "
+        "does at its own limit"
+    )
+
+
+def test_the_oracle_sees_a_widely_spaced_iban_at_the_detectors_limit():
+    """The case the old 136-character window could not see."""
+    spaced = (" " * 16).join(
+        EXAMPLE_IBAN[index:index + 4] for index in range(0, len(EXAMPLE_IBAN), 4)
+    )
+    assert any(kind == "iban" for kind, _c, _w in validated_identifiers(spaced))
+    assert_no_leak("Konto " + spaced)
+
+
+@pytest.mark.parametrize(
+    "digits, label",
+    [
+        ("٤١١١١١١١١١١١١١١١", "arabic_indic"),
+        ("４１１１１１１１１１１１１１１１", "fullwidth"),
+    ],
+)
+def test_non_ascii_digits_are_a_documented_limit_not_a_silent_one(digits, label):
+    """ASCII is shared by the detector and this oracle, and it is a FINDING
+    rule, not a definition - `luhn_ok` accepts these digits happily while
+    neither candidate finder will ever offer them to it.
+
+    Disclosed in docs/limits.md, and pinned here so the disclosure cannot
+    quietly stop being true in either direction: if these start being detected,
+    this test says so and the documented limit needs removing.
+    """
+    from privacy_shield import identifiers
+
+    # The validator itself is happy with them...
+    normalised = "".join(str(int(char)) for char in digits)
+    assert identifiers.luhn_ok(normalised), "test vector is not Luhn-valid"
+
+    # ...and neither finder offers them.
+    assert not identifiers.find_cards(digits), label
+    assert not validated_identifiers(digits), label
