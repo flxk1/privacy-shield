@@ -107,8 +107,38 @@ MAX_CARD_LENGTH = 19
 # letter in a word rather than punctuation between digits.
 _LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
-#: At most one joiner per this many identifier characters.
-JOINER_BUDGET_DIVISOR = 2
+#: A candidate may span at most this many times its own length. At most three
+#: characters of punctuation for every identifier character, so a sixteen-digit
+#: card may occupy sixty-four columns - enough for nine-space column gaps, dot
+#: leaders and table pipes, and not enough to reach across a sentence.
+#:
+#: This replaced "at most one joiner per two identifier characters", which was
+#: a bound on the TOTAL and still implied a hard limit of one per gap once the
+#: run rule required single joiners. Three-space padding is nine joiners for
+#: sixteen digits and was refused by it.
+MAX_SPAN_MULTIPLE = 4
+
+#: The longest INTERIOR group a multi-group candidate may contain.
+#:
+#: This is what separates GROUPING from ASSEMBLY, and the word "interior" is
+#: doing all the work. Whatever a candidate's first and last groups look like,
+#: the groups strictly between them are whole, and in a real layout a whole
+#: group is small: four for a card or an IBAN, six for the middle of an Amex,
+#: two on a densely spaced form. When a Luhn window instead falls across a list
+#: of separate numbers, the group in the middle is a whole other number -
+#: thirteen digits of an article code, seven of a phone number.
+#:
+#: Bounding the longest group ANYWHERE was tried first and cannot work: "DE89
+#: 370400440532013000" is an ordinary way to write an IBAN and its second group
+#: is eighteen characters, longer than the thirteen-character groups that have
+#: to be refused. Requiring whole-group ALIGNMENT was tried next and cannot
+#: work either: a glued prefix on a spaced number ("7" run together with
+#: "4111 1111 1111 1111") starts in the middle of its first group, which is the
+#: entire case this detector exists to catch. Only the interior is reliable,
+#: because only the interior is never clipped by the candidate's own edges.
+#:
+#: A candidate with fewer than three groups has no interior and is unbounded.
+MAX_INTERIOR_GROUP = 6
 
 
 def _is_transparent(char: str) -> bool:
@@ -212,7 +242,15 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
             ahead = position
             while ahead < count and _is_joiner(visible[ahead][0]):
                 ahead += 1
-            if ahead - position == 1 and ahead < count:
+            # ANY number of consecutive joiners, not one. A gap of two or more
+            # is the most ordinary text-extraction artefact there is - a
+            # `pdftotext` column gap, fixed-width padding, a dot leader, a
+            # monospaced table pipe - and requiring exactly one ended the
+            # candidate before the validator ever saw it. How much punctuation
+            # a candidate may carry in total is decided at claim time by the
+            # span budget, which is a bound on the whole identifier rather than
+            # a hard limit of one on each gap.
+            if ahead < count:
                 following = visible[ahead][0]
                 if following.isascii() and following.isalnum():
                     position = ahead
@@ -225,25 +263,92 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
         yield "".join(compact), offsets
 
 
-def _within_joiner_budget(offsets: List[int], start: int, size: int) -> bool:
-    """Does this candidate carry more punctuation than identifier?
+def _previous_visible(text: str, position: int) -> str:
+    index = position - 1
+    while index >= 0 and _is_transparent(text[index]):
+        index -= 1
+    return text[index] if index >= 0 else ""
 
-    The joiner budget is what keeps "anything that is not an identifier
-    character" from assembling prose into a checksum. Real grouping is sparse -
-    three joiners for a sixteen-digit card, five for an IBAN written in fours -
-    so requiring the identifier's own characters to outnumber its punctuation
-    two to one admits every real layout and rejects text that has been
-    punctuated down to single characters.
+
+def _next_visible(text: str, position: int) -> str:
+    index = position + 1
+    while index < len(text) and _is_transparent(text[index]):
+        index += 1
+    return text[index] if index < len(text) else ""
+
+
+def _starts_a_group(text: str, position: int) -> bool:
+    previous = _previous_visible(text, position)
+    return previous == "" or not previous.isalnum()
+
+
+def _ends_a_group(text: str, position: int) -> bool:
+    following = _next_visible(text, position)
+    return following == "" or not following.isalnum()
+
+
+def _within_layout_bounds(
+    text: str, offsets: List[int], start: int, size: int
+) -> bool:
+    """Is this candidate compact enough to be one identifier?
+
+    The bound is what keeps "anything that is not an identifier character,
+    however many of them" from assembling prose into a checksum. It is stated
+    on the SPAN - how many columns the candidate occupies - rather than on the
+    number of gaps or their width, because layout varies both and neither is a
+    property of the identifier.
 
     Counted from the ORIGINAL offsets, which is where the punctuation actually
     is; invisible characters were dropped before the run was built and are
     correctly invisible here too.
     """
     span = offsets[start + size - 1] + 1 - offsets[start]
-    return span - size <= size // JOINER_BUDGET_DIVISOR
+    if span > size * MAX_SPAN_MULTIPLE:
+        return False
+
+    groups: List[int] = []
+    current = 0
+    for position in range(offsets[start], offsets[start + size - 1] + 1):
+        if text[position].isascii() and text[position].isalnum():
+            current += 1
+        elif not _is_transparent(text[position]):
+            if current:
+                groups.append(current)
+            current = 0
+    if current:
+        groups.append(current)
+    longest = max(groups) if groups else 0
+
+    # "Single group" means ONE unbroken group, not "span equals size". A soft
+    # hyphen inside an otherwise solid account number makes the span one longer
+    # than the identifier while splitting nothing.
+    if longest == size:
+        return True
+
+    # Nobody writes an identifier one character at a time. Requiring the
+    # average group to hold at least two characters rejects text punctuated
+    # down to singles ("4.1.1.1.1...") while admitting the densest real layout,
+    # a number grouped in twos.
+    if len(groups) > (size // 2) + 1:
+        return False
+
+    if not all(group <= MAX_INTERIOR_GROUP for group in groups[1:-1]):
+        return False
+
+    # ...and it must touch a real edge. A grouped identifier is anchored to the
+    # document at least at one end - it either begins where a group begins or
+    # ends where one ends. A Luhn window cut out of a LIST of numbers floats
+    # free at both ends, clipped on the left and on the right by nothing but
+    # its own length: "11 2299 3344 556" is the middle of four other numbers.
+    # Requiring both edges would refuse the case this detector exists for, a
+    # glued prefix on a spaced number, whose left edge is mid-group by
+    # definition.
+    return _starts_a_group(text, offsets[start]) or _ends_a_group(
+        text, offsets[start + size - 1]
+    )
 
 
-def _iban_spans_in_run(compact: str, offsets: List[int]) -> List[Span]:
+def _iban_spans_in_run(text: str, compact: str, offsets: List[int]) -> List[Span]:
     spans: List[Span] = []
     position = 0
     limit = len(compact) - MIN_IBAN_LENGTH + 1
@@ -262,7 +367,7 @@ def _iban_spans_in_run(compact: str, offsets: List[int]) -> List[Span]:
             position += 1
             continue
         candidate = compact[position:position + registered]
-        if iban_ok(candidate) and _within_joiner_budget(offsets, position, registered):
+        if iban_ok(candidate) and _within_layout_bounds(text, offsets, position, registered):
             spans.append(
                 (offsets[position], offsets[position + registered - 1] + 1, candidate)
             )
@@ -273,6 +378,7 @@ def _iban_spans_in_run(compact: str, offsets: List[int]) -> List[Span]:
 
 
 def _card_spans_in_run(
+    text: str,
     compact: str,
     offsets: List[int],
     claimed: List[Tuple[int, int]],
@@ -302,8 +408,8 @@ def _card_spans_in_run(
             for size in range(MAX_CARD_LENGTH, MIN_CARD_LENGTH - 1, -1):
                 if position + size > run_end:
                     continue
-                if luhn_ok(compact[position:position + size]) and _within_joiner_budget(
-                    offsets, position, size
+                if luhn_ok(compact[position:position + size]) and _within_layout_bounds(
+                    text, offsets, position, size
                 ):
                     if intervals and position <= intervals[-1][1]:
                         intervals[-1][1] = max(intervals[-1][1], position + size)
@@ -321,7 +427,7 @@ def find_ibans(text: str) -> List[Span]:
     """Every checksum-valid IBAN in *text*, found without a word boundary."""
     spans: List[Span] = []
     for compact, offsets in identifier_runs(text):
-        spans.extend(_iban_spans_in_run(compact, offsets))
+        spans.extend(_iban_spans_in_run(text, compact, offsets))
     return spans
 
 
@@ -342,7 +448,7 @@ def find_cards(text: str, avoid: Optional[List[Tuple[int, int]]] = None) -> List
             for position, origin in enumerate(offsets):
                 if start <= origin < end:
                     blocked.append((position, position + 1))
-        spans.extend(_card_spans_in_run(compact, offsets, blocked))
+        spans.extend(_card_spans_in_run(text, compact, offsets, blocked))
     return spans
 
 

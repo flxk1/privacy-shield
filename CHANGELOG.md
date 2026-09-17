@@ -169,7 +169,7 @@ trees — pin the major version.
     `tests/test_identifier_runs.py::test_every_joiner_category_groups_an_identifier`
     and `::test_a_glued_prefix_plus_any_joiner_still_finds_the_identifier`,
     which generate joiners from `unicodedata` across every category rather than
-    from a list, `::test_the_joiner_budget_rejects_punctuated_prose`,
+    from a list, `::test_the_layout_bounds_reject_assembled_prose`,
     `tests/test_leak_invariant.py::test_a_separator_inside_an_identifier_does_not_hide_it`,
     `::test_a_grouped_card_is_found_whatever_separates_the_groups`,
     `::test_a_grouped_iban_is_found_whatever_separates_the_groups`,
