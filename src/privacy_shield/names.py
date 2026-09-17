@@ -47,8 +47,12 @@ _WORD = r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?"
 #: Address forms and titles. Not claimed - they are the evidence, not the data.
 _TITLE = r"(?:Herrn|Herr|Frau|Fr\.|Hr\.|Dr\.|Prof\.|Dipl\.-[A-Za-zÄÖÜäöü]+\.?|Mag\.|Ing\.)"
 
+#: Up to FIVE words after a title. Three was the cap, and
+#: "Frau Anna Maria Luise Schmidt" then claimed "Anna Maria Luise" and left
+#: the surname - the most identifying token of the five - in the overlay,
+#: while pii_detected said True.
 TITLE_ANCHORED = re.compile(
-    rf"\b(?:{_TITLE}[ \t]+)+({_WORD}(?:[ \t]+{_WORD}){{0,2}})"
+    rf"\b(?:{_TITLE}[ \t]+)+({_WORD}(?:[ \t]+{_WORD}){{0,4}})"
 )
 
 #: A line that is nothing but a name: one to three capitalised words, with any
@@ -133,8 +137,17 @@ def _line_spans(text: str) -> List[Tuple[int, int, str]]:
 
 
 def _claim(spans: List[Span], start: int, end: int, text: str) -> None:
-    for existing_start, existing_end, _value in spans:
+    """Add a claim, preferring the WIDER of two overlapping ones.
+
+    This used to be all-or-nothing: any overlap and the new claim was dropped.
+    So when the title rule claimed the given names of a four-part name, the
+    wider claim that would have included the surname was refused and the
+    surname egressed. A narrower claim is now replaced rather than defended.
+    """
+    for index, (existing_start, existing_end, _value) in enumerate(spans):
         if start < existing_end and existing_start < end:
+            if start <= existing_start and end >= existing_end:
+                spans[index] = (start, end, text[start:end])
             return
     spans.append((start, end, text[start:end]))
 
@@ -228,101 +241,68 @@ def find_names(text: str) -> List[Span]:
 # other.
 # ---------------------------------------------------------------------------
 
-#: Labels whose value IS a person, always. "Sachbearbeiter" means a case
-#: worker; there is no non-person answer to it.
-PERSON_ROLE_LABELS = frozenset("""
+#: Column headers that declare a column of people. "Sachbearbeiter" means a
+#: case worker; a column under it holds people because the table says so.
+#:
+#: This enumeration FAILS CLOSED, which is why it is acceptable where probe A's
+#: were not: a header word missing from this list means a column of names is
+#: not claimed - a recall loss. A value word missing from probe A's lists meant
+#: a false positive on a clean document. Same kind of list, opposite
+#: consequence, because of the position it sits in.
+PERSON_COLUMN_HEADERS = frozenset("""
 Sachbearbeiter Sachbearbeiterin Bearbeiter Bearbeiterin Ansprechpartner
 Ansprechpartnerin Berater Beraterin Betreuer Betreuerin Pruefer Prueferin
 Prüfer Prüferin Verfasser Verfasserin Unterzeichner Unterzeichnerin
-Antragsteller Antragstellerin Zeichnungsberechtigt Zeichnungsberechtigte
-Vorgesetzter Vorgesetzte Erfasser Erfasserin
+Antragsteller Antragstellerin Erfasser Erfasserin Zustaendig Zuständig
+Zustaendige Zuständige Mitarbeitername Name Nachname Vorname Kunde Kundin
+Teilnehmer Teilnehmerin Empfaenger Empfänger Absender Unterschrift
 """.split())
 
-#: Labels whose value is USUALLY a person but may be a list or a department.
-#: These carry less evidence, so a value after them is held to the same test.
-CONTACT_LABELS = frozenset("""
-Von An CC Cc Kontakt Teilnehmer Anwesend Verteiler
-""".split())
-
-#: Multi-word labels, matched before the single words above.
-PHRASE_LABELS = ("Rueckfragen an", "Rückfragen an", "Im Auftrag von", "i. A.")
-
-#: Legal forms. A value carrying one of these is an organisation, whatever its
-#: shape - and "Nordstern GmbH" has exactly the shape the rule wants.
-LEGAL_FORMS = frozenset("""
-GmbH mbH AG KG OHG GbR UG SE KGaA eG e.V. eV gGmbH Co Ltd Inc SA SARL BV NV
-Stiftung Verein Genossenschaft
-""".split())
-
-#: Collective and placeholder words that stand where a person's name would.
-#: BOUNDED and position-specific - it applies only to a value after a label,
-#: and it is about thirty words. It is NOT the stoplist inversion, which is a
-#: general frequency list over all prose and is a separate piece of work.
-NON_PERSON_VALUES = frozenset("""
-Alle Mitarbeiter Mitarbeiterinnen Beschaeftigte Beschäftigte Kollegen Kolleginnen
-Verteiler Hotline Noch Unbesetzt Automatische Zuweisung Abteilungsleiter
-Abteilungsleiterin Offen Keine Keiner Niemand Intern Extern Unbekannt
-Ausstehend Entfaellt Entfällt Nicht Vakant Nachtrag Siehe Diverse Verschiedene
-Interessenten Kunden Lieferanten Gaeste Gäste Anwesende Personalrat Betriebsrat
-""".split())
-
-_LABEL_LINE = re.compile(
-    rf"^[ \t]*(?P<label>[A-ZÄÖÜ][A-Za-zÄÖÜäöüß. ]{{1,24}}?)[ \t]*:[ \t]*(?P<value>.+?)[ \t]*$",
-    re.MULTILINE,
+_CELL_NAME = re.compile(
+    rf"\A(?:{_TITLE}[ \t]+)*({_WORD}(?:[ \t]+{_WORD}){{0,3}})\Z"
 )
 
-_VALUE_NAME = re.compile(rf"^(?:{_TITLE}[ \t]+)*({_WORD}(?:[ \t]+{_WORD}){{0,2}})$")
+
+def _is_a_person_column(header: str) -> bool:
+    return header.strip().rstrip(".:") in PERSON_COLUMN_HEADERS
 
 
-def _label_is_a_person_role(label: str) -> bool:
-    cleaned = label.strip().rstrip(".")
-    if cleaned in PERSON_ROLE_LABELS or cleaned in CONTACT_LABELS:
-        return True
-    return any(cleaned.lower() == phrase.lower() for phrase in PHRASE_LABELS)
-
-
-def value_is_a_person(value: str) -> bool:
-    """THE RULE, in one sentence.
-
-    A value after a person-role label is a name only if it is one to three
-    capitalised words, carries no legal-form suffix, and contains no
-    organisational or collective word.
-
-    A label and a colon are evidence that a VALUE follows, not that the value
-    is a person: measured against twenty-two documents written to break it,
-    the unnarrowed probe claimed "Zentrale Verwaltung", "Alle Mitarbeiter",
-    "Verteiler Technik", "Zentrale Hotline", "Noch" and "Unbesetzt".
-    """
-    match = _VALUE_NAME.match(value.strip())
-    if not match:
-        return False
-    words = match.group(1).split()
-    if any(word in LEGAL_FORMS for word in words):
-        return False
-    if any(word in ORGANISATIONAL for word in words):
-        return False
-    if any(word in NON_PERSON_VALUES for word in words):
-        return False
-    return True
-
-
-def _label_names(text: str) -> List[Span]:
-    """Probe A - a label that names a person's role, then a colon."""
-    spans: List[Span] = []
-    for match in _LABEL_LINE.finditer(text):
-        if not _label_is_a_person_role(match.group("label")):
-            continue
-        value_start = match.start("value")
-        # A contact label may carry a comma-separated list.
-        offset = 0
-        for part in match.group("value").split(","):
-            stripped = part.strip()
-            if stripped and value_is_a_person(stripped):
-                begin = value_start + offset + part.index(stripped)
-                spans.append((begin, begin + len(stripped), stripped))
-            offset += len(part) + 1
-    return spans
-
+# PROBE A DOES NOT SHIP.
+#
+# It was approved on a measured zero, an independent corpus produced 18
+# false-positive spans on 20 documents, and the owner had already made a
+# shipping decision on that zero. This is the record of why it cannot be
+# narrowed rather than widened.
+#
+# Both of its enumerations are short in the way every enumeration in this
+# programme has been short. LEGAL_FORMS listed Ltd, SARL, BV and NV and missed
+# Oy, Kft and Asa, so "An: Nordica Oy" was a person. NON_PERSON_VALUES held
+# "Automatische" and German inflects, so "Von: Automatischer Rechnungslauf"
+# walked past it; it held "Keine" and not "Ohne Zuordnung". Systems, queues,
+# person-shaped places, streets, statuses and companies with no legal form at
+# all are the rest.
+#
+# The lists are not the defect. The defect is that A's ONLY unique
+# contribution is the undecidable case. Measured against the other rules:
+# where the value is a full name with a known given name ("Von: Petra
+# Ullrich"), GIVEN already claims it; where a title is present
+# ("Sachbearbeiter: Herr Osterloh"), TITLE already claims it. What is left over
+# - and the entire reason to want A - is the BARE SURNAME after a label:
+# "Sachbearbeiter: Osterloh". That is structurally identical to
+# "Sachbearbeiter: Unbesetzt", "An: Nordica Oy" and "Bearbeiter: Workflow
+# Engine". A label and a colon are evidence that a value follows; nothing in
+# the text says whether the value is a person, and no amount of narrowing
+# invents that evidence.
+#
+# Deciding it needs a lexicon - which is the stoplist inversion, deferred by
+# the owner to separate work. Until then this position is NOT covered, and
+# that is recorded in docs/limits.md beside the others.
+#
+# The asymmetry that lets D ship while A does not: D enumerates LABELS in a
+# table header, and a label missing from that list costs a missed name -
+# recall, failing closed. A enumerated VALUES, and a value missing from those
+# lists costs a false positive on a clean document - precision, failing open.
+# The same kind of list has opposite consequences in the two positions.
 
 _TABLE_ROW = re.compile(r"^[ \t]*\|(?P<body>.+)\|[ \t]*$", re.MULTILINE)
 
@@ -335,9 +315,28 @@ def _table_names(text: str) -> List[Span]:
     under "Bearbeiter" and the other under "Produkt".
     """
     spans: List[Span] = []
+    # The header is tracked PER TABLE. It used to be a single flag over the
+    # whole document, so a handler table followed by a parts table reused
+    # column 0 as a person column and claimed every product in it - which is
+    # verbatim the failure that got the unnarrowed probe rejected. And the
+    # converse: with the tables the other way round the person column was
+    # never learned and the name egressed untouched. The only difference
+    # between leaking and destroying the document was the order of two tables.
+    #
+    # A table ends at the first line that is not a table row, and the next one
+    # starts by learning its own header.
+    rows = list(_TABLE_ROW.finditer(text))
     person_columns: set = set()
-    seen_header = False
-    for row in _TABLE_ROW.finditer(text):
+    previous_end = None
+    for row in rows:
+        gap = text[previous_end:row.start()] if previous_end is not None else None
+        # EXACTLY one line terminator. A blank line between two tables strips
+        # to the empty string, so "nothing but whitespace between the rows"
+        # made two tables look like one and the second reused the first's
+        # person column.
+        contiguous = gap is not None and gap.count("\n") == 1 and not gap.strip()
+        previous_end = row.end()
+
         body = row.group("body")
         cells = body.split("|")
         starts = []
@@ -346,28 +345,40 @@ def _table_names(text: str) -> List[Span]:
             starts.append(position)
             position += len(cell) + 1
 
-        if not seen_header:
-            for index, cell in enumerate(cells):
-                if _label_is_a_person_role(cell.strip()):
-                    person_columns.add(index)
-            seen_header = True
+        declared = {
+            index for index, cell in enumerate(cells) if _is_a_person_column(cell)
+        }
+        # A row that names a person column IS a header, wherever it sits. Two
+        # tables concatenated with no blank line between them are otherwise
+        # one table with a stray row in the middle, and the second table's
+        # names went out untouched.
+        if not contiguous or declared:
+            person_columns = declared
             continue
 
-        for index in person_columns:
+        for index in sorted(person_columns):
             if index >= len(cells):
                 continue
             cell = cells[index]
             stripped = cell.strip()
-            if stripped and value_is_a_person(stripped):
-                begin = starts[index] + cell.index(stripped)
-                spans.append((begin, begin + len(stripped), stripped))
+            if not stripped:
+                continue
+            # SHAPE only. The header already declared this column to hold
+            # people, so there is nothing left to decide about the value - and
+            # judging it would need exactly the value vocabulary that sank
+            # probe A. A status word sitting in a person column is redacted,
+            # which is what the table says it is.
+            match = _CELL_NAME.match(stripped)
+            if not match:
+                continue
+            begin = starts[index] + cell.index(stripped) + match.start(1)
+            spans.append((begin, begin + len(match.group(1)), match.group(1)))
     return spans
 
 
 #: Named and separable, so a regression reports which probe caused it and the
 #: owner can drop one without touching the other.
 PROBES = {
-    "label": _label_names,
     "table": _table_names,
 }
 

@@ -40,6 +40,7 @@ from .extractor import (
     ExtractionResult,
     detect_document_type,
 )
+from .utils.file_io import path_exists
 from .redactor import (
     Clause,
     Redactor,
@@ -1003,7 +1004,7 @@ class PrivacyShield:
         Returns:
             ShieldResult with clean_output ready for LLM.
         """
-        if isinstance(content, str) and not Path(content).exists():
+        if isinstance(content, str) and not path_exists(content):
             return self.process_text(content, ProcessingStage.PRE_FLIGHT)
         else:
             return self.process_file(content, ProcessingStage.PRE_FLIGHT)

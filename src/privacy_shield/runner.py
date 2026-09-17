@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ._legacy_env import reject_legacy_env
+from .utils.file_io import path_exists
 from .anonymous_json import anonymize_for_cloud
 from .gate import PrivacyGate
 from .redactor import RedactionMode, SelectionMode
@@ -312,8 +313,7 @@ def scan(
     try:
         # --- Resolve the target into a list of (source, ShieldResult) ---------
         is_path = not force_text and (
-            isinstance(target, Path)
-            or (isinstance(target, str) and Path(target).exists())
+            isinstance(target, Path) or path_exists(target)
         )
 
         documents: List[DocumentScan] = []

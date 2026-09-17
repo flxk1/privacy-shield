@@ -25,6 +25,7 @@ from typing import List, Optional
 
 from ._legacy_env import reject_legacy_env
 from .redactor import RedactionMode
+from .utils.file_io import path_exists
 from .runner import DEFAULT_EXTENSIONS, ScanReport, scan
 from .scanner import Confidence
 from .shield import PrivacyMode
@@ -105,7 +106,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if target == "-":
         target = sys.stdin.read()
         force_text = True
-    elif not force_text and not Path(target).exists():
+    elif not force_text and not path_exists(target):
         sys.stderr.write(
             f"note: '{target}' is not an existing path; treating as raw text.\n"
         )

@@ -76,3 +76,27 @@ def append_jsonl(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+def path_exists(target: object) -> bool:
+    """Is *target* a path that exists? False for anything that cannot be one.
+
+    `Path(...).exists()` raises OSError rather than returning False when the
+    string is too long to be a filename - ENAMETOOLONG - and whether it does
+    depends on the Python version: 3.13 started swallowing it, 3.10 and 3.12
+    do not. So on CI's 3.10 leg any text input longer than the filesystem's
+    name limit crashed the scan on the main entry point, while the same input
+    scanned cleanly on 3.14. A privacy scanner must not decide whether to look
+    at your document based on how long it is.
+
+    Shared by every caller that has to tell raw text from a path: runner.scan,
+    shield.pre_flight and the CLI. Three copies of `Path(x).exists()` is three
+    copies of the same crash.
+    """
+    from pathlib import Path
+
+    if not isinstance(target, (str, Path)):
+        return False
+    try:
+        return Path(target).exists()
+    except (OSError, ValueError):
+        return False

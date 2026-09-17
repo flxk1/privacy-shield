@@ -281,7 +281,7 @@ def test_a_person_still_signs_a_letter():
 # assumption this package does not currently have. It is the right next step
 # and it is not a small one.
 
-INDEPENDENT_RECALL = 11
+INDEPENDENT_RECALL = 7
 INDEPENDENT_TOTAL = 21
 
 
@@ -386,30 +386,40 @@ def test_a_value_after_a_label_is_not_automatically_a_person(line, scanner):
 
 
 @pytest.mark.parametrize(
-    "label, value",
+    "line",
     [
-        ("Sachbearbeiter", "Osterloh"),
-        ("Bearbeiter", "Timo Osterloh"),
-        ("Ansprechpartnerin", "Julia Neumann"),
-        ("Von", "Petra Ullrich"),
-        ("An", "Bernd Kowalczyk"),
-        ("Im Auftrag von", "Ruth Ebersbach"),
+        "Sachbearbeiter: Osterloh",
+        "Bearbeiter: Timo Osterloh",
+        "An: Nordica Oy",
+        "Von: Automatischer Rechnungslauf",
+        "Bearbeiter: Workflow Engine",
+        "An: Ohne Zuordnung",
     ],
 )
-def test_a_person_after_a_person_role_label_is_found(label, value, scanner):
-    text = f"{label}: {value}\n"
+def test_a_value_after_a_label_is_not_claimed_at_all(line, scanner):
+    """Probe A does not ship. This is the record of the decision.
+
+    An independent corpus produced 18 false-positive spans on 20 documents,
+    after it had been approved on a measured zero and a shipping decision had
+    been taken on that zero. Both of its enumerations were short in the way
+    every enumeration in this programme has been short: LEGAL_FORMS had Ltd,
+    SARL, BV and NV and not Oy, Kft or Asa; NON_PERSON_VALUES had
+    "Automatische" and German inflects, so "Automatischer" walked past it.
+
+    The lists were not the defect. A's only unique contribution - the reason
+    to want it - is the BARE SURNAME after a label, and
+    "Sachbearbeiter: Osterloh" is structurally identical to
+    "Sachbearbeiter: Unbesetzt" and "An: Nordica Oy". Where the value is a
+    full name with a known given name, GIVEN already claims it; where a title
+    is present, TITLE already claims it. What is left is undecidable without a
+    lexicon, which is the deferred stoplist work.
+
+    The first two cases are the recall this costs: 4 of 21 occurrences.
+    """
     claimed = [
-        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+        f.value for f in scanner.scan(line).findings if f.pii_type is PIIType.NAME
     ]
-    assert claimed == [value], claimed
-
-
-def test_a_comma_separated_contact_list_claims_each_name(scanner):
-    text = "CC: Ingo Thelen, Marlies Domke\n"
-    claimed = sorted(
-        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
-    )
-    assert claimed == ["Ingo Thelen", "Marlies Domke"], claimed
+    assert not claimed, claimed
 
 
 def test_a_table_cell_is_a_name_only_under_a_person_column():
@@ -437,11 +447,61 @@ def test_a_table_cell_is_a_name_only_under_a_person_column():
 
 
 def test_the_probes_are_separable_and_named():
-    """The owner can drop one without touching the other, and a regression
-    reports which one caused it."""
+    """One probe ships. It is still named and separable, so a regression
+    reports its cause and the owner can drop it without touching the core
+    rules."""
     from privacy_shield.names import PROBES, find_names_by_probe
 
-    assert set(PROBES) == {"label", "table"}
-    blame = find_names_by_probe("Sachbearbeiter: Osterloh\n")
-    assert [v for _s, _e, v in blame["label"]] == ["Osterloh"]
-    assert blame["table"] == []
+    assert set(PROBES) == {"table"}
+    blame = find_names_by_probe(
+        "| Bearbeiter | Status |\n| Osterloh | offen |\n"
+    )
+    assert [v for _s, _e, v in blame["table"]] == ["Osterloh"]
+
+
+@pytest.mark.parametrize(
+    "order, expected",
+    [
+        ("person_first", ["Osterloh"]),
+        ("parts_first", ["Osterloh"]),
+        ("no_blank_line", ["Osterloh"]),
+    ],
+)
+def test_probe_d_does_not_depend_on_which_table_comes_first(order, expected):
+    """The header was tracked once per DOCUMENT, not per table.
+
+    A handler table followed by a parts table reused column 0 as a person
+    column and claimed every product in it - verbatim the failure that got the
+    unnarrowed probe rejected. Swap the tables and the person column was never
+    learned, so the name egressed untouched. The only difference between
+    destroying the document and leaking the name was the order of two tables.
+    """
+    from privacy_shield.names import find_names_by_probe
+
+    people = "| Bearbeiter | Status |\n| Osterloh | offen |\n"
+    parts = "| Produkt | Menge |\n| Meyer-Ventil | 5 |\n| Dichtungsring | 12 |\n"
+    document = {
+        "person_first": people + "\n" + parts,
+        "parts_first": parts + "\n" + people,
+        "no_blank_line": parts + people,
+    }[order]
+
+    claimed = [value for _s, _e, value in find_names_by_probe(document)["table"]]
+    assert claimed == expected, claimed
+
+
+def test_a_four_part_name_keeps_its_surname():
+    """The three-word cap claimed the given names and left the surname.
+
+    `Frau Anna Maria Luise Schmidt` came back as `Frau [NAME] Schmidt` - the
+    most identifying token of the five egressing while pii_detected said True,
+    because `_claim` refused the wider overlapping claim outright instead of
+    preferring it.
+    """
+    scanner = PrivacyScanner(min_confidence=Confidence.MEDIUM)
+    text = "Frau Anna Maria Luise Schmidt"
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert claimed == ["Anna Maria Luise Schmidt"], claimed
+    assert "Schmidt" not in scanner.scan(text).text.replace(text, "")

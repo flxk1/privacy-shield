@@ -170,6 +170,16 @@ MAX_SPAN_MULTIPLE = 16
 #: A candidate with fewer than three groups has no interior and is unbounded.
 MAX_INTERIOR_GROUP = 12
 
+#: How many line breaks a single candidate may contain.
+#:
+#: One. A value that wraps in a narrow column is continued on the NEXT line -
+#: it breaks once. A column of separate numbers stacked in a table breaks
+#: between every pair, and admitting the newline as a joiner without this bound
+#: let three article numbers on three lines be claimed as one card. The
+#: distinction is not how far apart they are, it is how many times the value
+#: is interrupted.
+MAX_LINE_BREAKS = 1
+
 
 def _is_transparent(char: str) -> bool:
     """Invisible. Not a separator, because it is not anything."""
@@ -179,11 +189,20 @@ def _is_transparent(char: str) -> bool:
 def _is_joiner(char: str) -> bool:
     """May sit between two identifier characters without ending the run.
 
-    Defined by exclusion on purpose: anything that is not alphanumeric and not
-    a line break. Underscore, colon, dot, slash, comma, pipe, every bracket and
-    every kind of space - including the ones nobody thinks to list.
+    Defined by exclusion on purpose: ANYTHING that is not alphanumeric.
+    Underscore, colon, dot, slash, comma, pipe, every bracket, every kind of
+    space - and a line break.
+
+    The line break used to be excluded, and that exclusion was the seventh leak
+    class. A label run into its value ("Kreditkartennummer4111 1111") and a
+    value wrapping in a narrow column are both ordinary `pdftotext` artefacts
+    from the extraction path this package ships; each was handled alone and
+    their intersection leaked all sixteen digits with pii_detected False.
+    Keeping it out was justified as "a run must not span a document", but what
+    actually bounds a run is the span and interior-group limits, not the
+    newline - measured below.
     """
-    return not char.isalnum() and char not in _LINE_BREAKS
+    return not char.isalnum()
 
 _LOCAL_PART_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
@@ -225,6 +244,13 @@ def iban_ok(value: str) -> bool:
     except ValueError:
         return False
 
+
+#: The longest valid domain starting immediately after an "@". Greedy, so one
+#: match call yields the longest - no per-offset search.
+_DOMAIN_AFTER_AT = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}"
+)
 
 RFC_EMAIL = re.compile(
     r"\A[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
@@ -310,6 +336,10 @@ def _within_layout_bounds(
     """
     span = offsets[start + size - 1] + 1 - offsets[start]
     if span > size * MAX_SPAN_MULTIPLE:
+        return False
+
+    claimed = text[offsets[start]:offsets[start + size - 1] + 1]
+    if sum(claimed.count(char) for char in _LINE_BREAKS) > MAX_LINE_BREAKS:
         return False
 
     groups: List[int] = []
@@ -420,10 +450,17 @@ def _card_spans_in_run(
                         intervals.append([position, position + size])
                     break
 
-    return [
-        (offsets[start], offsets[end - 1] + 1, compact[start:end])
-        for start, end in intervals
-    ]
+    # The bound is re-checked on the MERGED interval, not only on each window
+    # that fed it. Three article numbers on three lines each contributed a
+    # window with one break, and their union - which is what gets claimed -
+    # carried two and covered all three numbers.
+    spans: List[Span] = []
+    for start, end in intervals:
+        origin, finish = offsets[start], offsets[end - 1] + 1
+        if sum(text.count(char, origin, finish) for char in _LINE_BREAKS) > MAX_LINE_BREAKS:
+            continue
+        spans.append((origin, finish, compact[start:end]))
+    return spans
 
 
 def find_ibans(text: str) -> List[Span]:
@@ -485,23 +522,23 @@ def find_emails(text: str) -> List[Span]:
         right = at + 1
         while right < len(text) and text[right] in _DOMAIN_CHARS:
             right += 1
-        found = False
-        for start in range(left, at):
-            for end in range(right, at + 1, -1):
-                candidate = text[start:end]
-                # SHAPE only, not `email_ok`. The validator also caps the whole
-                # address at RFC 5321's 254 characters, and using it here made
-                # the search shorten the DOMAIN to get under the cap: a
-                # 243-character local part produced a span ending
-                # "...aaa@example.co", leaving the final "m" of the TLD in the
-                # overlay, silently, because "example.co" is a valid domain
-                # shape too. Length is a property of the address, not a way to
-                # choose where it ends. An over-long address is claimed whole.
-                if RFC_EMAIL.match(candidate):
-                    spans.append((start, end, candidate))
-                    claimed_to = end
-                    found = True
-                    break
-            if found:
-                break
+        # The local part and the domain are independent given the "@", so each
+        # is found in ONE pass instead of trying every (start, end) pair. The
+        # nested search was cubic: 1.6 KB of one long line took 8 seconds and
+        # 2.4 KB took 27, on the egress path, which is a gate nobody can
+        # afford to run and therefore a gate that gets bypassed.
+        #
+        # SHAPE, not `email_ok`: the validator also caps the whole address at
+        # RFC 5321's 254 characters, and using it to choose where the address
+        # ENDS made the search shorten the DOMAIN to get under the cap, leaving
+        # the last letter of the TLD in the overlay. Length is a property of an
+        # address, not a way to decide where one ends.
+        domain = _DOMAIN_AFTER_AT.match(text, at + 1, right)
+        if domain is None:
+            continue
+        candidate = text[left:domain.end()]
+        if not RFC_EMAIL.match(candidate):
+            continue
+        spans.append((left, domain.end(), candidate))
+        claimed_to = domain.end()
     return spans

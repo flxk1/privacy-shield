@@ -249,12 +249,38 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
     exact substring of *text* it came from, which differ whenever the input
     groups the number with spaces or anything else.
 
-    Candidates whose written form crosses a line break are dropped HERE rather
-    than never being searched for, so the exclusion is visible and removable.
-    An identifier split across two lines is the one exposure this programme has
-    measured and accepted (see
-    ``test_a_line_wrapped_identifier_is_a_known_gap``); making the search
-    itself stop at a newline would hide it instead of scoping it.
+    NOTHING is excluded. There used to be a filter here that dropped every
+    candidate whose written form crossed a line break, on the reasoning that a
+    wrapped identifier was a measured and accepted exposure and that dropping
+    it at the policy layer kept the exclusion visible.
+
+    It was not visible; it was load-bearing. A word character glued to the
+    front of a number AND a line break inside it is the intersection of two
+    shapes that are each handled alone, and it leaks all sixteen digits with
+    ``pii_detected`` False - and this filter meant the gate reported "oracle
+    clean" for it in all three egress modes. The property could never commit
+    that counterexample because it could not recognise it as a leak. The bound
+    that licensed the filter was measured on the UNPREFIXED wrapped card, the
+    benign variant, and authorised blindness to the variant that leaks
+    completely.
+
+    A declined claim must show up as a leak rather than as silence. If the
+    detector chooses not to claim something across a line break, that is a
+    decision the gate has to be able to see and fail on.
+
+    ONE assumption is shared with the detector, and it is named here rather
+    than buried: a candidate may contain at most one line break. This is
+    definitional, not a layout rule - a value that wraps is continued on the
+    NEXT line, whereas a string assembled from five separate lines
+    ("CF8 / § 203 StGB / KTO/ / Anna Schmidt / Case C-311/18" compacts to 27
+    characters that satisfy mod-97) is not an identifier anybody could read off
+    the page. It is the same kind of assumption as "a letter cannot appear
+    inside a card number".
+
+    Crucially it does NOT hide the class that motivated removing the old
+    exclusion: that leak has exactly one break, and
+    test_the_shared_line_break_bound_cannot_hide_the_leak_class proves the
+    bound still lets it through to be reported.
     """
     found: list[tuple[str, str, str]] = []
     for canonical, as_written in _oracle_emails(text):
@@ -265,7 +291,7 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
         found.append(("credit_card", canonical, as_written))
     return [
         row for row in found
-        if not any(char in _ORACLE_LINE_BREAKS for char in row[2])
+        if sum(row[2].count(char) for char in _ORACLE_LINE_BREAKS) <= 1
     ]
 
 
@@ -790,6 +816,11 @@ def _make_email(rng: random.Random) -> str:
 #: cannot find them.
 _BATTERY_SEPARATORS = [" ", " ", "_", "-", ".", ":", "/", ",", "|", "\u00a0", "\t"]
 
+#: A line break INSIDE an identifier, which `pdftotext` produces whenever a
+#: value wraps in a narrow column. This was never generated: the gap widths
+#: below are horizontal only.
+_BATTERY_INTERNAL_BREAKS = ["", "", "", "\n", "\n", "-\n", " \n", "\n "]
+
 #: WIDTHS the battery writes between groups, and GROUP SIZES below. Every
 #: generated test once used `joiner.join(...)` - exactly one character per gap,
 #: always - so the generator was exhaustive on the axis that was broken one
@@ -832,11 +863,18 @@ def _spaced(rng: random.Random, digits: str) -> str:
     gaps = max(1, len(groups) - 1)
     # 16 x length is the span bound; keep the sum of gaps inside it.
     budget = max(1, (len(digits) * 16 - len(digits)) // gaps)
-    if rng.random() < 0.5:
-        return _gap(rng, budget).join(groups)  # uniform gap
-    out = groups[0]                            # mixed gaps within one identifier
-    for group in groups[1:]:
-        out += _gap(rng, budget) + group
+    uniform = rng.random() < 0.5
+    gap = _gap(rng, budget)
+    # AT MOST ONE internal line break, which is the documented bound: a value
+    # that wraps is continued on the next line, it does not wrap repeatedly.
+    # Generating more would be generating the known limit rather than the
+    # supported range, and where that limit sits has its own named test.
+    break_at = rng.randrange(1, len(groups)) if len(groups) > 1 and rng.random() < 0.4 else None
+    out = groups[0]
+    for index, group in enumerate(groups[1:], start=1):
+        separator = gap if uniform else _gap(rng, budget)
+        wrap = rng.choice(["\n", "-\n", " \n"]) if index == break_at else ""
+        out += wrap + separator + group
     return out
 
 
@@ -877,8 +915,15 @@ def generate_document(rng: random.Random) -> tuple[str, list[str], list[str]]:
         else:
             lines.append(rng.choice(_NOISE))
     rng.shuffle(lines)
-    joiner = rng.choice(["\n", " ", ", "])
-    return joiner.join(lines), planted, shapes
+    # A joiner PER FRAGMENT, not one for the whole list. With a single joiner,
+    # a glued prefix (which needs "") and an internal line break (which needs
+    # "\n" somewhere) were mutually exclusive BY CONSTRUCTION - so the
+    # intersection of the two shapes, which leaks every digit, was unreachable
+    # for the generator however long it ran.
+    out = lines[0] if lines else ""
+    for line in lines[1:]:
+        out += rng.choice(["\n", " ", ", ", "", "\t"]) + line
+    return out, planted, shapes
 
 
 GENERATED_DOCUMENT_COUNT = 300
@@ -1112,60 +1157,63 @@ def test_an_invisible_character_does_not_split_a_run(filler):
     assert runs[0][0] == "DE893704"
 
 
-def test_a_line_break_is_never_an_inline_separator():
-    """The bound on all of this: a run still stops at the end of a line."""
+def test_a_line_break_is_now_an_inline_separator():
+    """Reversal, and the reason is written down.
+
+    A line break used to end a run, and that was the seventh leak class: a
+    label glued to its value plus a value wrapped in a narrow column - both
+    ordinary `pdftotext` artefacts from the extraction path this package
+    ships - leaked all sixteen digits of a card with pii_detected False.
+
+    The exclusion was justified as "a run must not span a document". What
+    actually bounds a run is the span limit and the interior-group limit, and
+    admitting the newline moved neither false-positive budget by a single span:
+    eight cards and no IBANs on the realistic corpus, eight on the hostile one,
+    zero on the forty-two German documents.
+    """
     from privacy_shield import identifiers
 
-    for line_break in "\n\r  ":
+    for line_break in "\n\r\u2028\u2029":
         runs = list(identifiers.identifier_runs(f"DE89{line_break}3704"))
-        assert len(runs) == 2, (line_break.encode("unicode_escape"), runs)
+        assert len(runs) == 1, (line_break.encode("unicode_escape"), runs)
+        assert runs[0][0] == "DE893704"
 
 
 # ---------------------------------------------------------------------------
 # A known gap, pinned rather than hidden
 # ---------------------------------------------------------------------------
 
-def test_a_line_wrapped_identifier_is_a_known_gap():
-    """An identifier broken across two lines is NOT claimed by the run pass.
+def test_a_line_wrapped_identifier_is_no_longer_a_gap():
+    """This test used to pin the gap. It now pins its absence.
 
-    A line break is deliberately not a joiner: making it one would glue every
-    line of a document into a single run and let a column of figures in a table
-    be assembled into a checksum. The cost is that a card number wrapped across
-    two lines - which PDF extraction does produce - is not claimed as a card.
-
-    What redacts it today is the PHONE pattern catching the first half by
-    coincidence. That is the accidental-redaction seam, and this test exists so
-    that it cannot quietly become a leak: if the phone pattern is ever narrowed,
-    the surviving residue grows and this fails, rather than the gate staying
-    green while an account number goes out.
-
-    The assertion is the CURRENT measured residue, not an aspiration. Lowering
-    it is the fix; raising it is a regression that has to be argued for.
+    In its previous form it measured residue on the UNPREFIXED wrapped card -
+    the benign variant - found it bounded at six characters, and on that
+    basis licensed the oracle to discard every candidate containing a line
+    break. That authorised blindness to the prefixed variant, which leaks
+    every digit. A bound measured on the harmless case must never license
+    silence about the harmful one.
     """
     from privacy_shield import identifiers
 
     wrapped = EXAMPLE_CARD[:10] + "\n" + EXAMPLE_CARD[10:]
-    assert not identifiers.find_cards(wrapped), (
-        "a run now spans a line break - if that was deliberate, re-measure the "
-        "prose-assembly false-positive rate before keeping it"
-    )
+    assert identifiers.find_cards(wrapped), "a wrapped card is not claimed"
 
-    document = scan(wrapped).documents[0]
-    assert document.pii_detected, document.overlay
-    surviving = _compact(EXAMPLE_CARD)
-    residue = max(
-        (
-            len(surviving[start:start + size])
-            for size in range(len(surviving), 0, -1)
-            for start in range(0, len(surviving) - size + 1)
-            if surviving[start:start + size] in _compact(document.overlay)
-        ),
-        default=0,
-    )
-    assert residue <= 6, (
-        f"{residue} consecutive characters of a line-wrapped card survive in "
-        "the overlay; the coincidental cover has weakened"
-    )
+    for text in (wrapped, "Kreditkartennummer" + wrapped):
+        document = scan(text).documents[0]
+        assert document.pii_detected, document.overlay
+        assert not leaks_in(text, document)
+        surviving = _compact(EXAMPLE_CARD)
+        haystack = _compact(_without_placeholders(document.overlay))
+        residue = max(
+            (
+                size
+                for size in range(len(surviving), 0, -1)
+                for start in range(0, len(surviving) - size + 1)
+                if surviving[start:start + size] in haystack
+            ),
+            default=0,
+        )
+        assert residue == 0, f"{residue} characters of a wrapped card survived"
 
 
 # ---------------------------------------------------------------------------
@@ -1385,3 +1433,109 @@ PROPERTY_COUNTEREXAMPLES = [
 @pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
 def test_property_counterexamples_stay_fixed(text, mode):
     assert_no_leak(text, mode=mode)
+
+
+# ---------------------------------------------------------------------------
+# The seventh class: a word character in front AND a line break inside
+# ---------------------------------------------------------------------------
+
+GLUED_AND_WRAPPED = [
+    pytest.param(
+        "Rechnung 2026-0041\nKreditkartennummer4111 1111\n1111 1111\n"
+        "Betrag 1.240,00 EUR\n",
+        id="label_glued_to_value_then_wrapped_card",
+    ),
+    pytest.param(
+        "Bankverbindung" + EXAMPLE_IBAN[:10] + "\n" + EXAMPLE_IBAN[10:] + "\n",
+        id="label_glued_to_value_then_wrapped_iban",
+    ),
+    pytest.param(
+        "Kontonummer4111 1111\n1111 1111 Ende",
+        id="glued_and_wrapped_mid_line",
+    ),
+]
+
+
+@pytest.mark.parametrize("text", GLUED_AND_WRAPPED)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_glued_and_wrapped_is_not_the_intersection_nobody_checks(text, mode):
+    """Each shape alone is handled; the intersection was not.
+
+    A label run into its value is the standard `pdftotext` artefact from
+    adjacent cells, and a value wrapping in a narrow column is the standard
+    artefact from a narrow column. Both come out of the `[extract]` path this
+    package ships. Together they leaked all sixteen digits with
+    `is_safe_for_external_llm` returning "No PII detected".
+    """
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+def test_the_line_break_bound_is_one_and_this_is_what_it_costs():
+    """Pinned, like the span cliff, rather than left to be discovered.
+
+    A value that wraps in a narrow column is continued on the NEXT line: it is
+    interrupted once. A column of separate numbers stacked in a table is
+    interrupted between every pair, and without this bound three article
+    numbers on three lines were claimed as one card - which is the assembly
+    failure the interior-group rule exists to refuse.
+
+    The cost is an identifier wrapped more than once, which needs a column
+    narrower than about eight characters. Measured, bounded, and stated.
+    """
+    from privacy_shield import identifiers
+
+    once = EXAMPLE_CARD[:10] + "\n" + EXAMPLE_CARD[10:]
+    twice = EXAMPLE_CARD[:6] + "\n" + EXAMPLE_CARD[6:11] + "\n" + EXAMPLE_CARD[11:]
+
+    assert identifiers.find_cards(once), "one break must be claimed"
+    assert not identifiers.find_cards(twice), (
+        "two breaks are now claimed; re-measure the stacked-column corpus in "
+        "tests/test_identifier_runs.py before keeping this"
+    )
+    # ...and the assembly case the bound exists for.
+    assert not identifiers.find_cards(
+        "4029764001807\n4006381333931\n4007817327104"
+    )
+
+
+def test_the_shared_line_break_bound_cannot_hide_the_leak_class():
+    """The one assumption the oracle shares, proved harmless for the class.
+
+    The previous exclusion dropped EVERY candidate containing a line break,
+    and that hid a leak of all sixteen digits. This one drops only candidates
+    with more than one, so the class that exposed the old exclusion is still
+    visible to the gate: with the detector's newline support removed, the
+    oracle must still report it.
+    """
+    from privacy_shield import identifiers
+
+    # The reported input, which leaks all sixteen digits when the detector
+    # declines. A shorter construction is no good here: with fewer digits the
+    # phone pattern masks part of it and the residue falls below the reporting
+    # threshold, so the test would pass for the wrong reason.
+    text = (
+        "Rechnung 2026-0041\nKreditkartennummer4111 1111\n1111 1111\n"
+        "Betrag 1.240,00 EUR\n"
+    )
+
+    # The oracle sees it...
+    assert any(
+        kind == "credit_card" for kind, _c, _w in validated_identifiers(text)
+    ), "the oracle can no longer see the glued-and-wrapped class"
+
+    # ...and if the detector stops claiming it, leaks_in says so.
+    original = identifiers._is_joiner
+    try:
+        identifiers._is_joiner = lambda char: (
+            not char.isalnum() and char not in identifiers._LINE_BREAKS
+        )
+        document = scan(text).documents[0]
+        assert leaks_in(text, document), (
+            "the detector declined the claim and the gate stayed silent - "
+            "which is the exact failure the old exclusion caused"
+        )
+    finally:
+        identifiers._is_joiner = original

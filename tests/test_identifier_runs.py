@@ -220,10 +220,22 @@ def test_spaced_identifier_span_covers_its_separators():
     assert text[start:end] == "DE89 3704 0044 0532 0130 00"
 
 
-def test_a_run_does_not_cross_a_newline():
-    """Two unrelated numbers on two lines must not be spliced into one run."""
+def test_a_run_crosses_a_newline_and_the_bounds_are_what_hold_it():
+    """Reversal. A newline used to end a run and that was a leak class.
+
+    Two unrelated numbers on two lines ARE now one run - what stops them being
+    claimed as one identifier is the span bound and the interior-group bound,
+    not the line break. Admitting the newline moved no false-positive budget:
+    eight cards and no IBANs on the realistic corpus, eight on the hostile one,
+    zero across the forty-two German documents.
+    """
     runs = list(identifiers.identifier_runs("DE89 3704\n0044 0532"))
-    assert len(runs) == 2, runs
+    assert len(runs) == 1, runs
+    # ...and the bounds still refuse an identifier assembled out of two lines
+    # of a table column.
+    assert not identifiers.find_cards(
+        "4029764001807\n4006381333931\n4007817327104"
+    )
 
 
 def test_unregistered_country_code_is_not_an_iban():
@@ -470,3 +482,47 @@ def _brute_force_addresses(text):
             if found and found[-1][0].index("@") == at - begin:
                 break
     return found
+
+
+@pytest.mark.parametrize("size", [800, 1600, 3200])
+def test_one_long_line_does_not_stall_the_egress_path(size):
+    """A gate nobody can afford to run gets bypassed.
+
+    `find_emails` tried every (start, end) pair around each "@", which is cubic
+    in the length of one line: 1.6 KB took 8 seconds and 2.4 KB took 27, on the
+    egress path. A log line or a wide `pdftotext` row stalled the gate for
+    minutes. The local part and the domain are independent given the "@", so
+    each is found in one pass.
+
+    The bound is deliberately loose - this asserts the shape of the cost, not a
+    machine's speed.
+    """
+    import time
+
+    from privacy_shield.scanner import scan_text
+
+    text = "a" * size + "@" + "b" * size
+    started = time.perf_counter()
+    scan_text(text)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 2.0, (
+        f"{2 * size + 1} characters took {elapsed:.1f}s; the superlinear "
+        "email search is back"
+    )
+
+
+def test_the_email_search_is_still_correct_after_being_made_linear():
+    for text, expected in [
+        ("erika@example.com", ["erika@example.com"]),
+        ("acct_erika@example.com", ["acct_erika@example.com"]),
+        ("Muelleräerika@example.com", ["erika@example.com"]),
+        ("erika@example.com.", ["erika@example.com"]),
+        ("Mail erika.mustermann@example.com, danke", ["erika.mustermann@example.com"]),
+    ]:
+        assert [v for _s, _e, v in identifiers.find_emails(text)] == expected, text
+    # Two addresses run together are still covered whole, both of them.
+    spans = identifiers.find_emails("abcdef1234@example.comabcdef1234@example.com")
+    covered = set()
+    for start, end, _v in spans:
+        covered.update(range(start, end))
+    assert covered == set(range(44)), sorted(set(range(44)) - covered)
