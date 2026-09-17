@@ -244,16 +244,29 @@ def test_a_person_still_signs_a_letter():
 # produced 75% character loss, and it belongs to the owner.
 #
 #     probe                            FP spans / 20 clean   recall
-#     baseline (shipped)                               0     5/21  (24%)
+#     baseline                                         0     5/21  (24%)
 #     A  label + colon                                 0     8/21  (38%)
 #     B  a line that is only a name                   17     8/21  (38%)
 #     C  speaker attribution "Name:"                   1     8/21  (38%)
 #     D  table cell "| Name |"                         0     7/21  (33%)
 #     E  any two capitalised words                    36    13/21  (62%)
 #
-# A and D cost nothing measurable and are the obvious candidates. E is the rule
-# that was removed this programme; its 36 false-positive spans on twenty clean
-# documents is what 75% character loss looks like from the other end.
+# A and D were approved on that zero. IT DID NOT SURVIVE A WIDER CORPUS. Re-run
+# over 42 documents, 22 of them written to break these two probes specifically:
+#
+#     A, unnarrowed                                   10 FP spans
+#     D, unnarrowed                                   28 FP spans
+#
+# A claimed "Zentrale Verwaltung", "Alle Mitarbeiter", "Verteiler Technik",
+# "Zentrale Hotline", "Noch" and "Unbesetzt"; D claimed every product, city,
+# department and status in a table. A label and a colon are evidence that a
+# VALUE follows, and a pipe is evidence that a CELL follows - neither is
+# evidence of a person. Narrowed (see names.py), both are back to zero over all
+# 42 documents, and recall is 11/21.
+#
+# B, C and E are NOT shipped. E is the rule this programme removed; its 36
+# false-positive spans on twenty clean documents is what 75% character loss
+# looks like from the other end.
 #
 # THE HONEST MECHANISM, asked for directly: a positive given-name list cannot
 # work. It is unbounded and multilingual - "Aleksandra Nowakowska",
@@ -268,7 +281,7 @@ def test_a_person_still_signs_a_letter():
 # assumption this package does not currently have. It is the right next step
 # and it is not a small one.
 
-INDEPENDENT_RECALL = 5
+INDEPENDENT_RECALL = 11
 INDEPENDENT_TOTAL = 21
 
 
@@ -314,3 +327,121 @@ def test_a_non_german_full_name_in_prose_is_invisible():
             f"{text!r} is now found - if the given-name list was widened, that "
             "is the unbounded-list approach the measurements rejected"
         )
+
+
+# ---------------------------------------------------------------------------
+# Probes A and D: shipped, narrowed, separable
+# ---------------------------------------------------------------------------
+
+def test_no_name_is_claimed_in_documents_written_to_break_the_probes(scanner):
+    """The zero the owner approved, re-measured on a corpus built to break it.
+
+    Twenty-two documents of `Label: Value` lines whose values are subjects,
+    statuses, places, departments and company names, and tables whose cells
+    hold products, cities, departments, statuses and part numbers. The
+    unnarrowed probes scored 10 and 28 false-positive spans here.
+    """
+    from corpora_german import CLEAN_ADVERSARIAL
+
+    offenders = []
+    for text in CLEAN_ADVERSARIAL:
+        chars, spans = _name_chars(text, scanner)
+        if spans:
+            from privacy_shield.names import find_names_by_probe
+
+            blame = {
+                probe: [value for _s, _e, value in claimed]
+                for probe, claimed in find_names_by_probe(text).items()
+                if claimed
+            }
+            offenders.append((text[:40], blame or "core rules"))
+    assert not offenders, offenders
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Lieferant: Nordstern GmbH",
+        "Auftraggeber: Beispiel AG",
+        "Verein: Foerderverein Technik e.V.",
+        "Hersteller: Muster Maschinenbau GmbH & Co. KG",
+        "Von: Zentrale Verwaltung",
+        "An: Alle Mitarbeiter",
+        "CC: Verteiler Technik",
+        "Kontakt: Zentrale Hotline",
+        "Ansprechpartner: Noch offen",
+        "Sachbearbeiter: Unbesetzt",
+        "Bearbeiter: Automatische Zuweisung",
+        "Betreff: Rahmenvertrag",
+        "Status: Offen",
+        "Ort: Duesseldorf",
+    ],
+)
+def test_a_value_after_a_label_is_not_automatically_a_person(line, scanner):
+    """A company name after a label is the shape the rule most wants."""
+    claimed = [
+        f.value for f in scanner.scan(line).findings if f.pii_type is PIIType.NAME
+    ]
+    assert not claimed, claimed
+
+
+@pytest.mark.parametrize(
+    "label, value",
+    [
+        ("Sachbearbeiter", "Osterloh"),
+        ("Bearbeiter", "Timo Osterloh"),
+        ("Ansprechpartnerin", "Julia Neumann"),
+        ("Von", "Petra Ullrich"),
+        ("An", "Bernd Kowalczyk"),
+        ("Im Auftrag von", "Ruth Ebersbach"),
+    ],
+)
+def test_a_person_after_a_person_role_label_is_found(label, value, scanner):
+    text = f"{label}: {value}\n"
+    claimed = [
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    ]
+    assert claimed == [value], claimed
+
+
+def test_a_comma_separated_contact_list_claims_each_name(scanner):
+    text = "CC: Ingo Thelen, Marlies Domke\n"
+    claimed = sorted(
+        f.value for f in scanner.scan(text).findings if f.pii_type is PIIType.NAME
+    )
+    assert claimed == ["Ingo Thelen", "Marlies Domke"], claimed
+
+
+def test_a_table_cell_is_a_name_only_under_a_person_column():
+    """The header carries the evidence.
+
+    "| Osterloh |" and "| Dichtungsring |" are the same shape. The difference
+    is that one sits under "Bearbeiter" and the other under "Produkt".
+    """
+    from privacy_shield.names import find_names_by_probe
+
+    people = (
+        "| Position | Bearbeiter | Status |\n"
+        "| 10       | Osterloh   | offen  |\n"
+        "| 20       | Domke      | fertig |\n"
+    )
+    products = (
+        "| Produkt       | Menge | Status |\n"
+        "| Dichtungsring | 200   | Offen  |\n"
+    )
+    assert [v for _s, _e, v in find_names_by_probe(people)["table"]] == [
+        "Osterloh",
+        "Domke",
+    ]
+    assert find_names_by_probe(products)["table"] == []
+
+
+def test_the_probes_are_separable_and_named():
+    """The owner can drop one without touching the other, and a regression
+    reports which one caused it."""
+    from privacy_shield.names import PROBES, find_names_by_probe
+
+    assert set(PROBES) == {"label", "table"}
+    blame = find_names_by_probe("Sachbearbeiter: Osterloh\n")
+    assert [v for _s, _e, v in blame["label"]] == ["Osterloh"]
+    assert blame["table"] == []

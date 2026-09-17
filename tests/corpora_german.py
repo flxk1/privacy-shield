@@ -238,3 +238,87 @@ INDEPENDENT_MARKED = [
 ]
 
 INDEPENDENT = _build(INDEPENDENT_MARKED)
+
+
+# ---------------------------------------------------------------------------
+# ADVERSARIAL-CLEAN: documents containing NO personal data, written to break
+# probe A (a label followed by a colon) and probe D (a table cell) in
+# particular. The zero these two probes were approved on was measured over
+# twenty documents that were not trying to break them.
+#
+# For A: every "Label: Value" shape ordinary business text produces where the
+# value is not a person - subjects, statuses, places, departments, and above
+# all COMPANY NAMES, which have exactly the shape the rule wants.
+# For D: tables whose cells hold products, cities, departments, statuses, part
+# numbers and multi-word headings.
+# ---------------------------------------------------------------------------
+
+CLEAN_ADVERSARIAL = [
+    "Betreff: Rahmenvertrag\nStatus: Offen\nPrioritaet: Hoch",
+
+    "Abteilung: Vertrieb\nOrt: Duesseldorf\nKostenstelle: 65000",
+
+    "Lieferant: Nordstern GmbH\nBestellnummer: 4400218836\nStatus: Geliefert",
+
+    "Betreff: Kuendigung Mustermann-Vertrag\nFrist: 30.06.2026",
+
+    "Auftraggeber: Beispiel AG\nAuftragnehmer: Probe Technik GmbH\n"
+    "Vertragsart: Werkvertrag",
+
+    "Von: Zentrale Verwaltung\nAn: Alle Mitarbeiter\nCC: Verteiler Technik\n"
+    "Betreff: Neue Ablagestruktur",
+
+    "Kontakt: Zentrale Hotline\nTelefonzeiten: Montag bis Freitag\n"
+    "Sprache: Deutsch",
+
+    "Ansprechpartner: Noch offen\nSachbearbeiter: Unbesetzt\n"
+    "Bearbeiter: Automatische Zuweisung",
+
+    "Teilnehmer: Alle Abteilungsleiter\nOrt: Grosser Besprechungsraum\n"
+    "Beginn: Neun Uhr",
+
+    "Im Auftrag von: Geschaeftsfuehrung\nRueckfragen an: Kundendienst Nord\n"
+    "Gueltig ab: Sofort",
+
+    "Gegenstand: Wartung Pruefstand\nHersteller: Muster Maschinenbau GmbH & Co. KG\n"
+    "Baujahr: 2019",
+
+    "Projekt: Neue Halle\nBauherr: Beispiel Immobilien AG\n"
+    "Architekt: Planungsbuero Nord\nStatus: In Ausfuehrung",
+
+    "Verein: Foerderverein Technik e.V.\nZweck: Ausbildung\n"
+    "Sitz: Musterhausen",
+
+    "| Produkt          | Menge | Status   |\n"
+    "| Dichtungsring    | 200   | Offen    |\n"
+    "| Schraubensatz    | 50    | Geliefert|",
+
+    "| Standort         | Halle | Zustand  |\n"
+    "| Duesseldorf Nord | 2     | Gut      |\n"
+    "| Muenchen Sued    | 4     | Wartung  |",
+
+    "| Abteilung        | Anzahl| Budget   |\n"
+    "| Vertrieb Inland  | 12    | 400000   |\n"
+    "| Technik Service  | 8     | 250000   |",
+
+    "| Lieferant        | Frist | Status   |\n"
+    "| Nordstern GmbH   | 14    | Offen    |\n"
+    "| Beispiel AG      | 30    | Bestaetigt|",
+
+    "| Artikelnummer    | Bezeichnung        | Lager |\n"
+    "| 4029764001807    | Lange Schraube     | 120   |\n"
+    "| 4006381333931    | Kurze Mutter       | 340   |",
+
+    "| Position | Gegenstand           | Preis   |\n"
+    "| 10       | Wartung Pruefstand   | 1349,00 |\n"
+    "| 20       | Ersatzteil Dichtung  | 89,50   |",
+
+    "Pruefbericht\n\nGegenstand: Jahrespruefung\nErgebnis: Ohne Befund\n"
+    "Naechste Pruefung: Maerz 2027\nPruefstelle: Technische Ueberwachung",
+
+    "Ausschreibung\n\nVergabestelle: Stadt Musterhausen\n"
+    "Leistung: Reinigung Verwaltungsgebaeude\nLos: Zwei\nFrist: 14.05.2026",
+
+    "Stoerungsmeldung\n\nAnlage: Foerderband Drei\nFehlercode: E 4711\n"
+    "Schicht: Frueh\nStatus: Behoben\nDauer: Zwei Stunden",
+]

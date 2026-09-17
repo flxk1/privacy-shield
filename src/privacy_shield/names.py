@@ -212,5 +212,167 @@ def find_names(text: str) -> List[Span]:
             continue
         _claim(spans, word.start(), end, text)
 
+    # Probes A and D, last so the evidence-stronger rules above win any
+    # overlap. See PROBES below.
+    for probe in PROBES.values():
+        for start, end, _value in probe(text):
+            _claim(spans, start, end, text)
+
     spans.sort(key=lambda span: span[0])
     return spans
+
+# ---------------------------------------------------------------------------
+# Probes A and D. Separable by construction: each is one function in PROBES
+# below, and find_names_by_probe() reports which one claimed what, so a
+# regression names its cause and either can be dropped without touching the
+# other.
+# ---------------------------------------------------------------------------
+
+#: Labels whose value IS a person, always. "Sachbearbeiter" means a case
+#: worker; there is no non-person answer to it.
+PERSON_ROLE_LABELS = frozenset("""
+Sachbearbeiter Sachbearbeiterin Bearbeiter Bearbeiterin Ansprechpartner
+Ansprechpartnerin Berater Beraterin Betreuer Betreuerin Pruefer Prueferin
+Prüfer Prüferin Verfasser Verfasserin Unterzeichner Unterzeichnerin
+Antragsteller Antragstellerin Zeichnungsberechtigt Zeichnungsberechtigte
+Vorgesetzter Vorgesetzte Erfasser Erfasserin
+""".split())
+
+#: Labels whose value is USUALLY a person but may be a list or a department.
+#: These carry less evidence, so a value after them is held to the same test.
+CONTACT_LABELS = frozenset("""
+Von An CC Cc Kontakt Teilnehmer Anwesend Verteiler
+""".split())
+
+#: Multi-word labels, matched before the single words above.
+PHRASE_LABELS = ("Rueckfragen an", "Rückfragen an", "Im Auftrag von", "i. A.")
+
+#: Legal forms. A value carrying one of these is an organisation, whatever its
+#: shape - and "Nordstern GmbH" has exactly the shape the rule wants.
+LEGAL_FORMS = frozenset("""
+GmbH mbH AG KG OHG GbR UG SE KGaA eG e.V. eV gGmbH Co Ltd Inc SA SARL BV NV
+Stiftung Verein Genossenschaft
+""".split())
+
+#: Collective and placeholder words that stand where a person's name would.
+#: BOUNDED and position-specific - it applies only to a value after a label,
+#: and it is about thirty words. It is NOT the stoplist inversion, which is a
+#: general frequency list over all prose and is a separate piece of work.
+NON_PERSON_VALUES = frozenset("""
+Alle Mitarbeiter Mitarbeiterinnen Beschaeftigte Beschäftigte Kollegen Kolleginnen
+Verteiler Hotline Noch Unbesetzt Automatische Zuweisung Abteilungsleiter
+Abteilungsleiterin Offen Keine Keiner Niemand Intern Extern Unbekannt
+Ausstehend Entfaellt Entfällt Nicht Vakant Nachtrag Siehe Diverse Verschiedene
+Interessenten Kunden Lieferanten Gaeste Gäste Anwesende Personalrat Betriebsrat
+""".split())
+
+_LABEL_LINE = re.compile(
+    rf"^[ \t]*(?P<label>[A-ZÄÖÜ][A-Za-zÄÖÜäöüß. ]{{1,24}}?)[ \t]*:[ \t]*(?P<value>.+?)[ \t]*$",
+    re.MULTILINE,
+)
+
+_VALUE_NAME = re.compile(rf"^(?:{_TITLE}[ \t]+)*({_WORD}(?:[ \t]+{_WORD}){{0,2}})$")
+
+
+def _label_is_a_person_role(label: str) -> bool:
+    cleaned = label.strip().rstrip(".")
+    if cleaned in PERSON_ROLE_LABELS or cleaned in CONTACT_LABELS:
+        return True
+    return any(cleaned.lower() == phrase.lower() for phrase in PHRASE_LABELS)
+
+
+def value_is_a_person(value: str) -> bool:
+    """THE RULE, in one sentence.
+
+    A value after a person-role label is a name only if it is one to three
+    capitalised words, carries no legal-form suffix, and contains no
+    organisational or collective word.
+
+    A label and a colon are evidence that a VALUE follows, not that the value
+    is a person: measured against twenty-two documents written to break it,
+    the unnarrowed probe claimed "Zentrale Verwaltung", "Alle Mitarbeiter",
+    "Verteiler Technik", "Zentrale Hotline", "Noch" and "Unbesetzt".
+    """
+    match = _VALUE_NAME.match(value.strip())
+    if not match:
+        return False
+    words = match.group(1).split()
+    if any(word in LEGAL_FORMS for word in words):
+        return False
+    if any(word in ORGANISATIONAL for word in words):
+        return False
+    if any(word in NON_PERSON_VALUES for word in words):
+        return False
+    return True
+
+
+def _label_names(text: str) -> List[Span]:
+    """Probe A - a label that names a person's role, then a colon."""
+    spans: List[Span] = []
+    for match in _LABEL_LINE.finditer(text):
+        if not _label_is_a_person_role(match.group("label")):
+            continue
+        value_start = match.start("value")
+        # A contact label may carry a comma-separated list.
+        offset = 0
+        for part in match.group("value").split(","):
+            stripped = part.strip()
+            if stripped and value_is_a_person(stripped):
+                begin = value_start + offset + part.index(stripped)
+                spans.append((begin, begin + len(stripped), stripped))
+            offset += len(part) + 1
+    return spans
+
+
+_TABLE_ROW = re.compile(r"^[ \t]*\|(?P<body>.+)\|[ \t]*$", re.MULTILINE)
+
+
+def _table_names(text: str) -> List[Span]:
+    """Probe D - a table cell whose COLUMN is a person column.
+
+    The header is what carries the evidence. "| Osterloh |" and
+    "| Dichtungsring |" are the same shape; the difference is that one sits
+    under "Bearbeiter" and the other under "Produkt".
+    """
+    spans: List[Span] = []
+    person_columns: set = set()
+    seen_header = False
+    for row in _TABLE_ROW.finditer(text):
+        body = row.group("body")
+        cells = body.split("|")
+        starts = []
+        position = row.start("body")
+        for cell in cells:
+            starts.append(position)
+            position += len(cell) + 1
+
+        if not seen_header:
+            for index, cell in enumerate(cells):
+                if _label_is_a_person_role(cell.strip()):
+                    person_columns.add(index)
+            seen_header = True
+            continue
+
+        for index in person_columns:
+            if index >= len(cells):
+                continue
+            cell = cells[index]
+            stripped = cell.strip()
+            if stripped and value_is_a_person(stripped):
+                begin = starts[index] + cell.index(stripped)
+                spans.append((begin, begin + len(stripped), stripped))
+    return spans
+
+
+#: Named and separable, so a regression reports which probe caused it and the
+#: owner can drop one without touching the other.
+PROBES = {
+    "label": _label_names,
+    "table": _table_names,
+}
+
+
+def find_names_by_probe(text: str) -> "dict[str, List[Span]]":
+    """What each probe claims, for diagnosis and for the precision tests."""
+    return {name: probe(text) for name, probe in PROBES.items()}
+

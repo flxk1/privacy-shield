@@ -74,8 +74,28 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   known given name says a person is being named. Measured on a development and
   a held-out corpus: false positives on clean documents went 73/48 spans to
   **0**, precision 24%/25% to **100%**, recall 86%/89% to **100%**.
+  **Positions the name layer COVERS**, by name, because this is the list the
+  release is shipping on: a salutation (`Sehr geehrte Frau Schneider`); after a
+  title or address form (`Herr Dr. Baumann`, `von Herrn Stefan Braun`); the
+  first name-shaped line after a closing formula; an addressee block above a
+  street or postcode or below a bare `An`; a known German given name followed
+  by a surname in running prose; a value after a label that names a person's
+  role (`Sachbearbeiter:`, `Von:`, `An:`, `CC:`, `Im Auftrag von:`), including
+  comma-separated lists; and a table cell whose column header names a person's
+  role.
+
+  **Positions it does NOT cover**, also by name: a bare surname in running
+  prose with nothing around it; a speaker attribution (`Ebersbach: Der Termin
+  …`); a line that is only a name outside a signature or address block (a bare
+  participant list); a footnote citation (`Vgl. Kowalczyk, Gutachten …`); a
+  bare given name on its own; and **any full name whose given name is not in
+  the German given-name list** — `Aleksandra Nowakowska`, `Mateusz Wisniewski`
+  and `Yuki Tanaka` are invisible in running prose. The speaker-attribution and
+  name-only-line positions were measured and deliberately not shipped: they
+  cost 1 and 17 false-positive spans on clean documents respectively.
+
   **The cost, re-measured against document classes specified from outside this
-  work:** recall is **5 of 21** name occurrences (24%) on correspondence that is
+  work:** recall is **11 of 21** name occurrences (52%) on correspondence that is
   not a formal letter — nothing after a colon, in a CC list, in an e-mail body
   without a title, in a footnote, in minutes, in a table cell or in a subject
   line, and **nothing for a non-German full name in prose**, because the rule is
@@ -85,10 +105,42 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   What each additional position would cost in precision is measured in that
   file's comment; none of it is shipped, because widening this rule is what
   produced 75% character loss and the choice belongs to the owner.
-  The tractable mechanism is the inverse of a name list — claim a capitalised
-  word pair unless its words are ordinary vocabulary, using a frequency list as
-  a stoplist. That is a data dependency and a per-language assumption this
-  package does not have today.
+### The stoplist inversion — analysis for the next round, not shipped
+
+A positive given-name list cannot close the gap above: it is unbounded and
+multilingual, and no list of names is ever finished. The tractable form is the
+inverse — claim a capitalised word pair *unless* its words are ordinary
+vocabulary. `Ihr Schreiben` and `Interne Mitteilung` are in a dictionary;
+`Nowakowska` is not, in any dictionary but Polish. Written down here so the
+next round starts from this rather than rediscovering it:
+
+- **Which list.** A German lemma-and-inflection frequency list, not a lemma
+  list alone — German inflects, and `Schreibens` must match as readily as
+  `Schreiben`. The DeReWo full-form frequency lists (IDS Mannheim, CC-BY-NC) or
+  a Wiktionary-derived full-form list (CC-BY-SA) are the realistic candidates;
+  licence matters here, because this package is Apache-2.0 and NC terms are not
+  compatible with it.
+- **What size.** Coverage of German business prose flattens around the top
+  100k–200k full forms; below ~50k the tail of compounds starts leaking
+  through as false names. Compressed, that is roughly 1–3 MB — an order of
+  magnitude more than everything this package currently ships.
+- **What it costs to ship.** A data file of that size cannot go in the wheel
+  without changing what the package is; it needs an optional extra, a download
+  step or a system dictionary, and each of those breaks the current property
+  that the regex floor works with zero dependencies. That property is worth
+  more than the recall, so the stoplist has to be optional and the floor has to
+  stay correct without it.
+- **How it degrades.** Badly on compound nouns, which German coins freely:
+  `Foerderbandsteuerung` will not be in any list and reads as a surname.
+  Badly on loanwords and product names (`Dockingstation`, `Nordstern`). And it
+  is one list per language, so a document in a language with no list loaded
+  degrades to the current behaviour rather than to nothing — which is the
+  right failure direction, but means the gap above persists per-language.
+- **What it does not fix.** A bare surname in prose is still ambiguous with a
+  capitalised noun the list happens to be missing; the inversion raises recall
+  and moves the false positives from "every capitalised pair" to "every
+  capitalised pair the dictionary does not know", which is much smaller but not
+  zero. It needs the same clean-corpus measurement before shipping.
 - **The layout bound has a cliff at about eighty characters of gap.** An
   identifier whose groups are spaced further apart than that is not found.
   Sweeping the bound from 4x to 1000x the identifier length does not change the
@@ -149,10 +201,10 @@ pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-862 passed, 8 failed
+886 passed, 8 failed
 ```
 
-870 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+894 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -160,7 +212,7 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 862 passed, 8 deselected.
+`tests` job runs 886 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
 `tests/test_leak_invariant.py`, 372 tests including a 300-document generated
