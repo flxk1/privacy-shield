@@ -77,7 +77,7 @@ wraps this for agents: package/CLI needs nothing else; MCP requires
 
 ## Status
 
-2.0.0 · 801 tests, 793 passing · Python >=3.10 · limits and gaps:
+2.0.0 · 870 tests, 862 passing · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License

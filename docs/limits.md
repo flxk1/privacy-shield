@@ -41,9 +41,11 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   written with a hyphen and a space, so it is redacted.
 - **What counts as one identifier, in one sentence:** *a candidate is any
   maximal sequence of ASCII alphanumerics joined by runs of characters that are
-  not alphanumeric at all and not a line break, spanning at most four times its
-  own length, having no more groups than half that length, and — where it
-  covers three groups or more — no interior group longer than twelve.* Joiners
+  not alphanumeric at all and not a line break, spanning at most sixteen times
+  its own length, with no interior group longer than twelve where it covers
+  three groups or more.* There is deliberately no bound on the NUMBER of
+  groups: one was tried and it refused a letter-spaced form field, which is
+  what `pdftotext` emits and which leaked a whole card number. Joiners
   are defined by exclusion rather than listed, and their WIDTH is unbounded,
   because three successive rules were walked around: the literal `" \t-"`, then
   the Unicode categories `Zs`/`Pd`/`Cf` (which miss `Pc` underscore and `Po`
@@ -72,11 +74,21 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   known given name says a person is being named. Measured on a development and
   a held-out corpus: false positives on clean documents went 73/48 spans to
   **0**, precision 24%/25% to **100%**, recall 86%/89% to **100%**.
-  **The cost:** a bare surname in running prose with nothing around it — "die
-  Pruefung durch Weber ergab" — is NOT found. That is a real privacy cost,
-  it is deliberate, and it is asserted in
-  `tests/test_name_layer_precision.py::test_the_recall_this_buys_the_precision_with`
-  so it cannot drift unnoticed in either direction.
+  **The cost, re-measured against document classes specified from outside this
+  work:** recall is **5 of 21** name occurrences (24%) on correspondence that is
+  not a formal letter — nothing after a colon, in a CC list, in an e-mail body
+  without a title, in a footnote, in minutes, in a table cell or in a subject
+  line, and **nothing for a non-German full name in prose**, because the rule is
+  gated on a German given-name list. The earlier claim that the cost was "a bare
+  surname in running prose" named a corner; this is the class. Pinned by
+  `tests/test_name_layer_precision.py::test_the_measured_recall_on_correspondence_that_is_not_a_formal_letter`.
+  What each additional position would cost in precision is measured in that
+  file's comment; none of it is shipped, because widening this rule is what
+  produced 75% character loss and the choice belongs to the owner.
+  The tractable mechanism is the inverse of a name list — claim a capitalised
+  word pair unless its words are ordinary vocabulary, using a frequency list as
+  a stoplist. That is a data dependency and a per-language assumption this
+  package does not have today.
 - **The layout bound has a cliff at about eighty characters of gap.** An
   identifier whose groups are spaced further apart than that is not found.
   Sweeping the bound from 4x to 1000x the identifier length does not change the
@@ -137,10 +149,10 @@ pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-793 passed, 8 failed
+862 passed, 8 failed
 ```
 
-801 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+870 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -148,16 +160,16 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 793 passed, 8 deselected.
+`tests` job runs 862 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 325 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 372 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
 
-**What the gate costs: about 3.6 seconds**, with every extra installed as
-CI now installs them. Measured with `--durations`: 3.6s total, of which the
-property run is 0.9s and each 300-document battery is 0.2s. Its oracle is deliberately quadratic — every subsequence of alphanumerics
+**What the gate costs: about 3 seconds**, with every extra installed as
+CI now installs them. Measured with `--durations`: 3.0s total, of which the
+property run is 0.7s and each 300-document battery is 0.25s. Its oracle is deliberately quadratic — every subsequence of alphanumerics
 within 136 characters of each position — and that is still cheap, because the
 documents are short.
 

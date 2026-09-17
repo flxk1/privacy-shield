@@ -1334,3 +1334,54 @@ def test_two_phone_numbers_run_together_with_labels():
     document = scan(text).documents[0]
     assert "1234567" not in document.overlay, document.overlay
     assert "9876543" not in document.overlay, document.overlay
+
+
+# ---------------------------------------------------------------------------
+# Every counterexample the property has ever found, committed
+# ---------------------------------------------------------------------------
+#
+# A property test whose evidence lives in `.hypothesis/` is not a gate. That
+# directory is generated and gitignored, so a counterexample found on one
+# machine is replayed there for ever and never seen anywhere else: CI starts
+# with an empty database, searches a different part of the space, and goes
+# green on a case that is reproducibly failing on someone's laptop. That is
+# exactly what happened - `DE89370400440532013000+49 170 1234567Ref ` failed
+# under a stored database and passed 6 runs out of 6 with a fresh one.
+#
+# So each of these is a committed case with a name, and the property below
+# keeps searching beside them rather than instead of them. A counterexample
+# that is not written down here has not been fixed; it has been cached.
+
+PROPERTY_COUNTEREXAMPLES = [
+    pytest.param(
+        "DE89370400440532013000+49 170 1234567Ref ",
+        id="iban_then_phone_then_letters",
+    ),
+    pytest.param(
+        "Art. 6 DSGVO4111 1111 1111 1111Ref ",
+        id="card_glued_on_both_sides_and_spaced",
+    ),
+    pytest.param(
+        "UUID 550e8400-e29b-41d4-a716-446655440000 7",
+        id="uuid_tail_plus_next_token",
+    ),
+    pytest.param(
+        "abcdef1234@example.comabcdef1234@example.com",
+        id="two_addresses_run_together",
+    ),
+    pytest.param(
+        "UUID 550e8400-e29b-41d4-a716-446655440000"
+        "UUID 550e8400-e29b-41d4-a716-446655440000",
+        id="two_identical_uuids",
+    ),
+    pytest.param(
+        "3\te1,e@6CF3D198ee,0_1f-\xa01C-dB\tD08 43\xa04111111111111111Konto=20",
+        id="single_letter_finding_and_placeholder_collision",
+    ),
+]
+
+
+@pytest.mark.parametrize("text", PROPERTY_COUNTEREXAMPLES)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_property_counterexamples_stay_fixed(text, mode):
+    assert_no_leak(text, mode=mode)

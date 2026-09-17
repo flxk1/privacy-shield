@@ -192,3 +192,49 @@ def _build(marked_documents):
 
 NAMED_DEV = _build(NAMED_DEV_MARKED)
 NAMED_HELD_OUT = _build(NAMED_HELD_OUT_MARKED)
+
+
+# ---------------------------------------------------------------------------
+# INDEPENDENT: document classes and name positions specified from OUTSIDE this
+# work, after a 20% recall measurement on a corpus nobody here wrote.
+#
+# The positions are the ones that were reported invisible: after a colon, in a
+# CC list, in an e-mail body with no title, in a footnote, in minutes with
+# speaker attributions, in a table cell, in a subject line, and non-German full
+# names in running prose. My own corpora are formal letters, which is the shape
+# my rule was built around - they were held out from my eyes, not from my
+# assumptions.
+# ---------------------------------------------------------------------------
+
+INDEPENDENT_MARKED = [
+    "Sachbearbeiter: «Osterloh»\nVorgang: 2026-4471",
+
+    "Von: «Petra Ullrich»\nAn: «Bernd Kowalczyk»\nCC: «Ingo Thelen», "
+    "«Marlies Domke»\nBetreff: Nachfrage Liefertermin",
+
+    "Hallo «Ruth Ebersbach»,\n\ndie Unterlagen sind raus. Melde dich, wenn "
+    "etwas fehlt.\n\nGruss\n«Timo»",
+
+    "Betreff: Uebergabe an «Aleksandra Nowakowska»\n\nDie Zustaendigkeit "
+    "wechselt zum Monatsende.",
+
+    "Protokoll\n\n«Wisniewski»: Der Termin ist nicht zu halten.\n"
+    "«Tanaka»: Wir liefern die Zahlen nach.\n«Ebersbach»: Einverstanden.",
+
+    "Die Auswertung stammt von «Mateusz Wisniewski» und wurde von "
+    "«Yuki Tanaka» geprueft.",
+
+    "| Position | Bearbeiter        | Status |\n"
+    "| 10       | «Osterloh»        | offen  |\n"
+    "| 20       | «Domke»           | fertig |",
+
+    "Fussnote 3: Vgl. «Kowalczyk», Gutachten vom 04.02.2026, S. 17.",
+
+    "Teilnehmerliste\n«Ingo Thelen»\n«Marlies Domke»\n«Petra Ullrich»",
+
+    "Im Auftrag von «Ruth Ebersbach» teile ich Ihnen den neuen Termin mit.",
+
+    "Rueckfragen an: «Timo Osterloh», Durchwahl 4471.",
+]
+
+INDEPENDENT = _build(INDEPENDENT_MARKED)

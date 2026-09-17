@@ -22,10 +22,33 @@ import pytest
 
 from privacy_shield.identifiers import IBAN_LENGTHS
 
-schwifty_registry = pytest.importorskip(
-    "schwifty.registry",
-    reason="schwifty is not installed, so the IBAN registry is UNVERIFIED "
-    "against any external source in this run - install the dev extra",
+try:
+    from schwifty import registry as schwifty_registry
+except ImportError:  # pragma: no cover - the loud branch
+    schwifty_registry = None
+
+
+def test_the_external_source_is_actually_present():
+    """A quiet skip is not "says so loudly".
+
+    `importorskip` made the whole module vanish when schwifty was absent, so a
+    run with no external check reported the same green as a run with one - the
+    exact shape this programme keeps finding. schwifty is in the dev extra and
+    both CI jobs install it, so its absence is a broken environment and fails.
+    """
+    assert schwifty_registry is not None, (
+        "schwifty is not installed, so the IBAN country/length table is "
+        "UNVERIFIED against any external source in this run. It is in the dev "
+        "extra; install it. Nothing inside this package can notice that table "
+        "going stale."
+    )
+
+
+#: Applied to the checks themselves, NOT to the module: a module-level skip
+#: would take the test above with it and restore the silence.
+needs_external = pytest.mark.skipif(
+    schwifty_registry is None,
+    reason="reported as a failure by test_the_external_source_is_actually_present",
 )
 
 
@@ -43,6 +66,7 @@ def _external_registry() -> dict[str, int]:
     return lengths
 
 
+@needs_external
 def test_the_registry_has_not_gone_stale():
     external = _external_registry()
     assert external, "the external registry produced nothing; check the API"
