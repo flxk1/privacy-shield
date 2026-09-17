@@ -138,7 +138,7 @@ MAX_SPAN_MULTIPLE = 4
 #: because only the interior is never clipped by the candidate's own edges.
 #:
 #: A candidate with fewer than three groups has no interior and is unbounded.
-MAX_INTERIOR_GROUP = 6
+MAX_INTERIOR_GROUP = 12
 
 
 def _is_transparent(char: str) -> bool:
@@ -263,30 +263,6 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
         yield "".join(compact), offsets
 
 
-def _previous_visible(text: str, position: int) -> str:
-    index = position - 1
-    while index >= 0 and _is_transparent(text[index]):
-        index -= 1
-    return text[index] if index >= 0 else ""
-
-
-def _next_visible(text: str, position: int) -> str:
-    index = position + 1
-    while index < len(text) and _is_transparent(text[index]):
-        index += 1
-    return text[index] if index < len(text) else ""
-
-
-def _starts_a_group(text: str, position: int) -> bool:
-    previous = _previous_visible(text, position)
-    return previous == "" or not previous.isalnum()
-
-
-def _ends_a_group(text: str, position: int) -> bool:
-    following = _next_visible(text, position)
-    return following == "" or not following.isalnum()
-
-
 def _within_layout_bounds(
     text: str, offsets: List[int], start: int, size: int
 ) -> bool:
@@ -332,20 +308,16 @@ def _within_layout_bounds(
     if len(groups) > (size // 2) + 1:
         return False
 
-    if not all(group <= MAX_INTERIOR_GROUP for group in groups[1:-1]):
-        return False
-
-    # ...and it must touch a real edge. A grouped identifier is anchored to the
-    # document at least at one end - it either begins where a group begins or
-    # ends where one ends. A Luhn window cut out of a LIST of numbers floats
-    # free at both ends, clipped on the left and on the right by nothing but
-    # its own length: "11 2299 3344 556" is the middle of four other numbers.
-    # Requiring both edges would refuse the case this detector exists for, a
-    # glued prefix on a spaced number, whose left edge is mid-group by
-    # definition.
-    return _starts_a_group(text, offsets[start]) or _ends_a_group(
-        text, offsets[start + size - 1]
-    )
+    # No condition on the EDGES. Requiring at least one of them to sit on a
+    # group boundary was tried and is wrong: text glued to BOTH ends of a
+    # spaced number clips both edges, and
+    # "Art. 6 DSGVO4111 1111 1111 1111Ref " then egressed the card whole. The
+    # brute-force oracle caught it, which is the whole reason it has no run
+    # rule of its own. The cost of dropping the condition is one more
+    # false positive on the realistic corpus, a window assembled across a
+    # single separator out of two adjacent numbers in a list - a trade that
+    # goes the safe way.
+    return all(group <= MAX_INTERIOR_GROUP for group in groups[1:-1])
 
 
 def _iban_spans_in_run(text: str, compact: str, offsets: List[int]) -> List[Span]:

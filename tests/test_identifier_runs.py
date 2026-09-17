@@ -67,7 +67,7 @@ CLEAN_BUSINESS_CORPUS = [
 #: as well would mean requiring both edges of a candidate to sit on a group
 #: boundary, and that refuses a glued prefix on a spaced number, which is the
 #: leak this detector exists for. Fail-closed wins; the bill is here.
-CARD_FALSE_POSITIVE_BUDGET = 7
+CARD_FALSE_POSITIVE_BUDGET = 8
 
 #: Zero. The ISO 13616 country/length constraint is what buys this: mod-97 over
 #: unconstrained lengths fired on ordinary German prose ("Wareneingang 20260512
@@ -388,3 +388,58 @@ def test_the_layout_bounds_reject_assembled_prose():
     )
     assert identifiers.find_cards("3782 822463 10005")  # Amex 4-6-5
     assert identifiers.find_cards(EXAMPLE_CARD)         # solid
+
+
+def test_a_claimed_address_is_never_shorter_than_the_longest_valid_one():
+    """The claimed span must reach the end of the TLD, not stop one short.
+
+    Reported as leaving a trailing letter on long local parts. It could not be
+    reproduced - not over four thousand generated addresses here, nor
+    end-to-end with an adjacent name - so this pins the property rather than a
+    repair, and will fail if a shape that does it ever turns up.
+
+    The comparison is against a brute-force search that tries every substring
+    around the "@", so it shares nothing with the expansion under test.
+    """
+    rng = random.Random(3)
+    alphabet = "abcdefghijkmnopqrstuvwxyz0123456789._%+-"
+    shortfalls = []
+    for _ in range(2000):
+        local = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 20)))
+        domain = "".join(
+            rng.choice("abcdefghijkmnopqrstuvwxyz0123456789-")
+            for _ in range(rng.randint(1, 12))
+        )
+        tld = "".join(
+            rng.choice("abcdefghijkmnopqrstuvwxyz") for _ in range(rng.randint(2, 6))
+        )
+        prefix = rng.choice(["", "Kontakt: ", "acct_", "7", "x", "Muellerä", "<"])
+        suffix = rng.choice(["", ".", ",", ")", ">", " ende", "-x", ".txt"])
+        text = f"{prefix}{local}@{domain}.{tld}{suffix}"
+
+        claimed = max(
+            (span[2] for span in identifiers.find_emails(text)), key=len, default=""
+        )
+        best = max((c for c, _ in _brute_force_addresses(text)), key=len, default="")
+        if best and len(claimed) < len(best):
+            shortfalls.append((text, best, claimed))
+    assert not shortfalls, shortfalls[:3]
+
+
+def _brute_force_addresses(text):
+    """Every RFC-shaped address, by trying every substring around each "@"."""
+    from privacy_shield.identifiers import RFC_EMAIL
+
+    found = []
+    for at, char in enumerate(text):
+        if char != "@":
+            continue
+        for begin in range(max(0, at - 64), at):
+            for finish in range(min(len(text), at + 255), at + 1, -1):
+                candidate = text[begin:finish]
+                if len(candidate) <= 254 and RFC_EMAIL.match(candidate):
+                    found.append((candidate, candidate))
+                    break
+            if found and found[-1][0].index("@") == at - begin:
+                break
+    return found

@@ -178,6 +178,31 @@ trees — pin the major version.
   - A line break is never a joiner, so an identifier wrapped across two lines
     is a known gap, pinned rather than hidden by
     `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_a_known_gap`.
+  - **Gap WIDTH was the next hole in the same wall.** The rule ended a
+    candidate at the second consecutive joiner, so a `pdftotext` column gap,
+    fixed-width padding, a dot leader and a monospaced table each egressed a
+    whole card number with `pii_detected` False. Any number of consecutive
+    joiners now continues a candidate, and the layout is bounded instead: at
+    most four times the identifier's own length, no more groups than half that
+    length, and no interior group longer than twelve where three or more groups
+    are covered. Tested:
+    `tests/test_leak_invariant.py::test_a_multi_character_gap_does_not_hide_a_card`,
+    `::test_a_multi_character_gap_does_not_hide_an_iban`,
+    `::test_reported_extraction_artefact_shapes`,
+    `::test_mixed_gap_widths_within_one_identifier`.
+  - **The gate could not have caught it.** The oracle was a line-by-line
+    structural copy of the run rule, down to the same `ahead - position == 1`,
+    so for any input whose gap was two characters or more it returned no
+    identifiers and every assertion passed vacuously. The oracle now has no run
+    rule at all: it takes every subsequence of alphanumerics within 136
+    characters of each position and asks the validator, and finds addresses by
+    trying every substring around each `@`. It is quadratic on purpose. The
+    battery's ground-truth net, which compared only the COMPACT identifier and
+    so could not fire on a spaced write either, now checks the form actually
+    written.
+  - Precision after admitting wide gaps: eight card false positives on the
+    realistic corpus (from six) and eight on the hostile one (from three), no
+    IBAN false positives on either.
 - **Identifiers were being redacted by accident, by the wrong detector.** A
   card written with dots matched the phone pattern and one written with slashes
   matched the Unix path pattern, so the overlay read `[PHONE].1111` and

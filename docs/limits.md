@@ -26,24 +26,37 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   the same corpus. A false positive can only consume digits and the joiners
   written inside a number, never prose. Measured by
   `tests/test_identifier_runs.py`.
-  Against fifteen documents written specifically to provoke one — CSV rows,
-  version strings, timestamps, hex dumps, serial numbers — the cost is three
-  card false positives and no IBAN ones. All three are comma- or
-  hyphen-grouped digit blocks that are structurally indistinguishable from a
-  grouped card number satisfying Luhn. Measured by
-  `tests/test_identifier_runs.py::test_precision_under_deliberately_hostile_punctuation`.
+  Admitting gaps wider than one character raised this from six to eight, and
+  the hostile corpus from three to eight. The new shape is a window assembled
+  across ONE separator out of two adjacent numbers in a list. Refusing it needs
+  a condition on the candidate's edges, and every such condition tried refuses
+  a real leak shape instead — text glued to both ends of a spaced number clips
+  both edges, and `Art. 6 DSGVO4111 1111 1111 1111Ref ` then egresses the card
+  whole. Fail-closed wins. Measured by
+  `tests/test_identifier_runs.py::test_precision_under_deliberately_hostile_punctuation`
+  and `::test_card_precision_on_clean_business_text`.
+- **UUID fragments are over-redacted when they satisfy Luhn.** The tail of a
+  UUID plus the first character of the next token can form fifteen Luhn-valid
+  digits, and nothing in the text distinguishes that from a fifteen-digit card
+  written with a hyphen and a space, so it is redacted.
 - **What counts as one identifier, in one sentence:** *a candidate is any
-  maximal sequence of ASCII alphanumerics joined by single characters that are
-  not alphanumeric at all and not a line break, carrying at most one such
-  joiner for every two identifier characters.* Joiners are defined by exclusion
-  rather than listed, because two successive lists were walked around — first
-  the literal `" \t-"`, then the Unicode categories `Zs`/`Pd`/`Cf`, which miss
-  `Pc` (underscore) and `Po` (colon, dot, slash), so `4111_1111_1111_1111` was
-  never offered to Luhn at all. The two-to-one bound is what stops punctuated
-  prose being assembled into a checksum. Tested:
+  maximal sequence of ASCII alphanumerics joined by runs of characters that are
+  not alphanumeric at all and not a line break, spanning at most four times its
+  own length, having no more groups than half that length, and — where it
+  covers three groups or more — no interior group longer than twelve.* Joiners
+  are defined by exclusion rather than listed, and their WIDTH is unbounded,
+  because three successive rules were walked around: the literal `" \t-"`, then
+  the Unicode categories `Zs`/`Pd`/`Cf` (which miss `Pc` underscore and `Po`
+  colon, dot, slash), then a hard limit of one joiner per gap (which a
+  `pdftotext` column gap, fixed-width padding, a dot leader and a monospaced
+  table all defeat). Only the interior groups are bounded, because only they
+  are never clipped by the candidate's own edges and so are whole tokens — four
+  digits in a real layout, thirteen in a list of article numbers. Tested:
   `tests/test_identifier_runs.py::test_every_joiner_category_groups_an_identifier`
   (joiners generated from `unicodedata`, not from a list),
-  `::test_the_joiner_budget_rejects_punctuated_prose`.
+  `::test_the_layout_bounds_reject_assembled_prose`,
+  `tests/test_leak_invariant.py::test_a_multi_character_gap_does_not_hide_a_card`,
+  `::test_reported_extraction_artefact_shapes`.
 - **A line break is never a joiner**, so an identifier wrapped across two lines
   is not claimed. Making it one would glue a document's lines into a single run
   and let a column of figures be assembled into a checksum. A wrapped card is
@@ -90,10 +103,10 @@ pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-683 passed, 8 failed
+751 passed, 8 failed
 ```
 
-691 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+759 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -101,12 +114,23 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 683 passed, 8 deselected.
+`tests` job runs 751 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 234 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 299 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
+
+**What the gate costs: about 3 seconds.** Measured with `--durations`: 2.9s
+total, of which the property run is 0.8s and each 300-document battery is
+0.2s. Its oracle is deliberately quadratic — every subsequence of alphanumerics
+within 136 characters of each position — and that is still cheap, because the
+documents are short.
+
+If it ever appears to hang, delete `.hypothesis/`. A stale example database
+replays previously-failing inputs and re-shrinks them, which turned this same
+2.9s run into several minutes here more than once; that directory is generated,
+is in `.gitignore`, and should never be carried between checkouts.
 
 Every privacy-shield core test file passes: regex-only, embeddings, semantic
 wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
