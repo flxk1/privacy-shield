@@ -2,6 +2,158 @@
 <!-- Copyright 2026 flxk1 -->
 # Changelog
 
+## Unreleased
+
+The name layer becomes per-language: German is main's rules unchanged, English
+is a separate design, and the other twenty-two official EU languages are
+`unmeasured` and say so. No dependency is added. Two of this change's own
+mechanisms were removed again after an ablation showed they bought nothing,
+and four existing libraries were evaluated against the same corpora instead of
+growing more of our own - the evaluation is in `docs/limits.md`.
+
+### Added
+
+- `privacy_shield.name_layer`, a per-language registry. One language is one
+  module registering one `Ruleset`; evidence is per language, exclusions are
+  the union over every registered language. Adding a language cannot widen
+  what another claims. Tested:
+  `tests/test_name_layer_mechanism.py::test_adding_a_language_cannot_widen_what_another_language_claims`,
+  `::test_a_language_is_one_module_and_nothing_imports_another_language`.
+- English rules (`name_layer/en.py`): honorific, salutation without an
+  honorific, signature (one word is enough, unlike German), `Attn`/`FAO`/`c/o`
+  and address block, a table column whose header declares people, and the
+  agency frame (`prepared by`, `reviewed by`, `signed off by`, `contact`,
+  `on behalf of`). Measured on 77 clean English documents: **10
+  false-positive spans, 1.21% character loss**, in three named classes; 24/36
+  on 18 named documents and 8/21 on independent positions. Tested:
+  `tests/test_name_layer_english.py`.
+- `name_layer/detect.py`: language declared by the caller, else detected from
+  closed-class markers, else **every registered ruleset is applied**. No
+  language-identification library, and a wrong guess costs a wider union
+  rather than a missed name. Tested:
+  `tests/test_name_layer_cross_language.py::test_a_document_with_no_marker_from_any_language_gets_every_ruleset`,
+  `::test_a_mixed_language_document_gets_both_languages`,
+  `::test_a_declared_language_with_no_ruleset_does_not_look_like_a_clean_document`.
+- `name_layer/recogniser.py`: the seam a statistical recogniser plugs into,
+  with no model in it and no download. A registered recogniser is held to the
+  same exclusion union as the rules, and one that raises is dropped rather
+  than taking the scan down. Tested:
+  `tests/test_name_layer_mechanism.py::test_a_registered_recogniser_is_held_to_the_same_exclusions_as_the_rules`,
+  `::test_a_recogniser_that_raises_does_not_take_the_scan_down`.
+- Per-language measurement of the checksum-validated layer: **135
+  schwifty-generated IBANs, five per member state**, are all found inside
+  prose, and IBAN, card and e-mail detection fires unchanged in Greek,
+  Cyrillic, Maltese and mixed-script text. Tested:
+  `tests/test_identifier_layer_per_language.py`.
+- The zero-dependency floor is now a tested property rather than a remembered
+  one: `dependencies = []`, and every name-layer module imports only the
+  standard library, checked at the import graph and again with `numpy` and
+  `onnxruntime` blocked. Tested:
+  `tests/test_name_layer_mechanism.py::test_the_package_declares_no_runtime_dependencies`,
+  `::test_every_name_layer_module_imports_only_the_standard_library`,
+  `::test_the_name_layer_works_with_the_optional_extras_blocked`.
+
+### Changed
+
+- **The English counterpart of probe A is withdrawn before it ever shipped.**
+  A value after a person-role label (`Caseworker: Ashcroft`, `CC: Ingrid
+  Bauer`) measured 0 false positives on 77 clean English documents, 49 of them
+  written to break it, and it is still withdrawn: the enumeration that decides
+  whether a label's value is a person fails OPEN, and German's identical probe
+  was also free on its own corpora before costing 18 false-positive spans on
+  an independent one. It costs 12 of 36 named occurrences and 6 of 21
+  independent ones, and it is kept in `en.CANDIDATE_PROBES` with that cost
+  measured. Tested:
+  `tests/test_name_layer_english.py::test_the_unshipped_english_probes_stay_unshipped`,
+  `::test_the_measured_english_recall_on_the_independent_positions`.
+- **The English table probe judges shape only**, once a header has declared
+  the column to hold people - main's rule, in English. A status word in a
+  person column is redacted, which is what the table says it is: `Not
+  Allocated` and `Vacant` are two of the ten measured false positives. Tested:
+  `tests/test_name_layer_english.py::test_an_english_table_cell_is_a_name_only_under_a_person_column`.
+- **Every language's rules are held to every language's exclusions.** The
+  German signature rule has always been able to fire on an English letter, its
+  closing formulae including `Kind regards` and `Yours sincerely`, and with the
+  German table alone it claimed `Accounts Payable`. Measured: English rules
+  over 42 clean German documents and German rules over 77 clean English
+  documents both claim nothing. Tested:
+  `tests/test_name_layer_cross_language.py::test_german_rules_claim_nothing_in_clean_english_documents`,
+  `::test_english_rules_claim_nothing_in_clean_german_documents`.
+- **The per-country IBAN corpus is generated by `schwifty`, not by this
+  package.** The arithmetic it replaces produced strings that are not IBANs in
+  seven member states - Bulgaria, Ireland, Italy, Latvia, Malta, the
+  Netherlands and Romania require alphabetic bank codes where it put digits -
+  and the test passed because the detector is length-and-checksum only: the
+  same blind spot in the checker and in the checked. Without `schwifty` those
+  tests skip loudly rather than falling back. Tested:
+  `tests/test_identifier_layer_per_language.py::test_our_own_iban_arithmetic_was_wrong_and_this_is_how_we_know`.
+
+### Removed
+
+- **The 410-entry ISO 20275 legal-form table and the six-character stem
+  match**, both added earlier in this same change. With the fail-open label
+  probe withdrawn they changed the false-positive count by **zero** in both
+  languages: the enumeration exposure was a property of the position, not of
+  the length of the list. The measured cost of not carrying them is 6 false
+  positives on eight documents where a member state's legal form signs a
+  letter, and the table is not restored because GLEIF publishes the code list
+  with no licence statement. Tested:
+  `tests/test_name_layer_enumeration_limit.py::test_the_enumeration_fixes_are_gone`,
+  `::test_the_word_lists_that_remain_still_earn_their_place`,
+  `::test_the_measured_cost_of_not_carrying_the_iso_table`.
+
+### Fixed
+
+- **A table's header applies to that table only** - in English as well. The
+  shared probe held one flag over the whole document, so a parts table after a
+  person table had its product column claimed and a person table after a parts
+  table was not read at all. Tested:
+  `tests/test_name_layer_tables.py::test_each_table_carries_its_own_header`,
+  `::test_a_parts_table_after_a_person_table_keeps_its_product_column`,
+  `::test_a_person_table_after_a_parts_table_is_still_read`.
+- The **glued-and-wrapped card number** that cleared the egress gate at the
+  previous tip is caught by main's identifier repair, and the pin that
+  recorded it as an open leak is now an assertion that it stays closed, in six
+  languages. Tested:
+  `tests/test_identifier_layer_per_language.py::test_the_glued_and_wrapped_card_is_caught_now`,
+  `::test_the_closed_leak_is_closed_in_every_language`.
+- **The exclusion union costs no name**: 0 of 307 common member-state surnames
+  are refused by any of its four classes. Tested:
+  `tests/test_name_layer_enumeration_limit.py::test_no_common_eu_surname_is_refused_by_the_remaining_lists`.
+
+### Found, not fixed
+
+- **An eighth residue class in the identifier layer**, found by
+  `tests/test_leak_invariant.py::test_release_gate_property` during this change
+  and reproducing unchanged at `521fec2`: a Luhn-valid window assembled from a
+  UUID tail and the digits after a redacted IBAN leaves 8 characters of
+  residue in the overlay. The input is written out in `docs/limits.md`. The
+  property draws the shape at random, so the leak-gate job will fail
+  intermittently until it is fixed; that is the alarm working.
+
+### Evaluated, not adopted
+
+- **No NER model clears the licence gate together with EU coverage, ONNX and
+  size**, each licence read from the model's own metadata:
+  `urchade/gliner_multi` is CC-BY-NC-4.0 as suspected, GLiNER v2.1 is
+  genuinely Apache-2.0 and 1.16 GB, spaCy's per-language models are MIT only
+  for English, German and the multilingual one (Greek and Italian are
+  non-commercial), and XLM-R's NER heads are non-commercial, unlicensed or
+  CoNLL-2003-derived.
+- **Microsoft Presidio (MIT)**: doubles recall and doubles to triples the
+  false positives on the same corpora (German 10 FP against our 0, English 22
+  against our 10), and its identifier recognizers find 85 of 135
+  schwifty-generated IBANs against our 135 and **none** of the six
+  extraction-artefact leak shapes. Consume the operator model and the overlap
+  resolution as a design; do not adopt the detectors.
+- **python-stdnum (LGPL-2.1-or-later)**: 27 EU national-identifier validators,
+  0 false positives over 951 tokens from 119 clean documents, 8 of 8 real
+  identifiers validated. Proposed behind an optional extra, gated on a
+  token-level candidate pass this package does not have and on country
+  scoping - `111222333` is a valid Dutch, Czech and Slovak identifier at once.
+- **libpostal**: rejected. 1.8-2.2 GB of model data, a C build, mixed data
+  licences, and it answers a question this layer does not ask.
+
 ## 2.0.0
 
 Breaking release: the import root, the console script and every environment
