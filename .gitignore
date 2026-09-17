@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+# hypothesis' example database, written by the leak-invariant property run
+.hypothesis/
 *.egg-info/
 build/
 dist/

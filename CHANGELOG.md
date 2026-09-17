@@ -155,13 +155,38 @@ trees — pin the major version.
     `tests/test_identifier_runs.py::test_iban_precision_on_clean_business_text`,
     `::test_card_precision_on_clean_business_text`,
     `::test_over_redaction_never_eats_a_word`.
-  - What may sit *inside* an identifier is decided by character property, not
-    by an enumerated list: `Cf` is invisible and skipped (soft hyphen,
-    zero-width space, BOM), `Zs` is a space (no-break, thin, narrow, figure)
-    and `Pd` is a hyphen. A line break is never either. Tested:
+  - What may sit *inside* an identifier is decided by exclusion, not by a list.
+    Two lists were walked around first: the literal `" \t-"` (defeated by a
+    no-break space, a soft hyphen and a zero-width space) and then the Unicode
+    categories `Zs`/`Pd`/`Cf`, which miss `Pc` and `Po` — so
+    `4111_1111_1111_1111` and `4111:1111:1111:1111` were never offered to Luhn
+    at all, and a full card number egressed with `pii_detected` False.
+    **The rule:** *a candidate is any maximal sequence of ASCII alphanumerics
+    joined by single characters that are not alphanumeric at all and not a line
+    break, carrying at most one such joiner for every two identifier
+    characters.* The bound is what stops punctuated prose being assembled into
+    a checksum. Tested:
+    `tests/test_identifier_runs.py::test_every_joiner_category_groups_an_identifier`
+    and `::test_a_glued_prefix_plus_any_joiner_still_finds_the_identifier`,
+    which generate joiners from `unicodedata` across every category rather than
+    from a list, `::test_the_joiner_budget_rejects_punctuated_prose`,
     `tests/test_leak_invariant.py::test_a_separator_inside_an_identifier_does_not_hide_it`,
+    `::test_a_grouped_card_is_found_whatever_separates_the_groups`,
+    `::test_a_grouped_iban_is_found_whatever_separates_the_groups`,
     `::test_an_invisible_character_does_not_split_a_run`,
     `::test_a_line_break_is_never_an_inline_separator`.
+  - A line break is never a joiner, so an identifier wrapped across two lines
+    is a known gap, pinned rather than hidden by
+    `tests/test_leak_invariant.py::test_a_line_wrapped_identifier_is_a_known_gap`.
+- **Identifiers were being redacted by accident, by the wrong detector.** A
+  card written with dots matched the phone pattern and one written with slashes
+  matched the Unix path pattern, so the overlay read `[PHONE].1111` and
+  `4111[PATH]` — fragments of the card left standing, and the redaction resting
+  on a pattern that was never about cards. A validated span now outranks a
+  pattern that merely overlaps it: contained pattern findings are dropped and
+  overlapping ones trimmed, so a card is redacted as a card and nothing of it
+  remains. Tested:
+  `tests/test_leak_invariant.py::test_a_grouped_identifier_is_typed_as_itself`.
 - **Overlapping findings corrupted the overlay and let PII survive.** The
   redactor computed replacements on original offsets and applied overlapping
   ones to an already-mutated string, producing output like `[NAME]L]ME]

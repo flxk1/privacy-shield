@@ -23,9 +23,15 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   issuer table would cut that to one, at the price of a stale BIN range
   standing between a real card and the gate. IBAN detection is held to the
   ISO 13616 registered length per country and produced no false positives on
-  the same corpus. A false positive can only consume digits and the separators
+  the same corpus. A false positive can only consume digits and the joiners
   written inside a number, never prose. Measured by
   `tests/test_identifier_runs.py`.
+  Against fifteen documents written specifically to provoke one — CSV rows,
+  version strings, timestamps, hex dumps, serial numbers — the cost is three
+  card false positives and no IBAN ones. All three are comma- or
+  hyphen-grouped digit blocks that are structurally indistinguishable from a
+  grouped card number satisfying Luhn. Measured by
+  `tests/test_identifier_runs.py::test_precision_under_deliberately_hostile_punctuation`.
 - **What counts as one identifier, in one sentence:** *a candidate is any
   maximal sequence of ASCII alphanumerics joined by single characters that are
   not alphanumeric at all and not a line break, carrying at most one such
@@ -84,10 +90,10 @@ pre-embedded PII-context file.
 
 ```
 python3 -m pytest -q
-585 passed, 8 failed
+683 passed, 8 failed
 ```
 
-593 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
+691 tests collected (`pip install ".[dev,semantic,extract,openai]"`). The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -95,10 +101,10 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 585 passed, 8 deselected.
+`tests` job runs 683 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 163 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 234 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
 
