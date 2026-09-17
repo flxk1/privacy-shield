@@ -81,36 +81,17 @@ _IBAN_LENGTHS = {
     "VA": 22, "VG": 24, "XK": 20,
 }
 
-_ORACLE_LINE_BREAKS = "\n\r\v\f  "
+_ORACLE_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
+#: How far the brute-force search may reach for one identifier. The longest
+#: thing validated here is a 34-character IBAN; the allowance is three
+#: characters of interior punctuation for every identifier character, which
+#: covers column gaps, dot leaders, table pipes and fixed-width padding with
+#: room to spare. 34 + 34*3 = 136.
+ORACLE_WINDOW = 136
 
-def _oracle_transparent(char: str) -> bool:
-    """Invisible: soft hyphen, zero-width space, joiners, BOM."""
-    return unicodedata.category(char) == "Cf"
-
-
-#: At most one joiner per this many identifier characters - the bound that
-#: stops punctuated prose being assembled into a checksum.
-_ORACLE_JOINER_BUDGET_DIVISOR = 2
-
-
-def _oracle_joiner(char: str) -> bool:
-    """Anything that is not an identifier character and not a line break.
-
-    Defined by exclusion, deliberately. This oracle previously asked which
-    Unicode CATEGORIES separate groups - Zs, Pd - and underscore (Pc) and colon
-    (Po) were not among them, so a card written "4111_1111_1111_1111" was
-    invisible to the oracle and to the detector at the same time. That is the
-    same vacuous-pass failure as the `\\b` anchoring, one level down: a
-    category set is still a list, and a list is still something someone typed
-    from memory.
-    """
-    return not char.isalnum() and char not in _ORACLE_LINE_BREAKS
-
-
-def _oracle_within_budget(offsets: list[int], start: int, size: int) -> bool:
-    span = offsets[start + size - 1] + 1 - offsets[start]
-    return span - size <= size // _ORACLE_JOINER_BUDGET_DIVISOR
+#: How far either side of an "@" the e-mail search looks.
+ORACLE_EMAIL_SPAN = 64
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -140,105 +121,88 @@ def _iban_ok(candidate: str) -> bool:
     return int(expanded) % 97 == 1
 
 
-def _oracle_runs(text: str) -> list[tuple[str, list[int]]]:
-    """Every maximal run of identifier characters, compacted to alphanumerics.
-
-    No word boundary is consulted anywhere. A run grows over ASCII
-    alphanumerics and single internal spaces, tabs or hyphens - the separators
-    people actually write inside an IBAN or a card number - and ends at
-    anything else, including a newline. ``offsets[i]`` is where ``compact[i]``
-    sits in *text*.
-    """
-    runs: list[tuple[str, list[int]]] = []
-    visible = [
-        (char, index)
-        for index, char in enumerate(text)
-        if not _oracle_transparent(char)
-    ]
-    compact: list[str] = []
-    offsets: list[int] = []
-    position = 0
-    count = len(visible)
-    while position < count:
-        char, origin = visible[position]
-        if char.isascii() and char.isalnum():
-            compact.append(char)
-            offsets.append(origin)
-            position += 1
-            continue
-        if compact and _oracle_joiner(char):
-            ahead = position
-            while ahead < count and _oracle_joiner(visible[ahead][0]):
-                ahead += 1
-            if ahead - position == 1 and ahead < count:
-                following = visible[ahead][0]
-                if following.isascii() and following.isalnum():
-                    position = ahead
-                    continue
-        if compact:
-            runs.append(("".join(compact), offsets))
-            compact, offsets = [], []
-        position += 1
-    if compact:
-        runs.append(("".join(compact), offsets))
-    return runs
-
-
-def _oracle_ibans(text: str) -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
-    for compact, offsets in _oracle_runs(text):
-        position = 0
-        while position < len(compact) - 14:
-            window = compact[position:position + 4]
-            if not (window[:2].isalpha() and window[2:].isdigit()):
-                position += 1
-                continue
-            registered = _IBAN_LENGTHS.get(compact[position:position + 2].upper())
-            if registered is None or position + registered > len(compact):
-                position += 1
-                continue
-            candidate = compact[position:position + registered]
-            if _iban_ok(candidate) and _oracle_within_budget(offsets, position, registered):
-                start = offsets[position]
-                end = offsets[position + registered - 1] + 1
-                found.append((candidate, text[start:end]))
-                position += registered
-                continue
-            position += 1
-    return found
+# ---------------------------------------------------------------------------
+# Brute force. The oracle has NO run rule, so it cannot share one.
+# ---------------------------------------------------------------------------
+#
+# Three rounds running, the check was built from the same materials as the
+# thing checked, each time one level further down: `\b` in the regex and `\b`
+# in the oracle; a category list in the code and a category list in the oracle;
+# then `ahead - position == 1` in both, character for character. Every
+# individual fix was right and the method still produced the next hole, because
+# an oracle that decides which characters form a candidate can only ever
+# disagree with the code about the answer, never about the question.
+#
+# So this oracle does not decide. It takes every subsequence of alphanumerics
+# within ORACLE_WINDOW of each starting position and asks the validator. It is
+# quadratic and it is meant to be: this is a release gate, not a hot path, and
+# slow is the right trade for a check whose whole job is to fail on something
+# nobody thought of. If it ever costs too much, run it over fewer documents -
+# never with a smarter rule.
+#
+# What it still assumes is only the DEFINITION of each identifier: a card
+# number is 13-19 decimal digits satisfying Luhn and contains no letters; an
+# IBAN is a registered country code, a check pair and a body of the length ISO
+# 13616 gives that country; an address has exactly one "@" and matches the RFC
+# shape. Nothing about spacing, grouping, boundaries or punctuation.
 
 
 def _oracle_cards(text: str) -> list[tuple[str, str]]:
-    """Every Luhn-valid 13-19 digit window, at every offset.
+    """Every Luhn-valid run of 13-19 digits, whatever lies between them.
 
-    Deliberately no issuer-prefix table. The package has one; if this oracle
-    had the same one, a card whose prefix the package does not know would be
-    invisible to both at once - which is the failure mode this whole file
-    exists to prevent.
+    Punctuation of any width is skipped - two spaces, ten spaces, a dot and a
+    space, a pipe with spaces either side. A letter ends the search, because a
+    letter cannot appear inside a card number; that is the definition of the
+    identifier, not a rule about how it is laid out.
     """
     found: list[tuple[str, str]] = []
-    for compact, offsets in _oracle_runs(text):
-        for digits in re.finditer(r"\d+", compact):
-            run_start, run_end = digits.start(), digits.end()
-            position = run_start
-            while position < run_end:
-                claimed = 0
-                for size in range(19, 12, -1):
-                    if position + size > run_end:
-                        continue
-                    candidate = compact[position:position + size]
-                    if _luhn_ok(candidate) and _oracle_within_budget(offsets, position, size):
-                        start = offsets[position]
-                        end = offsets[position + size - 1] + 1
-                        found.append((candidate, text[start:end]))
-                        claimed = size
-                        break
-                position += claimed if claimed else 1
+    length = len(text)
+    for start in range(length):
+        if not (text[start].isascii() and text[start].isdigit()):
+            continue
+        digits: list[str] = []
+        for index in range(start, min(length, start + ORACLE_WINDOW)):
+            char = text[index]
+            if char.isascii() and char.isdigit():
+                digits.append(char)
+                if len(digits) > 19:
+                    break
+                if len(digits) >= 13:
+                    candidate = "".join(digits)
+                    if _luhn_ok(candidate):
+                        found.append((candidate, text[start:index + 1]))
+            elif char.isalnum():
+                break
     return found
 
 
-_ORACLE_LOCAL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
-_ORACLE_DOMAIN = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-"
+def _oracle_ibans(text: str) -> list[tuple[str, str]]:
+    """Every registered-length, mod-97-valid IBAN, whatever lies between."""
+    found: list[tuple[str, str]] = []
+    length = len(text)
+    for start in range(length):
+        if not (text[start].isascii() and text[start].isalpha()):
+            continue
+        registered = None
+        body: list[str] = []
+        for index in range(start, min(length, start + ORACLE_WINDOW)):
+            char = text[index]
+            if char.isascii() and char.isalnum():
+                body.append(char)
+                if len(body) == 2:
+                    registered = _IBAN_LENGTHS.get("".join(body).upper())
+                    if registered is None:
+                        break
+                if registered is not None and len(body) == registered:
+                    candidate = "".join(body)
+                    if _iban_ok(candidate):
+                        found.append((candidate, text[start:index + 1]))
+                    break
+            elif char.isalnum():
+                break
+    return found
+
+
 _ORACLE_EMAIL_SHAPE = re.compile(
     r"\A[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z"
@@ -246,31 +210,28 @@ _ORACLE_EMAIL_SHAPE = re.compile(
 
 
 def _oracle_emails(text: str) -> list[tuple[str, str]]:
-    """Every RFC-shaped address, found by expanding outwards from each '@'.
+    """Every RFC-shaped address, by trying every substring around each "@".
 
-    Expanding from the '@' rather than matching from a word boundary is the
-    point: a word character the local-part class does not cover - a German
-    umlaut, say - glued in front of an address makes a ``\\b``-anchored pattern
-    miss the whole thing.
+    No expansion over a character class - that would be a run rule. Every
+    (start, end) pair within ORACLE_EMAIL_SPAN of the "@" is offered to the
+    shape, and the longest that matches is taken.
     """
     found: list[tuple[str, str]] = []
-    for at in (index for index, char in enumerate(text) if char == "@"):
-        left = at
-        while left > 0 and text[left - 1] in _ORACLE_LOCAL:
-            left -= 1
-        right = at + 1
-        while right < len(text) and text[right] in _ORACLE_DOMAIN:
-            right += 1
-        for start in range(left, at):
-            matched = None
-            for end in range(right, at + 1, -1):
-                candidate = text[start:end]
-                if _ORACLE_EMAIL_SHAPE.match(candidate) and len(candidate) <= 254:
-                    matched = candidate
+    for at, char in enumerate(text):
+        if char != "@":
+            continue
+        low = max(0, at - ORACLE_EMAIL_SPAN)
+        high = min(len(text), at + ORACLE_EMAIL_SPAN)
+        best = None
+        for begin in range(low, at):
+            for finish in range(high, at + 1, -1):
+                candidate = text[begin:finish]
+                if len(candidate) <= 254 and _ORACLE_EMAIL_SHAPE.match(candidate):
+                    if best is None or len(candidate) > len(best):
+                        best = candidate
                     break
-            if matched:
-                found.append((matched, matched))
-                break
+        if best:
+            found.append((best, best))
     return found
 
 
@@ -279,7 +240,14 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
 
     Returns ``(kind, canonical, as_written)``: the compacted identifier and the
     exact substring of *text* it came from, which differ whenever the input
-    groups the number with spaces.
+    groups the number with spaces or anything else.
+
+    Candidates whose written form crosses a line break are dropped HERE rather
+    than never being searched for, so the exclusion is visible and removable.
+    An identifier split across two lines is the one exposure this programme has
+    measured and accepted (see
+    ``test_a_line_wrapped_identifier_is_a_known_gap``); making the search
+    itself stop at a newline would hide it instead of scoping it.
     """
     found: list[tuple[str, str, str]] = []
     for canonical, as_written in _oracle_emails(text):
@@ -288,7 +256,10 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
         found.append(("iban", canonical, as_written))
     for canonical, as_written in _oracle_cards(text):
         found.append(("credit_card", canonical, as_written))
-    return found
+    return [
+        row for row in found
+        if not any(char in _ORACLE_LINE_BREAKS for char in row[2])
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +458,75 @@ GROUP_SEPARATORS = [
     pytest.param("\t", id="tab"),
     pytest.param("\u00a0", id="no_break_space"),
 ]
+
+
+#: Gaps of more than one character. Every one of these is an ordinary
+#: text-extraction artefact, and every one leaked a whole card number: the run
+#: rule ended a candidate at the second consecutive joiner, so the validator
+#: was never offered it. The rule had been made unfalsifiable in the CHARACTER
+#: dimension and left a hard limit of one in the LENGTH dimension.
+MULTI_CHARACTER_GAPS = [
+    pytest.param("  ", id="two_space_column_gap"),
+    pytest.param("   ", id="three_space_fixed_width_padding"),
+    pytest.param("    ", id="four_space_column_gap"),
+    pytest.param("         ", id="nine_space_wide_column"),
+    pytest.param(". ", id="dot_leader"),
+    pytest.param(" | ", id="monospaced_table_pipe"),
+    pytest.param(" - ", id="spaced_hyphen"),
+    pytest.param("\t\t", id="double_tab"),
+    pytest.param(" \u00a0 ", id="mixed_space_and_no_break_space"),
+    pytest.param(",  ", id="comma_then_padding"),
+]
+
+
+@pytest.mark.parametrize("gap", MULTI_CHARACTER_GAPS)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_multi_character_gap_does_not_hide_a_card(gap, mode):
+    text = "Karte " + gap.join(
+        EXAMPLE_CARD[index:index + 4] for index in range(0, 16, 4)
+    )
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+@pytest.mark.parametrize("gap", MULTI_CHARACTER_GAPS)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_multi_character_gap_does_not_hide_an_iban(gap, mode):
+    body = gap.join(EXAMPLE_IBAN[index:index + 4] for index in range(0, 20, 4))
+    text = "Konto " + body + gap + EXAMPLE_IBAN[20:]
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode).documents[0]
+    if document.egress_allowed:
+        assert document.pii_detected, document.overlay
+
+
+def test_mixed_gap_widths_within_one_identifier():
+    """Real extraction is not uniform: a dot leader here, padding there."""
+    text = "Pos 4111. 1111   1111 | 1111"
+    assert_no_leak(text)
+    assert scan(text).documents[0].pii_detected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "Nordstern  4111  1111  1111  1111   1.234,56",
+            id="pdftotext_column_gap",
+        ),
+        pytest.param("Pos 4111   1111   1111   1111", id="fixed_width_report"),
+        pytest.param("Karte 4111. 1111. 1111. 1111", id="dot_leader_form"),
+        pytest.param("| 4111 | 1111 | 1111 | 1111 |", id="monospaced_receipt"),
+    ],
+)
+def test_reported_extraction_artefact_shapes(text):
+    """The four shapes reported against the installed artifact."""
+    assert_no_leak(text)
+    document = scan(text).documents[0]
+    assert document.pii_detected, document.overlay
+    assert EXAMPLE_CARD not in document.overlay.replace(" ", "")
 
 
 @pytest.mark.parametrize("separator", GROUP_SEPARATORS)
@@ -727,18 +767,42 @@ def _make_email(rng: random.Random) -> str:
     return f"{local}@{rng.choice(['example.com', 'kanzlei.de', 'firma.org'])}"
 
 
-#: Group separators the battery writes. Not only spaces: the underscore and
-#: colon shapes were reported leaks, and a generator that only ever emits a
-#: space cannot find them.
+#: Characters the battery writes between groups. The underscore and colon
+#: shapes were reported leaks, and a generator that only ever emits a space
+#: cannot find them.
 _BATTERY_SEPARATORS = [" ", " ", "_", "-", ".", ":", "/", ",", "|", "\u00a0", "\t"]
+
+#: WIDTHS the battery writes between groups. Every generated test used
+#: `joiner.join(...)` - exactly one character per gap, always - so the
+#: generator was exhaustive on the axis that was broken one round ago and
+#: constant on the axis that was broken the next. A column gap from
+#: `pdftotext`, fixed-width padding, a dot leader and a monospaced table are
+#: all two or more characters, and all four leaked whole card numbers.
+_BATTERY_GAP_WIDTHS = [1, 1, 2, 3, 4, 6, 9]
+
+
+def _gap(rng: random.Random) -> str:
+    """One gap: a character repeated, or a punctuation mark then padding."""
+    width = rng.choice(_BATTERY_GAP_WIDTHS)
+    separator = rng.choice(_BATTERY_SEPARATORS)
+    if width > 1 and rng.random() < 0.5:
+        # "4111. 1111" - a dot leader, then spaces. Mixed characters in one gap.
+        return separator + " " * (width - 1)
+    return separator * width
 
 
 def _spaced(rng: random.Random, digits: str) -> str:
-    if rng.random() < 0.4:
+    """Group *digits*, with gap widths varying WITHIN one identifier."""
+    if rng.random() < 0.35:
         return digits
     size = rng.choice([4, 4, 5])
-    separator = rng.choice(_BATTERY_SEPARATORS)
-    return separator.join(digits[i:i + size] for i in range(0, len(digits), size))
+    groups = [digits[i:i + size] for i in range(0, len(digits), size)]
+    if rng.random() < 0.5:
+        return _gap(rng).join(groups)  # uniform gap
+    out = groups[0]                    # mixed gaps within one identifier
+    for group in groups[1:]:
+        out += _gap(rng) + group
+    return out
 
 
 def generate_document(rng: random.Random) -> tuple[str, list[str], list[str]]:
