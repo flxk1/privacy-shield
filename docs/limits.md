@@ -95,7 +95,7 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   `::test_the_line_break_bound_is_one_and_this_is_what_it_costs`.
 - **National person numbers need the `[national]` extra AND a country.** With
   `python-stdnum` installed and `PRIVACY_SHIELD_NATIONAL_COUNTRIES` set, 22
-  check-digit validators across 20 EU countries are applied to token-level
+  check-digit validators are declared across 20 EU countries — 21 of 22 import, and four of those cannot fire for a person; see the defects below — applied to token-level
   candidates. Both conditions are load-bearing and neither comes from the
   library: `identifiers.identifier_runs` joins across every non-alphanumeric
   character including line terminators, so an ordinary four-line letter is ONE
@@ -116,9 +116,28 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   `de.stnr` is dropped on that measurement; `si.ddv` and `lv.pvn` are dropped
   because they are VAT — identifiers of an organisation — which contradicted
   this layer's own person-only rule; `nl.bsn` is held to nine digits, the
-  current length. The remaining 21 produced none, and with **all 27 countries
-  enabled** the measured count is now **0**. Pinned by
-  `tests/test_national_ids.py`.
+  current length.
+
+  **That zero does not hold, and the claim is withdrawn.** It was measured on 62
+  documents carrying 136 candidate tokens — 2.2 per document. An independent
+  corpus of 200 clean German business documents carrying 1,952 candidate tokens
+  — 9.8 per document — produced **41 false positives** with all 27 countries
+  enabled, across ten validators (`cz.rc` 19, `hr.oib` 4, `dk.cpr` 4, `pt.nif`
+  4, `nl.bsn` 3, `pl.pesel` 2, `lt.asmens` 2, `it.codicefiscale` 1, `bg.egn` 1,
+  `ee.ik` 1): roughly one spurious `[NATIONAL_ID]` per five documents, on
+  ordinary German business fields of exactly the shape `de.stnr` was dropped
+  for. Germany alone measures 0; `de,at,nl` measures 3. **Enable only the
+  countries whose documents you actually scan, and measure on your own corpus
+  before trusting any count here.**
+
+  Four further defects in this layer, each independently reproduced and none yet
+  fixed: `stdnum.at.svnr` does not exist (the module is `at.vnr`), so `at`
+  yields a layer that is silently off while its country code validates; four
+  validators can never fire for a person because their minimum was taken from
+  total length rather than digit count (`ie.pps`, `es.nie`, `it.codicefiscale`,
+  `fi.hetu`); and `it`, `es` and `pt` claim company identifiers as person
+  numbers — the inversion `si.ddv` and `lv.pvn` were dropped for. **The layer is
+  off by default; leave it off until these are closed.**
 
   Not adopted, with the measurements in this document: **Presidio** and
   **libpostal**. The **English label probe** is not restored.

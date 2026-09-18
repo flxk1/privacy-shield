@@ -14,7 +14,7 @@ Sending a document to a cloud model sends every personal value in it. Detection 
 pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
 ```
 
-Zero required dependencies. Extras: `[national]` python-stdnum (22 check-digit validators for EU
+Zero required dependencies. Extras: `[national]` python-stdnum (EU person-number validators, off by default and not yet measurement-clean — see `docs/limits.md`) (22 declared for EU
 national person numbers; off unless a country is configured, see
 [docs/limits.md](docs/limits.md)), `[semantic]` numpy>=1.24 +
 onnxruntime>=1.16 (embeddings/shadow ONNX), `[extract]` PyMuPDF>=1.23 +
