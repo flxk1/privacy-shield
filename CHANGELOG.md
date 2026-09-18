@@ -112,6 +112,87 @@ trees — pin the major version.
 
 ### Fixed
 
+- **A coincidental IBAN suppressed a genuine one, and a genuine card
+  underneath one.** The claim rule stated in this release — no character
+  belongs to two identifiers — was implemented on the card layer only.
+  `_iban_spans_in_run` claimed the leftmost mod-97-valid registered-length
+  window and advanced by its whole length, so a coincidence that validated
+  stepped the search over a real IBAN starting inside it:
+  `B.E54.7/<a real IBAN>` yielded `[IBAN]` plus eleven digits of the account
+  number in a payload cleared for egress, about one document in seventy-four
+  on realistic German text. The symmetric case lost a genuine card whole: the
+  coincidental claim was handed to `find_cards` as `avoid`, which refused every
+  window overlapping it, leaving fifteen digits of a Luhn-valid card under an
+  `[IBAN]` label — in 165 of 400 constructed documents of that shape, and in
+  none after the fix. Non-reuse now decides a LABEL and never a redaction: no
+  validating window is left partially covered. Tested:
+  `tests/test_identifier_runs.py::test_a_coincidental_iban_does_not_suppress_a_genuine_one`,
+  `::test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole`,
+  `::test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban`.
+- **The release gate was red on 3 of 400 hypothesis seeds, for reasons nobody
+  decided.** Two mechanisms, both removed. The detector carried two layout
+  heuristics the brute-force oracle could not see — a span limit of sixteen
+  times a candidate's length and an interior-group limit of twelve — so a
+  checksum-valid identifier written across a long neighbouring token, or with
+  gaps wider than eighty characters, was claimed by the oracle, refused by the
+  detector and reported as a leak. Sweeping either bound never moved the
+  false-positive count, so both are removed rather than shared: a heuristic in
+  the checker is how the line-break filter hid a whole leak class. And
+  `_compact()` deleted the space a placeholder left behind, making characters
+  adjacent that a redaction had separated, so a fragment that never existed in
+  the source "survived" in the overlay; compaction now stops at a placeholder.
+  Measured with explicit seeds: 6 of 25 seeds red before at 4000 examples, 0 of
+  25 after, and 0 of 400 at the shipped example count. Tested:
+  `tests/test_leak_invariant.py::test_there_is_no_width_at_which_the_detector_stops_claiming`,
+  `::test_a_long_neighbouring_token_does_not_make_the_detector_decline`,
+  `::test_the_property_holds_under_a_varied_hypothesis_seed`,
+  `::test_a_placeholder_is_a_hard_break_when_counting_residue`.
+- **The gate's oracle looked up its own spans by first occurrence.** `already`
+  was rebuilt with `text.index(written)`, so a document containing the same
+  IBAN twice registered the first one's span twice and the second one's not at
+  all, and every Luhn-valid window made from the second copy's digits was
+  reported as a card. A fail-open in the rule that stops the oracle counting one
+  run of characters as two identifiers; offsets are now carried. Tested:
+  `tests/test_leak_invariant.py::test_the_oracle_does_not_double_claim_a_repeated_identifier`.
+- **A labelled card with one transcription typo was dropped.** Demoting the
+  Layer-1 patterns to candidate generators was measured both ways over 200
+  documents each: the IBAN pattern's false positives fell sharply, the card
+  pattern's did not move by a single span, and labelled cards carrying one
+  wrong digit went from 3 in 200 unclaimed to 73. A single wrong digit always
+  defeats Luhn — that is what Luhn is for. A `credit_card` pattern match no
+  checksum accepts is now kept at MEDIUM with `checksum_validated=False`:
+  redacted by default, absent at `min_confidence=HIGH`, and unable to outrank
+  anything, because the rank rule asks the finding rather than its type.
+  Tested: `tests/test_privacy_shield_regex_only.py::test_a_labelled_card_with_one_transcription_typo_is_still_claimed`,
+  `::test_a_card_shape_cannot_outrank_a_checksum`.
+- **Four defects in the optional national layer, and a fifth in its speed.**
+  `stdnum.at.svnr` does not exist — the module is `at.vnr` — and the
+  ImportError was swallowed at debug level, so `at` was a silently dead country
+  whose code still validated as configurable; a missing module is now a loud
+  `MissingValidator`. Four validators could not fire for a person at any input
+  because their minimum came from the scheme's total length rather than its
+  digit count (`ie.pps`, `es.nie`, `fi.hetu`, `it.codicefiscale`); the column is
+  now a minimum alphanumeric length, checked against `python-stdnum`'s own
+  documented numbers in their bare form. `es.nif` and `pt.nif` are dropped
+  because they accept company identifiers, and the Italian codice fiscale is
+  held to its personal sixteen-character form. And `candidate_tokens`
+  enumerated every sub-token pair, slicing and running a regex substitution over
+  each before testing its length and never stopping once past the maximum: 4 KB
+  of extracted text took 6.95 seconds on the egress path, and takes 0.001
+  seconds now, with an identical candidate set. Full-scope false positives on
+  200 clean documents: 75 before, 61 after, despite five validators being
+  resurrected. Tested:
+  `tests/test_national_ids.py::test_every_configured_validator_can_actually_fire`,
+  `::test_a_module_that_is_not_there_is_a_loud_failure`,
+  `::test_no_company_identifier_is_configured_as_a_person_number`,
+  `::test_candidate_tokens_is_not_superlinear`,
+  `::test_the_full_scope_false_positive_rate_is_what_it_is`.
+- **`docs/limits.md` cited tests nobody checked existed.** The citation
+  resolver covered the CHANGELOG only, and limits.md — the document a reader
+  consults for what the product does NOT do — carried a citation pointing at
+  the wrong file. Both documents are resolved now. Tested:
+  `tests/test_2_0_0_surface.py::test_every_test_a_document_cites_exists`.
+
 - **The core emitted raw PII in the payload it certified as safe to send.** A
   candidate false-positive suppressor ran *instead of* the validated Layer-1
   detectors and could discard them, so `Ref DE89370400440532013000` scanned

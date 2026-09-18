@@ -41,22 +41,38 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   written with a hyphen and a space, so it is redacted.
 - **What counts as one identifier, in one sentence:** *a candidate is any
   maximal sequence of ASCII alphanumerics joined by runs of characters that are
-  not alphanumeric at all and not a line break, spanning at most sixteen times
-  its own length, with no interior group longer than twelve where it covers
-  three groups or more.* There is deliberately no bound on the NUMBER of
-  groups: one was tried and it refused a letter-spaced form field, which is
-  what `pdftotext` emits and which leaked a whole card number. Joiners
-  are defined by exclusion rather than listed, and their WIDTH is unbounded,
+  not alphanumeric at all, interrupted by at most one line terminator.* That is
+  the whole rule. There is deliberately no bound on the NUMBER of groups, on
+  the WIDTH of a gap, on the SPAN of the candidate, or on how long a group
+  inside it may be. Joiners are defined by exclusion rather than listed,
   because three successive rules were walked around: the literal `" \t-"`, then
   the Unicode categories `Zs`/`Pd`/`Cf` (which miss `Pc` underscore and `Po`
   colon, dot, slash), then a hard limit of one joiner per gap (which a
   `pdftotext` column gap, fixed-width padding, a dot leader and a monospaced
-  table all defeat). Only the interior groups are bounded, because only they
-  are never clipped by the candidate's own edges and so are whole tokens — four
-  digits in a real layout, thirteen in a list of article numbers. Tested:
+  table all defeat).
+
+  **Two layout bounds were removed in round 19** — a span limit of sixteen
+  times the candidate's length, and an interior-group limit of twelve — and the
+  reason is the release gate rather than precision. The brute-force oracle has
+  no layout rule, so every bound the detector had and the oracle did not was a
+  disagreement the gate reported as a leak whenever the property test happened
+  to draw one: 3 reds in 400 hypothesis seeds at the shipped example count, and
+  6 of 25 seeds at 4000 measured here. Sharing them with the oracle is not
+  available — a heuristic in the checker is how the line-break filter hid a
+  whole leak class in round 14 — so the heuristics went and the definitional
+  bound stayed. Measured before removing them: on 93 realistic documents and
+  300 wide-column documents nothing moved at all; on 3000 deliberately
+  digit-dense documents, card spans 2999 → 2998 and IBAN spans 10 → 13.
+
+  **What it costs, stated:** within its two lines a claim now has no width
+  limit, so a mod-97-valid assembly spread across a wide table row is redacted
+  along with everything between its groups. Nothing in the measured corpora
+  does that, but the blast radius when it happens is a line rather than a
+  field. The terminator bound is what keeps it from being a page. Tested:
   `tests/test_identifier_runs.py::test_every_joiner_category_groups_an_identifier`
   (joiners generated from `unicodedata`, not from a list),
-  `::test_the_layout_bounds_reject_assembled_prose`,
+  `tests/test_leak_invariant.py::test_there_is_no_width_at_which_the_detector_stops_claiming`,
+  `::test_a_long_neighbouring_token_does_not_make_the_detector_decline`,
   `tests/test_leak_invariant.py::test_a_multi_character_gap_does_not_hide_a_card`,
   `::test_reported_extraction_artefact_shapes`.
 - **One line TERMINATOR inside an identifier is a joiner; two are not.** A
@@ -72,12 +88,17 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
 
   The gate could not see it either — its oracle applied the same arithmetic to
   the same two characters, the sixth time the checker shared an assumption with
-  the checked. The oracle now counts terminators with its own implementation,
-  the terminator set in the tests is derived from Unicode rather than typed,
-  and the generator emits CRLF, `\n\r` and mixtures within one document.
+  the checked. The oracle now counts terminators with its own implementation
+  and the generator emits CRLF, `\n\r` and mixtures within one document. The
+  claim that the terminator set is "derived from Unicode rather than typed" was
+  decoration and is withdrawn: it derived categories `Zl` and `Zp`, which are
+  the two characters the list beside it already typed. The set is now checked
+  against CPython's own `str.splitlines`, which knows three separators this
+  package does not — `\x1c`, `\x1d`, `\x1e` — and which both layers treat as
+  joiners, so an identifier written across one is claimed rather than refused.
   Tested: `tests/test_leak_invariant.py::test_a_wrapped_identifier_is_found_whatever_ends_the_line`,
   `::test_is_safe_for_external_llm_agrees_across_terminators`,
-  `::test_the_terminator_set_is_derived_not_typed`,
+  `::test_the_terminator_set_is_no_shorter_than_cpythons`,
   `::test_a_mixture_of_terminators_in_one_document`.
 
   **The bound itself remains**, and so does what it costs: an identifier
@@ -88,15 +109,15 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   separates them: 11 over-redaction spans over 5 stacked-column documents,
   pinned by
   `tests/test_identifier_runs.py::test_stacked_numeric_columns_are_over_redacted`.
-  Bounding every group rather than only the interior ones was tried, refused
-  nothing the baseline accepted, and was reverted rather than kept. A bound exists at all because making every line
+  A bound exists at all because making every line
   break a joiner without limit would glue a document's lines into one run and
   let a column of figures be assembled into a checksum. Pinned by
-  `::test_the_line_break_bound_is_one_and_this_is_what_it_costs`.
+  `tests/test_leak_invariant.py::test_the_line_break_bound_is_one_and_this_is_what_it_costs`.
 - **National person numbers need the `[national]` extra AND a country.** With
-  `python-stdnum` installed and `PRIVACY_SHIELD_NATIONAL_COUNTRIES` set, 22
-  check-digit validators are declared across 20 EU countries — 21 of 22 import, and four of those cannot fire for a person; see the defects below — applied to token-level
-  candidates. Both conditions are load-bearing and neither comes from the
+  `python-stdnum` installed and `PRIVACY_SHIELD_NATIONAL_COUNTRIES` set, 20
+  check-digit validators across 19 EU countries are applied to token-level
+  candidates; all of them import and all of them fire on the library's own
+  documented numbers, which round 19 had to fix and now tests. Both conditions are load-bearing and neither comes from the
   library: `identifiers.identifier_runs` joins across every non-alphanumeric
   character including line terminators, so an ordinary four-line letter is ONE
   79-character run that every validator rejects; and `111222333` is a valid
@@ -118,26 +139,49 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   this layer's own person-only rule; `nl.bsn` is held to nine digits, the
   current length.
 
-  **That zero does not hold, and the claim is withdrawn.** It was measured on 62
-  documents carrying 136 candidate tokens — 2.2 per document. An independent
-  corpus of 200 clean German business documents carrying 1,952 candidate tokens
-  — 9.8 per document — produced **41 false positives** with all 27 countries
-  enabled, across ten validators (`cz.rc` 19, `hr.oib` 4, `dk.cpr` 4, `pt.nif`
-  4, `nl.bsn` 3, `pl.pesel` 2, `lt.asmens` 2, `it.codicefiscale` 1, `bg.egn` 1,
-  `ee.ik` 1): roughly one spurious `[NATIONAL_ID]` per five documents, on
-  ordinary German business fields of exactly the shape `de.stnr` was dropped
-  for. Germany alone measures 0; `de,at,nl` measures 3. **Enable only the
-  countries whose documents you actually scan, and measure on your own corpus
-  before trusting any count here.**
+  **That zero does not hold, and the claim stays withdrawn.** It was measured on
+  62 documents carrying 2.2 candidate tokens each; German business text carries
+  far more. The number that means something is measured on 200 generated
+  documents of ordinary German business field shapes — invoice, order, meter,
+  contract, personnel and file numbers — with every country enabled:
 
-  Four further defects in this layer, each independently reproduced and none yet
-  fixed: `stdnum.at.svnr` does not exist (the module is `at.vnr`), so `at`
-  yields a layer that is silently off while its country code validates; four
-  validators can never fire for a person because their minimum was taken from
-  total length rather than digit count (`ie.pps`, `es.nie`, `it.codicefiscale`,
-  `fi.hetu`); and `it`, `es` and `pt` claim company identifiers as person
-  numbers — the inversion `si.ddv` and `lv.pvn` were dropped for. **The layer is
-  off by default; leave it off until these are closed.**
+  | | 0719c79 | round 19 |
+  |---|---|---|
+  | false positives, 200 clean documents, all 27 countries | 75 | **61** |
+  | `de` alone / `fr` alone / `it` alone | 0 / 0 / 1 | **0 / 0 / 0** |
+
+  It is lower *despite* five validators having been resurrected, which is the
+  honest shape of the trade: dropping the company schemes and the
+  check-digit-free legacy forms took more away than the repairs added back. The
+  remaining count is dominated by ten- and eleven-digit schemes whose mod-11
+  check accepts roughly one arbitrary string in eleven (`hr.oib` 17, `at.vnr`
+  15, `nl.bsn` 13, `dk.cpr` 10). **No minimum length will fix that**, and no
+  further validator will be dropped to make the number look better — that is how
+  it was 0 in the first place. What works is country scoping. What would fix the
+  full-scope number is corroborating evidence beside the token, and that is a
+  design decision, not a constant. Pinned as both a ceiling and a floor by
+  `tests/test_national_ids.py::test_the_full_scope_false_positive_rate_is_what_it_is`.
+
+  **The four reported defects are fixed.** `stdnum.at.svnr` does not exist — the
+  module is `at.vnr` — and the ImportError was swallowed at debug level, so `at`
+  was a silently dead country whose code still validated as configurable; a
+  missing module is now a loud `MissingValidator`. The minimum column was read
+  as a digit COUNT while four of its values had been taken from the scheme's
+  total LENGTH, so `ie.pps`, `es.nie`, `fi.hetu` and the personal
+  `it.codicefiscale` could not fire for a person at any input; the column is now
+  a minimum alphanumeric length, and every value is checked against
+  `python-stdnum`'s own documented examples, in their bare form, by
+  `::test_every_configured_validator_can_actually_fire`. `es.nif` and `pt.nif`
+  are dropped because they accept the CIF and the NIPC — company identifiers —
+  and the Italian codice fiscale is held to its sixteen-character personal form,
+  because its eleven-digit form is a partita IVA. Five dead validators, each
+  reporting zero false positives, is the same failure as a corpus too small to
+  produce one.
+
+  **Still true: the layer is off by default, and the full-scope rate is about
+  one spurious `[NATIONAL_ID]` per three documents.** Enable only the countries
+  whose documents you actually scan, and measure on your own corpus before
+  trusting any count here.
 
   Not adopted, with the measurements in this document: **Presidio** and
   **libpostal**. The **English label probe** is not restored.
@@ -152,12 +196,56 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   checksum, which is the structure this package was rejected for in round 9.
   Tested: `tests/test_privacy_shield_regex_only.py::test_a_vat_number_is_not_an_iban`,
   `::test_no_finding_of_a_validated_type_fails_its_own_validator`.
-- **No character belongs to two identifiers.** A Luhn-valid window built from an
-  IBAN's tail plus the digits after it is the same characters counted twice, not
-  a third identifier. Both the detector and the gate's oracle refuse it; the
-  oracle did not until round 18, which made `leak-gate` red on some runs and
-  green on others. Tested:
-  `tests/test_leak_invariant.py::test_a_card_may_not_be_assembled_from_another_identifiers_digits`.
+- **No character belongs to two identifiers — but non-reuse decides a LABEL,
+  never a redaction.** A Luhn-valid window built from an IBAN's tail plus the
+  digits after it is the same characters counted twice, not a third identifier,
+  and neither the detector nor the gate's oracle reports it as one. Round 18
+  implemented that as a REFUSAL, which reduced coverage, and two leaks followed:
+  a coincidental IBAN claim suppressed a genuine IBAN starting inside it
+  (`B.E54.7/` in front of a real IBAN left eleven digits of the account number
+  in a payload cleared for egress, about one document in seventy-four), and a
+  coincidental IBAN claim reaching into a card's first digits suppressed every
+  window covering the rest of it, leaving fifteen digits of a genuine card under
+  an `[IBAN]` label — in 165 of 400 constructed documents of that shape.
+
+  The rule as implemented now: **no validating window is ever left partially
+  covered.** Every mod-97-valid registered-length window is claimed, the IBAN
+  search advances one character at a time instead of skipping a claim's length,
+  and overlapping claims are merged into their union. Where a Luhn-valid window
+  overlaps characters another validated identifier owns, the part nobody owns is
+  claimed provided the window sits inside ONE unbroken group — the discriminator
+  between a genuine card under a coincidental claim and a window running out of
+  a genuine IBAN into the amount beside it. Claiming the remainder
+  unconditionally cost 117 spans over 1718 characters on 300 realistic payment
+  documents; restricted this way it costs exactly what refusing it cost, 6 spans
+  over 82 characters, the same to the character as 0719c79. Tested:
+  `tests/test_leak_invariant.py::test_a_card_may_not_be_assembled_from_another_identifiers_digits`,
+  `tests/test_identifier_runs.py::test_a_coincidental_iban_does_not_suppress_a_genuine_one`,
+  `::test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole`,
+  `::test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban`.
+- **A card SHAPE is kept without a checksum; an IBAN shape is not.** Demoting
+  the Layer-1 patterns to candidate generators was measured both ways over 200
+  documents each: the IBAN pattern's false positives fell sharply and the CARD
+  pattern's did not move by a single span, while labelled cards carrying one
+  transcription typo went from 3 in 200 unclaimed to 73. A single wrong digit
+  always defeats Luhn — that is what Luhn is for — and it is the most ordinary
+  defect in an OCR'd or hand-typed document. So a `credit_card` pattern match
+  that no checksum accepts is kept at **MEDIUM** confidence with
+  `checksum_validated=False`: redacted by default, invisible at
+  `min_confidence=HIGH`, and ranked with the patterns rather than in front of
+  them. The rank rule now asks the FINDING whether a checksum stands behind it
+  instead of asking its type. Tested:
+  `tests/test_privacy_shield_regex_only.py::test_a_labelled_card_with_one_transcription_typo_is_still_claimed`,
+  `::test_a_card_shape_cannot_outrank_a_checksum`.
+- **The leak gate checks IBAN, card and e-mail, and nothing else.** Its oracle
+  independently validates those three, so a failure of the NAME layer — or of
+  the phone, date or national-number layers — cannot turn `leak-gate` red. Two
+  known German names written with no separator between them
+  (`Anna SchmidtKlaus Weber`, a `pdftotext` artefact of the class this package
+  exists for) produce `pii_detected=False` and an unchanged overlay, and the
+  gate is silent about it by construction. Extending the oracle to a category
+  with no checksum is not a small change — it needs an independent notion of
+  what a name IS — and it is not done here.
 - **A folder scan that could not read everything is not a clean result.**
   `walk_errors` lists the directories the walk could not enter,
   `scan_complete` is False when it is non-empty, and `all_allowed` is False as
@@ -267,13 +355,16 @@ next round starts from this rather than rediscovering it:
   and moves the false positives from "every capitalised pair" to "every
   capitalised pair the dictionary does not know", which is much smaller but not
   zero. It needs the same clean-corpus measurement before shipping.
-- **The layout bound has a cliff at about eighty characters of gap.** An
-  identifier whose groups are spaced further apart than that is not found.
-  Sweeping the bound from 4x to 1000x the identifier length does not change the
-  false-positive count at all, so it buys no precision; it is kept only to stop
-  two numbers at opposite ends of a long line being assembled, and set where no
-  real column reaches. Pinned by
-  `tests/test_leak_invariant.py::test_the_span_bound_has_a_cliff_and_this_is_where_it_is`.
+- **The layout bound's cliff is gone.** This entry used to say an identifier
+  whose groups are spaced more than about eighty characters apart is not found,
+  and that the cliff was pinned rather than discovered. Pinned was not safe: the
+  gate's oracle has no width rule, so at eighty-one spaces it claimed the
+  identifier, the detector did not, and the gate reported a leak — the same
+  mechanism as the interior-group bound, reproduced at 3 reds in 400 hypothesis
+  seeds. The bound bought no precision at any setting from 4x to 1000x, so it is
+  removed rather than moved, and the test that pinned the cliff is replaced by
+  `tests/test_leak_invariant.py::test_there_is_no_width_at_which_the_detector_stops_claiming`.
+  What this costs in over-redaction is under "What counts as one identifier".
 - **Single-character groups are accepted, so dotted prose is over-redacted.**
   "4 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1" is what `pdftotext` emits for a
   letter-spaced form field, and "4.1.1.1..." is punctuated prose. Nothing in

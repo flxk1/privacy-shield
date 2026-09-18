@@ -96,8 +96,15 @@ import ast
 import re as _re
 
 
-def _cited_tests():
-    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+#: Every document that cites a test as evidence. `docs/limits.md` was not in
+#: this list, and it is the document a reader consults to find out what the
+#: product does NOT do - so a citation in it going stale is exactly as bad as
+#: one in the CHANGELOG. Round 19 renamed four tests it cites.
+CITING_DOCUMENTS = ["CHANGELOG.md", "docs/limits.md"]
+
+
+def _cited_tests(document="CHANGELOG.md"):
+    changelog = (REPO_ROOT / document).read_text(encoding="utf-8")
     cited = set()
     for match in _re.finditer(
         r"`(tests/[A-Za-z0-9_./]+\.py)((?:::(?:Test|test)[A-Za-z0-9_]*)*)`", changelog
@@ -126,9 +133,10 @@ def _names_defined_in(path):
     return names
 
 
-def test_every_test_the_changelog_cites_exists():
+@pytest.mark.parametrize("document", CITING_DOCUMENTS)
+def test_every_test_a_document_cites_exists(document):
     missing = []
-    for path, names in sorted(_cited_tests()):
+    for path, names in sorted(_cited_tests(document)):
         target = REPO_ROOT / path
         if not target.exists():
             missing.append(path)
@@ -138,6 +146,6 @@ def test_every_test_the_changelog_cites_exists():
             if name not in defined:
                 missing.append(f"{path}::{name}")
     assert not missing, (
-        "the CHANGELOG cites tests that do not exist, so those claims are "
+        f"{document} cites tests that do not exist, so those claims are "
         f"unbacked prose: {missing}"
     )
