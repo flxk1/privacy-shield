@@ -13,11 +13,19 @@ prove:
 """
 
 import json
+from pathlib import Path
+
 import pytest
 
 from privacy_shield.audit_log import AuditEvent
 from privacy_shield import cli
-from privacy_shield.runner import DocumentScan, ScanReport, scan
+from privacy_shield.runner import (
+    EXTENSION_FILTERED_CHOSEN,
+    EXTENSION_FILTERED_DEFAULT,
+    DocumentScan,
+    ScanReport,
+    scan,
+)
 from privacy_shield.shield import PrivacyMode
 
 # Synthetic (fake) PII tokens used across the fixtures.
@@ -210,6 +218,32 @@ def test_cli_local_only_exits_two(pii_folder, temp_audit):
     assert code == 2  # blocked egress -> non-zero
 
 
+def test_cli_human_output_names_the_cause_of_a_non_document_block(tmp_path, capsys):
+    """Reproduced: one ordinary `.txt` file, one `.png` - no flags.
+
+    Every listed document was `[ALLOW]`, `BLOCKED: 0 document(s)` read as
+    "nothing is wrong", and `logo.png` - the only reason the exit code was 2
+    - was named nowhere in the human output. That trains an operator to
+    ignore exit 2; the file, or walk-level cause, that tripped it has to be
+    on the screen.
+    """
+    root = tmp_path / "folder"
+    root.mkdir()
+    (root / "ok.txt").write_text("hello world\n", encoding="utf-8")
+    (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    code = cli.main(["scan", str(root)])
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert "all_allowed: False" in out
+    # The per-document section still shows nothing blocked - that is correct,
+    # not the defect. The defect was that nothing ELSE named the cause.
+    assert "[ALLOW] " in out
+    assert "logo.png" in out, "the file that caused exit 2 is not named anywhere"
+    assert "skipped by the default extension scope" in out
+
+
 def test_cli_json_output(pii_folder, temp_audit, capsys):
     code = cli.main(["scan", str(pii_folder), "--json"])
     assert code == 0
@@ -269,6 +303,87 @@ def test_an_unreadable_directory_does_not_silently_truncate_the_scan(tmp_path):
         assert report.to_dict()["walk_errors"], "not surfaced in the report dict"
     finally:
         os.chmod(locked, 0o755)
+
+
+def test_an_unreadable_directory_named_like_a_filter_tag_is_not_misclassified(
+    tmp_path, monkeypatch
+):
+    """Reproduced: a RELATIVE root whose name begins with the filter tag.
+
+    `_record` used to write `f"{error.filename}: {error.strerror}"` into the
+    same list `str.startswith` then sorted into imposed / chosen / unreadable.
+    `error.filename` is the OS-reported path - filesystem-controlled text,
+    not this package's - and for a relative root it is exactly what `os.walk`
+    was given plus what it found: a directory named
+    `extension_filtered_chosen_docs`, containing an unreadable `locked`
+    subdirectory, produces the message
+    `"extension_filtered_chosen_docs/locked: Permission denied"`, which
+    starts with the CHOSEN-filter tag though nothing was filtered and no
+    extension was ever consulted. It was sorted into `chosen_filtered_files`
+    - which does not move `all_allowed` - and vanished from
+    `unreadable_errors`, which does. The scan reported `all_allowed = True`
+    over a directory it never read.
+    """
+    import os
+
+    root_name = "extension_filtered_chosen_docs"
+    monkeypatch.chdir(tmp_path)
+    root = Path(root_name)
+    root.mkdir()
+    (root / "readable.txt").write_text("Karte 4111 1111 1111 1111\n", encoding="utf-8")
+    locked = root / "locked"
+    locked.mkdir()
+    (locked / "hidden.txt").write_text("nichts", encoding="utf-8")
+    os.chmod(locked, 0o000)
+    try:
+        # A CHOSEN extensions filter, exactly as reproduced - the shape that
+        # must not, on its own, clear `all_allowed`.
+        report = scan(root_name, extensions=frozenset({".txt"}))
+
+        assert report.document_count >= 1, "the readable file was not scanned"
+        assert any(root_name in str(e) for e in report.walk_errors), (
+            "the locked directory left no trace in walk_errors"
+        )
+
+        # The permission error is genuinely UNREADABLE, whatever its message
+        # happens to start with.
+        assert any(root_name in e for e in report.unreadable_errors), (
+            "an unreadable directory was classified away by a message that "
+            "happens to start with a filter tag"
+        )
+        assert not any(root_name in e for e in report.chosen_filtered_files), (
+            "a permission error was reported as a chosen extension skip"
+        )
+
+        assert report.scan_complete is False
+        assert report.all_allowed is False, (
+            "all_allowed was certified True over a directory the walk could "
+            "not read, because its OS-reported path happened to start with "
+            "the chosen-filter tag"
+        )
+    finally:
+        os.chmod(locked, 0o755)
+
+
+def test_walk_error_kind_is_set_by_the_branch_not_read_from_the_message():
+    """The structural guarantee: `kind` is a field of its own.
+
+    A `WalkError` constructed with an UNREADABLE kind and a message that
+    textually looks like every filter tag stays UNREADABLE - there is no
+    parse step left that could disagree with the constructor.
+    """
+    from privacy_shield.runner import WalkError, WalkErrorKind
+
+    error = WalkError(
+        WalkErrorKind.UNREADABLE,
+        f"{EXTENSION_FILTERED_CHOSEN}: {EXTENSION_FILTERED_DEFAULT}: whatever text",
+    )
+    report = ScanReport(mode="STANDARD", destination="x", root="r", walk_errors=[error])
+
+    assert report.unreadable_errors == [str(error)]
+    assert report.chosen_filtered_files == []
+    assert report.imposed_filtered_files == []
+    assert report.all_allowed is False
 
 
 def test_a_complete_folder_scan_is_still_certifiable(tmp_path):

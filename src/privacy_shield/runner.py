@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -65,29 +66,55 @@ DEFAULT_EXTENSIONS = frozenset({
 # `ScanReport.imposed_filtered_files` vs. `chosen_filtered_files`.
 _UNSET_EXTENSIONS = object()
 
-# Tag prefix for a file the walk saw and chose not to read because its suffix
-# is not in `extensions` - as opposed to a directory/file `os.walk` could not
-# read at all (an OSError entry, the rest of `walk_errors`). Both leave a
-# document unread, but they are different facts and a caller must be able to
-# tell them apart. One string, so a caller can grep for it, same mechanism as
-# `media._tools.CHANNEL_UNAVAILABLE`:
-# `any(e.startswith(EXTENSION_FILTERED) for e in walk_errors)`.
-#
-# Two further-tagged variants distinguish WHY the filter applied - an
-# `extensions` the caller never passed (`DEFAULT_EXTENSIONS`, imposed) from
-# one the caller passed explicitly (chosen, including passing
-# `DEFAULT_EXTENSIONS` by name). See `ScanReport.all_allowed`: only the
-# imposed case affects it.
+# Tag prefix used in the *display text* of a filtered-file entry, kept for
+# callers who grep the printed report, same mechanism as
+# `media._tools.CHANNEL_UNAVAILABLE`. It is NOT what classifies an entry as
+# imposed / chosen / unreadable any more - see `WalkErrorKind` below for why.
 EXTENSION_FILTERED = "extension_filtered"
 EXTENSION_FILTERED_DEFAULT = f"{EXTENSION_FILTERED}_default"
 EXTENSION_FILTERED_CHOSEN = f"{EXTENSION_FILTERED}_chosen"
 
 
-def _filtered_entry(path: Path, *, chosen: bool) -> str:
-    """The `walk_errors` string for a file skipped by the extension filter."""
+class WalkErrorKind(str, Enum):
+    """Why a document went unread. The classifier a caller must be able to
+    tell apart - see `ScanReport.all_allowed`: only UNREADABLE and
+    FILTERED_DEFAULT count against it, FILTERED_CHOSEN does not.
+    """
+
+    UNREADABLE = "unreadable"
+    FILTERED_DEFAULT = "filtered_default"
+    FILTERED_CHOSEN = "filtered_chosen"
+
+
+@dataclass(frozen=True)
+class WalkError:
+    """One document the walk did not read, and WHY.
+
+    `kind` is a field of its own, set once by whichever branch of the walk
+    produced the entry - never inferred from `message`. `message` is free
+    text for a human or a JSON consumer and may contain an OS-reported
+    filename, which is attacker- or filesystem-controlled and MUST NOT be
+    parsed to recover `kind`: a directory literally named
+    `extension_filtered_chosen_docs` produced a `message` that began with the
+    chosen-filter tag while its `kind` was UNREADABLE, and the old
+    `str.startswith` classifier read the message and got it backwards - a
+    permission error the caller never chose was reported as a scope the
+    caller chose, and `all_allowed` came back True over an unread document.
+    """
+
+    kind: WalkErrorKind
+    message: str
+
+    def __str__(self) -> str:  # display only; never re-parsed for `kind`
+        return self.message
+
+
+def _filtered_entry(path: Path, *, chosen: bool) -> WalkError:
+    """The `walk_errors` entry for a file skipped by the extension filter."""
+    kind = WalkErrorKind.FILTERED_CHOSEN if chosen else WalkErrorKind.FILTERED_DEFAULT
     tag = EXTENSION_FILTERED_CHOSEN if chosen else EXTENSION_FILTERED_DEFAULT
     suffix = path.suffix.lower() or "<none>"
-    return f"{tag}: {path}: suffix {suffix} not in extensions"
+    return WalkError(kind, f"{tag}: {path}: suffix {suffix} not in extensions")
 
 
 @dataclass
@@ -191,12 +218,12 @@ class ScanReport:
     #: Directories/files the walk could not read, AND files the walk read but
     #: chose not to open because `extensions` did not name their suffix. All
     #: three leave a document unaccounted for, so all three live in the same
-    #: list and all three make the document list INCOMPLETE. They are still
-    #: distinguishable: an extension-skip is tagged `EXTENSION_FILTERED_
-    #: DEFAULT` or `EXTENSION_FILTERED_CHOSEN` (see `imposed_filtered_files` /
-    #: `chosen_filtered_files`); everything else in this list is a
-    #: directory/file the walk could not read at all (`unreadable_errors`).
-    walk_errors: List[str] = field(default_factory=list)
+    #: list and all three make the document list INCOMPLETE. Classification
+    #: is `WalkError.kind` - a field set once by the branch of the walk that
+    #: produced the entry, never inferred from the human-readable `message`
+    #: (which may embed an OS-reported filename the caller does not control;
+    #: see `WalkError`'s docstring for the defect that shape produced).
+    walk_errors: List[WalkError] = field(default_factory=list)
 
     @property
     def document_count(self) -> int:
@@ -212,7 +239,7 @@ class ScanReport:
         walk could not read; these were readable and the walk chose not to
         read them because of `extensions`.
         """
-        return [e for e in self.walk_errors if str(e).startswith(EXTENSION_FILTERED)]
+        return [str(e) for e in self.walk_errors if e.kind is not WalkErrorKind.UNREADABLE]
 
     @property
     def imposed_filtered_files(self) -> List[str]:
@@ -223,7 +250,7 @@ class ScanReport:
         of it - the case that hits an ordinary user. This is what makes
         `all_allowed` False alongside `unreadable_errors`; see its docstring.
         """
-        return [e for e in self.walk_errors if str(e).startswith(EXTENSION_FILTERED_DEFAULT)]
+        return [str(e) for e in self.walk_errors if e.kind is WalkErrorKind.FILTERED_DEFAULT]
 
     @property
     def chosen_filtered_files(self) -> List[str]:
@@ -234,7 +261,7 @@ class ScanReport:
         `scan_complete` False like everything else in `walk_errors`, but
         does NOT affect `all_allowed` on its own.
         """
-        return [e for e in self.walk_errors if str(e).startswith(EXTENSION_FILTERED_CHOSEN)]
+        return [str(e) for e in self.walk_errors if e.kind is WalkErrorKind.FILTERED_CHOSEN]
 
     @property
     def unreadable_errors(self) -> List[str]:
@@ -242,9 +269,12 @@ class ScanReport:
 
         The complement of `filtered_files` within `walk_errors`: a
         directory/file `os.walk` raised on, not one `extensions` (imposed or
-        chosen) skipped.
+        chosen) skipped. Classified by `WalkError.kind`, set by `_record` at
+        the moment the `OSError` is caught - never by inspecting the message,
+        which carries the OS-reported filename and is not a safe classifier
+        (see `WalkError`'s docstring).
         """
-        return [e for e in self.walk_errors if not str(e).startswith(EXTENSION_FILTERED)]
+        return [str(e) for e in self.walk_errors if e.kind is WalkErrorKind.UNREADABLE]
 
     @property
     def total_spans(self) -> int:
@@ -321,7 +351,7 @@ class ScanReport:
             "total_spans": self.total_spans,
             "all_allowed": self.all_allowed,
             "scan_complete": self.scan_complete,
-            "walk_errors": self.walk_errors,
+            "walk_errors": [str(e) for e in self.walk_errors],
             "filtered_files": self.filtered_files,
             "imposed_filtered_files": self.imposed_filtered_files,
             "chosen_filtered_files": self.chosen_filtered_files,
@@ -336,7 +366,7 @@ def _iter_files(
     recursive: bool,
     extensions: Optional[frozenset],
     extensions_chosen: bool,
-) -> List[Path]:
+) -> tuple[List[Path], List[WalkError]]:
     """Collect candidate document files under *root*, and what went unread.
 
     Returns ``(files, unread)``. The second value is not decoration: a folder
@@ -365,10 +395,20 @@ def _iter_files(
     import os
 
     files: List[Path] = []
-    unread: List[str] = []
+    unread: List[WalkError] = []
 
     def _record(error: OSError) -> None:
-        unread.append(f"{getattr(error, 'filename', root)}: {error.strerror}")
+        # `kind` is UNREADABLE unconditionally - set here, by the branch that
+        # caught the OSError, never derived from `message`. `error.filename`
+        # is filesystem-controlled text and may itself read as
+        # `extension_filtered_chosen_docs/locked` for an ordinary relative
+        # path; that must not make this entry look like a chosen filter skip.
+        unread.append(
+            WalkError(
+                WalkErrorKind.UNREADABLE,
+                f"{getattr(error, 'filename', root)}: {error.strerror}",
+            )
+        )
 
     for directory, subdirectories, names in os.walk(root, onerror=_record):
         here = Path(directory)
@@ -547,7 +587,7 @@ def scan(
         )
 
         documents: List[DocumentScan] = []
-        walk_errors: List[str] = []
+        walk_errors: List[WalkError] = []
 
         if not is_path:
             # Raw text.
@@ -608,6 +648,8 @@ __all__ = [
     "ScanReport",
     "DocumentScan",
     "SpanFinding",
+    "WalkError",
+    "WalkErrorKind",
     "DEFAULT_EXTENSIONS",
     "EXTENSION_FILTERED",
     "EXTENSION_FILTERED_DEFAULT",
