@@ -18,7 +18,7 @@ privacy-shield = "privacy_shield.cli:main"
 # Semantic / contextual PII layer (embeddings + shadow ONNX model)
 semantic = ["numpy>=1.24", "onnxruntime>=1.16"]
 # Document/media extraction (PDF, images)
-extract = ["PyMuPDF>=1.23", "opencv-python-headless>=4.8"]
+extract = ["PyMuPDF>=1.23", "opencv-python-headless>=4.8,<5", "Pillow>=10"]
 # OpenAI-compatible client for the embedded/native local-model HTTP path
 # (services/local_model_runtime.py). Without it that path degrades to
 # "embedded_openai_client_unavailable"; the ..._COMMAND subprocess path is
