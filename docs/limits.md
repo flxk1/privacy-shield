@@ -114,8 +114,8 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   let a column of figures be assembled into a checksum. Pinned by
   `tests/test_leak_invariant.py::test_the_line_break_bound_is_one_and_this_is_what_it_costs`.
 - **National person numbers need the `[national]` extra AND a country.** With
-  `python-stdnum` installed and `PRIVACY_SHIELD_NATIONAL_COUNTRIES` set, 20
-  check-digit validators across 19 EU countries are applied to token-level
+  `python-stdnum` installed and `PRIVACY_SHIELD_NATIONAL_COUNTRIES` set, 22
+  check-digit validators across 21 EU countries are applied to token-level
   candidates; all of them import and all of them fire on the library's own
   documented numbers, which round 19 had to fix and now tests. Both conditions are load-bearing and neither comes from the
   library: `identifiers.identifier_runs` joins across every non-alphanumeric
@@ -145,10 +145,11 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   documents of ordinary German business field shapes — invoice, order, meter,
   contract, personnel and file numbers — with every country enabled:
 
-  | | 0719c79 | round 19 |
-  |---|---|---|
-  | false positives, 200 clean documents, all 27 countries | 75 | **61** |
-  | `de` alone / `fr` alone / `it` alone | 0 / 0 / 1 | **0 / 0 / 0** |
+  | | 0719c79 | round 19 | round 20 |
+  |---|---|---|---|
+  | false positives, 200 clean documents, all 27 countries | 75 | 61 | **62** |
+  | `de` alone / `fr` alone / `it` alone | 0 / 0 / 1 | 0 / 0 / 0 | **0 / 0 / 0** |
+  | countries that actually validate anything | 19 | 19 | **21** |
 
   It is lower *despite* five validators having been resurrected, which is the
   honest shape of the trade: dropping the company schemes and the
@@ -178,10 +179,47 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   reporting zero false positives, is the same failure as a corpus too small to
   produce one.
 
+  **Eight country codes validated as configurable and detected nothing.**
+  `cy`, `gr`, `hu`, `lu`, `lv`, `mt`, `pt` and `si` carried empty validator
+  tuples, so `configured_countries(['pt'])` returned `('pt',)` without a word
+  and the caller read an empty result as "no national numbers in this
+  document". That is the `stdnum.at.svnr` defect in a different spelling,
+  sitting in the same table — and `pt` joined the set in round 19 when
+  `pt.nif` was dropped.
+
+  Three of the eight were not limitations at all. `python-stdnum` ships a
+  person number for Greece (`gr.amka`), Portugal (`pt.cc`) and Slovenia
+  (`si.emso`), and none had been looked for, because the table was written from
+  the EU country list rather than from what the library has. **Greece and
+  Slovenia are now configured** (`gr.amka` costs 1 false positive on 200 clean
+  documents and 1 on the 62-document set; `si.emso` costs 0).
+
+  **Portugal is dropped on a measurement**, and this is the one place a
+  validator was removed after round 19 said none would be: `stdnum.pt.cc`
+  accepts a repeated digit at every one of the ten digits across every length
+  from 12 to 20, twelve zeros included, so it matched a 15-digit IMEI and a
+  contract number written in groups — 6 false positives on 200 documents. Every
+  other configured validator accepts at most one or two repeated strings at a
+  single length. A check that accepts all zeros is a format match, and
+  `::test_no_configured_validator_accepts_a_string_of_zeros` now asks every
+  validator that question rather than waiting for a corpus to reveal it.
+
+  **A code with no validator is no longer configurable.** It is excluded and
+  the reason is logged at WARNING — not debug, which is where the `at` defect
+  lived for a round — so "configured" means "will be validated". The five that
+  remain (`cy`, `hu`, `lu`, `lv`, `mt`) have nothing but VAT or company
+  modules in `python-stdnum`, and a test reads that from the library rather
+  than from a list kept here, so the day one of them gains a person number it
+  fails and asks for a decision.
+
   **Still true: the layer is off by default, and the full-scope rate is about
   one spurious `[NATIONAL_ID]` per three documents.** Enable only the countries
   whose documents you actually scan, and measure on your own corpus before
-  trusting any count here.
+  trusting any count here. Tested:
+  `tests/test_national_ids.py::test_a_country_with_no_validator_is_not_configurable`,
+  `::test_every_country_either_validates_or_says_why_not`,
+  `::test_an_unvalidatable_country_has_nothing_but_company_identifiers`,
+  `::test_no_configured_validator_accepts_a_string_of_zeros`.
 
   Not adopted, with the measurements in this document: **Presidio** and
   **libpostal**. The **English label probe** is not restored.
@@ -212,17 +250,44 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   covered.** Every mod-97-valid registered-length window is claimed, the IBAN
   search advances one character at a time instead of skipping a claim's length,
   and overlapping claims are merged into their union. Where a Luhn-valid window
-  overlaps characters another validated identifier owns, the part nobody owns is
-  claimed provided the window sits inside ONE unbroken group — the discriminator
-  between a genuine card under a coincidental claim and a window running out of
-  a genuine IBAN into the amount beside it. Claiming the remainder
-  unconditionally cost 117 spans over 1718 characters on 300 realistic payment
-  documents; restricted this way it costs exactly what refusing it cost, 6 spans
-  over 82 characters, the same to the character as 0719c79. Tested:
-  `tests/test_leak_invariant.py::test_a_card_may_not_be_assembled_from_another_identifiers_digits`,
+  overlaps characters another validated identifier owns, **every piece of it
+  nobody owns that is at least `MATERIAL_RESIDUE` characters long is claimed.**
+
+  Round 19 restricted that to windows sitting inside one unbroken group, and
+  that was **a refusal wearing a precondition** — the very thing the sentence
+  above says may never decide a redaction. A card written in four groups of
+  four is not contiguous, so its remainder was never claimed:
+  `Beleg BE84 6613 1860    4526    0181    5908    3012    Ende` egressed
+  twelve of the card's sixteen digits, with the gate clean in all three modes
+  and `is_safe_for_external_llm` reporting "No PII detected". Four groups of
+  four is the `pdftotext` and hand-written shape this package exists for.
+
+  Measured on 400 documents of each shape, generated from layouts rather than
+  from the rule:
+
+  | rule | grouped card leaking | contiguous card leaking | cost on 300 payment documents |
+  |---|---|---|---|
+  | refuse the window | 200/200 | 200/200 | 6 spans / 82 chars |
+  | require contiguity (round 19) | 200/200 | 0/200 | 6 spans / 82 chars |
+  | piece ≥ 13 | 200/200 | 200/200 | 61 spans / 1311 chars |
+  | **piece ≥ 8** | **0/200** | **0/200** | **66 spans / 1350 chars** |
+  | any piece at all | 0/200 | 0/200 | 117 spans / 1718 chars |
+
+  **Eight is the gate's own `RESIDUE_RUN`**, shared deliberately and asserted
+  equal by `tests/test_leak_invariant.py::test_the_detector_covers_down_to_this_files_own_materiality_floor`.
+  That makes the two agree by construction: every piece the detector leaves is
+  shorter than the shortest fragment the gate reports, so no decision taken in
+  the detector can make the gate red. Thirteen — the length of the shortest
+  card — fails the grouped case, because the remainder there is twelve.
+
+  **The cost went up fivefold** and is recorded rather than softened: 6 spans
+  over 82 characters became 66 over 1350 on the same 300 payment documents,
+  about one over-redacted neighbour field in every five. Tested:
+  `tests/test_leak_invariant.py::test_a_card_is_not_LABELLED_out_of_another_identifiers_digits`,
+  `::test_a_grouped_card_under_a_coincidental_iban_claim`,
   `tests/test_identifier_runs.py::test_a_coincidental_iban_does_not_suppress_a_genuine_one`,
   `::test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole`,
-  `::test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban`.
+  `::test_covering_a_remainder_costs_this_much_beside_an_iban`.
 - **A card SHAPE is kept without a checksum; an IBAN shape is not.** Demoting
   the Layer-1 patterns to candidate generators was measured both ways over 200
   documents each: the IBAN pattern's false positives fell sharply and the CARD
@@ -232,16 +297,32 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   defect in an OCR'd or hand-typed document. So a `credit_card` pattern match
   that no checksum accepts is kept at **MEDIUM** confidence with
   `checksum_validated=False`: redacted by default and ranked with the patterns
-  rather than in front of them. **It is NOT filtered out at
-  `min_confidence=HIGH`** — an earlier version of this paragraph said it was,
-  and that was wrong. `_match_patterns` filters on the *pattern's* declared
-  confidence; the demotion happens later, in the validation pass, and nothing
-  re-filters afterwards. A scan at `min_confidence=HIGH` still returns the
-  finding, at `medium`. Both tests cited below run at `LOW`, so neither
-  checked it. The rank rule now asks the FINDING whether a checksum stands behind it
-  instead of asking its type. Tested:
+  rather than in front of them. The rank rule asks the FINDING whether a
+  checksum stands behind it instead of asking its type.
+
+  **It is filtered out at `min_confidence=HIGH` — as of round 20, and it was
+  not before.** The paragraph here claimed it was, the claim was false, and it
+  was corrected on public main. `min_confidence` was applied once, to the
+  *pattern's* declared confidence, before any pass that can change it, so a
+  finding demoted later escaped it and a scan at HIGH returned the card at
+  `medium`. The filter now reads the confidence a finding ends up with, which
+  makes the sentence true rather than trimming the sentence to fit. Both tests
+  cited beside the old claim ran at `LOW`, which is why neither caught it; the
+  one below runs at all three. Tested:
   `tests/test_privacy_shield_regex_only.py::test_a_labelled_card_with_one_transcription_typo_is_still_claimed`,
-  `::test_a_card_shape_cannot_outrank_a_checksum`.
+  `::test_a_card_shape_cannot_outrank_a_checksum`,
+  `::test_min_confidence_reads_the_confidence_a_finding_ends_up_with`.
+- **The gate's oracle claims overlapping windows rather than refusing them.**
+  It used to refuse any Luhn-valid window overlapping a span already claimed as
+  another validated identifier, on the reasoning that the same characters
+  cannot be two identifiers. The reasoning is sound and it was answering the
+  wrong question: identity decides a LABEL, coverage decides whether the
+  product kept its promise, and an oracle that will not look at a window cannot
+  say what remains of it. That refusal is what made the grouped-card leak above
+  invisible to the gate as well as to the detector — the same shape as the
+  defect the package was rejected for in round 9, relocated into the checker.
+  The oracle now measures every Luhn-valid window for residue, and the
+  detector's `MATERIAL_RESIDUE` floor is what keeps the two from disagreeing.
 - **The leak gate checks IBAN, card and e-mail, and nothing else.** Its oracle
   independently validates those three, so a failure of the NAME layer — or of
   the phone, date or national-number layers — cannot turn `leak-gate` red. Two

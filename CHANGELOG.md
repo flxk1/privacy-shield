@@ -112,6 +112,63 @@ trees — pin the major version.
 
 ### Fixed
 
+- **A card written in four groups of four still leaked, and the gate could not
+  see it.** Round 19 covered the remainder of a validating window only where
+  the window sat inside one unbroken group. That read as a discriminator and
+  was a refusal wearing a precondition — the exact thing the rule it
+  implemented says may never decide a redaction — so a grouped card whose first
+  group a coincidental IBAN claim happened to cover lost nothing but its label:
+  `Beleg BE84 6613 1860    4526    0181    5908    3012    Ende` egressed twelve
+  of the card's sixteen digits, in all three egress modes, with
+  `is_safe_for_external_llm` reporting "No PII detected". Measured on 400
+  documents of each shape: contiguous 400/400 leaking before round 19 and 0/400
+  after, grouped 400/400 both times.
+
+  Every unowned piece of a validating window that is at least `MATERIAL_RESIDUE`
+  characters long is claimed now, with no condition on the window's shape.
+  Eight is the gate's own `RESIDUE_RUN`, shared deliberately and asserted equal,
+  so every piece the detector leaves is shorter than the shortest fragment the
+  gate can report and the two agree by construction rather than by measurement.
+  A floor of thirteen — the shortest card — fails the grouped case, because the
+  remainder there is twelve. The cost is recorded rather than softened: 6 spans
+  over 82 characters on 300 payment documents became **66 over 1350**. Tested:
+  `tests/test_leak_invariant.py::test_a_grouped_card_under_a_coincidental_iban_claim`,
+  `::test_the_detector_covers_down_to_this_files_own_materiality_floor`,
+  `tests/test_identifier_runs.py::test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole`.
+- **The gate's oracle refused to look at the window that was leaking.** It
+  dropped any Luhn-valid window overlapping a span already claimed as another
+  validated identifier, so the grouped card above was never a validated
+  identifier and its residue was never counted: `leaks_in` returned nothing and
+  the gate certified the document clean. Identity decides a label; coverage
+  decides whether the promise held. The oracle claims every Luhn-valid window
+  now and measures it. The pinning test built only a contiguous card, so the
+  grouped shape had never been measured; grouping is a parameter of it.
+- **`min_confidence` read the pattern's confidence, not the finding's.** It was
+  applied once, before any pass that can change a confidence, so the card shape
+  demoted to MEDIUM in the validation pass came back from a scan at
+  `min_confidence=HIGH`, at `medium` — while the release note said it did not.
+  The note was corrected on public main; the filter now reads the confidence a
+  finding ends up with, so the claim is true rather than trimmed. Tested:
+  `tests/test_privacy_shield_regex_only.py::test_min_confidence_reads_the_confidence_a_finding_ends_up_with`.
+- **Eight country codes validated as configurable and detected nothing.**
+  `cy`, `gr`, `hu`, `lu`, `lv`, `mt`, `pt` and `si` carried empty validator
+  tuples, so `configured_countries(['pt'])` returned `('pt',)` in silence — the
+  `stdnum.at.svnr` defect in a different spelling, in the same table, with `pt`
+  joining the set in round 19. Three were not limitations at all:
+  `python-stdnum` ships a person number for Greece, Portugal and Slovenia and
+  none had been looked for, because the table was written from the EU country
+  list rather than from the library. Greece and Slovenia are configured (1 and
+  0 false positives on 200 clean documents); Portugal's `pt.cc` is dropped on a
+  measurement, because it accepts a repeated digit at every digit across every
+  length from 12 to 20, all zeros included, and matched an IMEI. A code with no
+  validator is excluded from `configured_countries` with the reason logged at
+  WARNING. Full-scope false positives 61 → **62**, with two more countries
+  live. Tested:
+  `tests/test_national_ids.py::test_a_country_with_no_validator_is_not_configurable`,
+  `::test_every_country_either_validates_or_says_why_not`,
+  `::test_an_unvalidatable_country_has_nothing_but_company_identifiers`,
+  `::test_no_configured_validator_accepts_a_string_of_zeros`.
+
 - **A coincidental IBAN suppressed a genuine one, and a genuine card
   underneath one.** The claim rule stated in this release — no character
   belongs to two identifiers — was implemented on the card layer only.
@@ -128,7 +185,7 @@ trees — pin the major version.
   validating window is left partially covered. Tested:
   `tests/test_identifier_runs.py::test_a_coincidental_iban_does_not_suppress_a_genuine_one`,
   `::test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole`,
-  `::test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban`.
+  `::test_covering_a_remainder_costs_this_much_beside_an_iban`.
 - **The release gate was red on 3 of 400 hypothesis seeds, for reasons nobody
   decided.** Two mechanisms, both removed. The detector carried two layout
   heuristics the brute-force oracle could not see — a span limit of sixteen
@@ -153,7 +210,7 @@ trees — pin the major version.
   all, and every Luhn-valid window made from the second copy's digits was
   reported as a card. A fail-open in the rule that stops the oracle counting one
   run of characters as two identifiers; offsets are now carried. Tested:
-  `tests/test_leak_invariant.py::test_the_oracle_does_not_double_claim_a_repeated_identifier`.
+  `tests/test_leak_invariant.py::test_the_oracle_sees_both_copies_of_a_repeated_identifier`.
 - **A labelled card with one transcription typo was dropped.** Demoting the
   Layer-1 patterns to candidate generators was measured both ways over 200
   documents each: the IBAN pattern's false positives fell sharply, the card
