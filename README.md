@@ -43,8 +43,12 @@ doc.egress_allowed     # the guard's verdict
 ```
 
 `privacy-shield scan <path|-|text>` is the same capability as a console script;
-it exits `0` when every overlay clears, `2` when a document is blocked. Full
-signature, flags and stdin handling: [docs/cli.md](docs/cli.md).
+it exits `0` only when every document is fully read AND cleared for egress,
+`2` when any of that is not so — a document blocked by the gate, a document
+only partly read, a path the walk could not read at all, or a file silently
+dropped by the default extension scope the caller never named. The human
+output names which of those it was, per file. Full signature, flags and stdin
+handling: [docs/cli.md](docs/cli.md).
 
 `egress_allowed` is a verdict on the source CLASS — privacy mode plus the
 confidential / professional-secrecy / special-category tiers — and not a

@@ -112,8 +112,50 @@ def _print_human(report: ScanReport, written: Optional[List[Path]]) -> None:
     if written:
         out.write(f"overlays written: {len(written)} -> {written[0].parent}\n")
     if not report.all_allowed:
+        # `all_allowed` is a conjunction of FOUR terms (see its docstring):
+        # every document cleared the gate, every document was fully read, the
+        # walk could read everything, and no file was silently dropped by a
+        # scope the caller never chose. Printing only `blocked_documents`
+        # answered the first term and went silent on the other three - a
+        # folder with zero blocked documents and one unreadable directory, or
+        # one file dropped by the imposed default extension list, still
+        # printed every document as `[ALLOW]`, a blocked count of `0`, and
+        # nothing naming `logo.png` or the locked directory anywhere in the
+        # output, while exiting 2. An operator reading that output has no way
+        # to find what tripped the exit code, which is what trains operators
+        # to stop reading it.
         blocked = report.blocked_documents
-        out.write(f"BLOCKED: {len(blocked)} document(s) may NOT egress.\n")
+        incomplete = report.incomplete_documents
+        unreadable = report.unreadable_errors
+        imposed = report.imposed_filtered_files
+        out.write(
+            f"BLOCKED: not every document is cleared for egress "
+            f"({len(blocked)} blocked by the gate, {len(incomplete)} "
+            f"incompletely read, {len(unreadable)} unreadable, "
+            f"{len(imposed)} skipped by the default extension scope).\n"
+        )
+        if blocked:
+            out.write("  blocked by the gate:\n")
+            for doc in blocked:
+                out.write(f"    - {doc.source}: {doc.blocked_reason}\n")
+        if incomplete:
+            out.write("  not fully read (some PII channel never ran):\n")
+            for doc in incomplete:
+                out.write(
+                    f"    - {doc.source}: {'; '.join(doc.incomplete_channels)}\n"
+                )
+        if unreadable:
+            out.write("  the walk could not read:\n")
+            for entry in unreadable:
+                out.write(f"    - {entry}\n")
+        if imposed:
+            out.write(
+                "  skipped by the default extension scope (no --extensions "
+                "or --all-files given; pass one to include them, or accept "
+                "the exclusion by naming it):\n"
+            )
+            for entry in imposed:
+                out.write(f"    - {entry}\n")
     out.flush()
 
 
