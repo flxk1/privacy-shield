@@ -21,6 +21,11 @@ the difference between a known limit and a silent one.
 
 from __future__ import annotations
 
+import importlib
+import random
+import re
+import zlib
+
 import pytest
 
 from privacy_shield import freshness
@@ -264,3 +269,192 @@ def test_the_domain_judgement_stays_on_this_side():
     assert "nn" in freshness.PERSON_NUMBER_BASENAMES
     assert "vat" not in freshness.PERSON_NUMBER_BASENAMES
     assert "bic" not in freshness.PERSON_NUMBER_BASENAMES
+
+
+# ---------------------------------------------------------------------------
+# an "alias of X" entry asserts a set relation - falsify it, do not read it
+# ---------------------------------------------------------------------------
+#
+# `REVIEWED_UNUSED[(country, basename)] = "alias of X, which is already
+# validated"` claims: every input the excluded module accepts, X accepts too.
+# That is a set-containment claim about two modules of the INSTALLED library
+# and it is mechanically checkable - the same move `test_iban_registry.py`
+# makes for the IBAN table, oracle instead of transcription.
+#
+# `("be", "ssn")` read "alias of be.nn" for a round. `be.ssn` is `be.nn` OR
+# `be.bis`, and BIS numbers - issued to non-residents, month field +20/+40 -
+# validate under `ssn` and not under `nn`. The claim was false and nothing
+# here checked it; a corpus with a BIS number in it would pass a BIS number
+# straight into the overlay.
+#
+# The search below does not know that. It reads the claimed pair out of
+# `REVIEWED_UNUSED` by pattern, not by name, and falsifies it against the
+# FORMAT SPACE of the excluded module: a length taken from the module's own
+# documented examples (`test_national_ids.py` uses the same technique to
+# catch a dead validator), random payload digits, and a brute-forced 1- and
+# 2-digit trailing check suffix - not a computed checksum, because this file
+# is not supposed to know these schemes are mod 97.
+
+_ALIAS_OF = re.compile(r"^alias of ([a-z]{2}\.[a-z_]+), which is already validated$")
+
+
+def _alias_claims():
+    """(country, basename) -> adopted module path, read from REVIEWED_UNUSED.
+
+    Whatever the table claims today is what gets checked; nothing is written
+    down twice.
+    """
+    claims = {}
+    for (country, basename), reason in freshness.REVIEWED_UNUSED.items():
+        match = _ALIAS_OF.match(reason)
+        if match:
+            claims[(country, basename)] = f"stdnum.{match.group(1)}"
+    return claims
+
+
+def _shortest_documented_length(path):
+    """The length of the module's own shortest valid doctest example.
+
+    Read at runtime from the installed library's docstring, the same source
+    `test_national_ids.py::_documented_examples` uses - not a length this file
+    keeps for the country by hand.
+    """
+    module = importlib.import_module(path)
+    text = (module.__doc__ or "") + (getattr(module, "validate", None).__doc__ or "")
+    quoted = re.findall(r">>> (?:validate|is_valid|compact)\('([^']+)'\)", text)
+    valid = [value for value in quoted if module.is_valid(value)]
+    assert valid, f"{path} documents no valid example to size a search on"
+    return min(sum(character.isalnum() for character in value) for value in valid)
+
+
+def _falsify_alias(excluded_path, adopted_path, *, seed):
+    """Search for a value the excluded module accepts and the adopted one
+    rejects. Returns that value, or None if none turned up in the budget.
+
+    Deliberately blind to WHICH digits are payload and WHICH are check: both
+    are generated and thrown at the two validators, the same as every other
+    input this package hands a checksum. A candidate the excluded module
+    itself rejects is not a counterexample and is skipped without inspecting
+    what it is.
+    """
+    excluded = importlib.import_module(excluded_path)
+    adopted = importlib.import_module(adopted_path)
+    length = _shortest_documented_length(excluded_path)
+    rng = random.Random(seed)
+    for _trial in range(500):
+        for suffix_len in (1, 2):
+            if suffix_len >= length:
+                continue
+            prefix = "".join(str(rng.randrange(10)) for _ in range(length - suffix_len))
+            for suffix_value in range(10 ** suffix_len):
+                candidate = prefix + str(suffix_value).zfill(suffix_len)
+                try:
+                    if not excluded.is_valid(candidate):
+                        continue
+                except Exception:
+                    continue
+                try:
+                    accepted_by_adopted = adopted.is_valid(candidate)
+                except Exception:
+                    accepted_by_adopted = False
+                if not accepted_by_adopted:
+                    return candidate
+    return None
+
+
+@needs_stdnum
+@pytest.mark.parametrize(
+    "country, basename, adopted_path",
+    [(c, b, p) for (c, b), p in sorted(_alias_claims().items())],
+    ids=lambda value: value if isinstance(value, str) else str(value),
+)
+def test_an_alias_claim_is_falsified_against_the_installed_library_not_read(
+    country, basename, adopted_path
+):
+    """Every "alias of X" entry in REVIEWED_UNUSED, checked mechanically.
+
+    A reviewer reading the docstrings found this table's other seven entries
+    holding. Reading is exactly the mode that missed `be.ssn`. This does not
+    read; it searches the excluded module's format space for the one thing
+    that would make the claim false, against today's installed `stdnum`.
+    """
+    excluded_path = f"stdnum.{country}.{basename}"
+    seed = zlib.crc32(f"{country}.{basename}->{adopted_path}".encode())
+    counterexample = _falsify_alias(excluded_path, adopted_path, seed=seed)
+    assert counterexample is None, (
+        f"{excluded_path} accepts {counterexample!r} and {adopted_path} does "
+        f"not - REVIEWED_UNUSED[{(country, basename)!r}] calls this an alias "
+        f"and the installed library disagrees. Adopt {excluded_path} (or "
+        f"replace whichever side is actually redundant), and show the value "
+        f"this found reaches the overlay redacted."
+    )
+
+
+def test_the_search_itself_finds_a_known_non_alias():
+    """The search has to work, demonstrated on a pair it is NOT told about by
+    name: the search machinery is exercised against `be.ssn` / `be.nn`
+    directly, independent of whatever REVIEWED_UNUSED says on this checkout.
+
+    This is the falsifiability check on the checker: if this starts passing
+    (finds nothing), the search has stopped working, not the claim become
+    true - `be.bis` numbers are a real, standard, currently-issued form.
+    """
+    if not STDNUM_PRESENT:
+        pytest.skip("reported as a failure by test_the_external_source_is_actually_present")
+    counterexample = _falsify_alias(
+        "stdnum.be.ssn", "stdnum.be.nn", seed=zlib.crc32(b"known-non-alias-probe")
+    )
+    assert counterexample is not None, (
+        "the differential search found no be.ssn/be.nn counterexample; it "
+        "should find a BIS number (month field +20/+40) every time"
+    )
+    import stdnum.be.ssn as ssn
+    import stdnum.be.nn as nn
+
+    assert ssn.is_valid(counterexample) and not nn.is_valid(counterexample)
+
+
+@needs_stdnum
+def test_the_reproduced_niss_case_is_closed(monkeypatch):
+    """The exact values from the reproduction: a resident NN and a BIS
+    number, both printed as "NISS" - the label the Belgian SSN uses for
+    either subtype - both now claimed by the validator this layer adopts.
+
+    `85063000153` (formatted `85.06.30-001.53`) is a resident national
+    number; `85273000106` (formatted `85.27.30-001.06`) is the same person's
+    shape with the month field advanced into the BIS range for a
+    non-resident. Both validate as `be.ssn`; only the first validated as the
+    superseded `be.nn`.
+    """
+    resident_nn = "85063000153"
+    bis_number = "85273000106"
+
+    import stdnum.be.ssn as ssn
+
+    assert ssn.is_valid(resident_nn)
+    assert ssn.is_valid(bis_number)
+
+    from privacy_shield import national
+
+    found = {
+        value
+        for _s, _e, value, _country, _scheme in national.find_national_ids(
+            f"NISS: {resident_nn} / NISS: {bis_number}", countries=["be"]
+        )
+    }
+    assert resident_nn in found, "the resident number regressed"
+    assert bis_number in found, (
+        "the BIS number is still not found - the alias entry, or the table, "
+        "was not actually corrected"
+    )
+
+    monkeypatch.setenv("PRIVACY_SHIELD_NATIONAL_COUNTRIES", "be")
+    from privacy_shield import scan
+
+    result = scan(f"NISS: {resident_nn} rest NISS: {bis_number}", force_text=True)
+
+    overlay = result.documents[0].overlay
+    assert resident_nn not in overlay
+    assert bis_number not in overlay, (
+        "a checksum-valid BIS number reached the overlay in the clear"
+    )

@@ -115,7 +115,13 @@ DELIBERATELY_ABOVE_A_DOCUMENTED_FORM: Dict[str, str] = {
 
 PERSON_NUMBER_MODULES: Dict[str, Tuple[Tuple[str, int], ...]] = {
     "at": (("stdnum.at.vnr", 10),),
-    "be": (("stdnum.be.nn", 11),),
+    # be.ssn, not be.nn: `stdnum.be.ssn` is `be.nn` OR `be.bis` - a resident
+    # national number OR a BIS number (issued to non-residents, month field
+    # advanced by 20 or 40). `be.nn` alone rejects every BIS number, which a
+    # differential search against the installed library found and the table
+    # missed for a round; see `freshness.REVIEWED_UNUSED[("be", "nn")]` and
+    # `tests/test_national_table_freshness.py`.
+    "be": (("stdnum.be.ssn", 11),),
     "bg": (("stdnum.bg.egn", 10),),
     "cy": (),
     "cz": (("stdnum.cz.rc", 10),),

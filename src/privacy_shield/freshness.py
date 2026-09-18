@@ -65,7 +65,14 @@ PERSON_NUMBER_BASENAMES = frozenset({
 #: rate and has not been measured.
 REVIEWED_UNUSED = {
     ("at", "tin"): "tax number, not the social-insurance person number",
-    ("be", "ssn"): "alias of be.nn, which is already validated",
+    # be.nn -> be.ssn, not the other way. be.ssn is be.nn OR be.bis, so a
+    # resident number that validates under be.nn validates under be.ssn too:
+    # falsified against the installed library, not read, in
+    # tests/test_national_table_freshness.py. The reverse claim
+    # ("be", "ssn"): "alias of be.nn" held a round and was false - be.ssn
+    # additionally accepts BIS numbers (non-residents, month field +20/+40)
+    # that be.nn rejects.
+    ("be", "nn"): "alias of be.ssn, which is already validated",
     ("es", "nif"): "covers companies as well as persons; dni/nie are the person forms",
     ("fr", "nif"): "tax number; fr.nir is the person number",
     ("pt", "cc"): "candidate - would give pt a validator it has none of; FP rate unmeasured",
