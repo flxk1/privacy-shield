@@ -900,3 +900,111 @@ wiring, overlay, local-model runtime, config, onnx contextual PII, media inputs,
 review profiles, the optional external-enforcement seam
 (`tests/test_privacy_gate_external_enforcement.py`), and the runner + CLI on synthetic
 PII fixtures (`tests/test_privacy_shield_runner.py`, 13 tests).
+
+## Loomground: what was measured, what was mapped, what was not
+
+This section records a measurement so the next round starts from it rather than
+repeating it. Nothing here is installed by default; the base package keeps
+`dependencies = []` and every plane is optional.
+
+### Mapped: the national-number table has a freshness verdict
+
+`national.PERSON_NUMBER_MODULES` is pinned to a `python-stdnum` release and
+checked against the installed library
+(`privacy_shield/freshness.py`, `tests/test_national_table_freshness.py`).
+Every validator the library ships for a country this layer declares is either
+looked for or carries a written reason in `freshness.REVIEWED_UNUSED`; an
+unreviewed one fails the suite. Measured at pin 2.2: no dead module paths, six
+countries admitted with no validator at all (`cy hu lu lv mt pt`, already loud
+at runtime), and eight shipped validators deliberately not used.
+
+`norm-freshness` turns the pin and the observation into a verdict and is
+optional — without it the staleness check still runs and the verdict is simply
+not offered. What crosses into the plane is a rule id, two opaque version
+strings and a change kind. Which modules count as a person-number validator is
+decided in `freshness.PERSON_NUMBER_BASENAMES` and stays here: the plane never
+learns what a national identification number is.
+
+The IBAN table was deliberately left alone. `tests/test_iban_registry.py`
+already checks it against `schwifty` and it is current; mapping its loud
+failure-when-schwifty-is-absent onto a softer verdict would weaken a guard that
+is correctly loud today.
+
+### Not built, and worth building: naming which term took a scan to zero
+
+`ScanReport.all_allowed` is a fail-closed conjunction of three named terms —
+the tree was fully walked, every document cleared the gate, every channel of
+every document was read — folded into one bool before any caller sees it. A
+caller that reads `False` cannot tell which term did it without separately
+interrogating `walk_errors`, `blocked_documents` and `incomplete_documents`.
+
+`loomground-collapse` names the limiting term and, more usefully, separates
+"a rule refused" from "nobody looked". Run against the three real terms:
+
+| case | overall | limiting term |
+|---|---|---|
+| folder read, one document blocked by classification | `NOT_SATISFIED` | `every_document_cleared_by_the_gate` |
+| the silent partial folder scan | `OPEN` | `tree_fully_walked` |
+| the geotagged video nobody parsed | `OPEN` | `every_channel_of_every_document_read` |
+
+That `NOT_SATISFIED` / `OPEN` split is the false-zero family this document
+already records twice — a document nobody read being reported with the same
+`False` as a document a rule refused. The refusal paths already carry enough
+structure for it: all three terms exist as named properties today. The cost is
+an optional extra and a reporting surface; the decision is whether the verdict
+becomes a three-valued thing in public API.
+
+### Not the mapping: the `loomground-vertical` registration surface
+
+A registration of this package through `loomground-vertical`'s three artifacts
+was built and then withdrawn — not because it failed, but because it was the
+wrong surface. Recorded so nobody builds it again by accident:
+
+- **Vocabulary — fits.** The egress decision is a function of source class,
+  privacy mode and destination. Those are real facets with controlled value
+  sets, and `berufsgeheimnis → confidential → internal` is a real subsumption
+  chain the plane resolves correctly.
+- **Detector taxonomy — does not fit.** `EMAIL`, `IBAN`, `CREDIT_CARD` are not
+  facets of a subject: a facet is a property of the whole document, while a
+  finding is a property of a span and carries a confidence and an offset the
+  card has no place for. Every field lands in `[unmapped]` notes. Forcing it in
+  would mean teaching a universal plane what PII is, which is the land-grab in
+  the other direction.
+- **Jurisdiction pack — shares nothing but the word.** The pack is courts,
+  judgment-marker patterns and instrument role-steps. This package reads no
+  judgments; its per-country data is IBAN lengths, national-number validators
+  and per-language name lists, which are detector tables.
+- **Requirements house — does not fit as the builder stands.** `build_house`
+  assigns an obligation to a room through `_ARTIFACT_HINT`, a hardcoded
+  legal-instrument vocabulary (`dpia`, `fria`, `ropa`, `conformity-assessment`,
+  `technical-documentation`, `dpo`, `privacy-policy`, `dpa`). None of this
+  package's obligations match it and there is no seam for a vertical to say
+  which artifact discharges which duty, so all eleven norms collapse into one
+  bearer-keyed room. The only way to get informative rooms is to put the
+  discharging surface in the `bearer` field — but the bearer of
+  `only_the_overlay_egresses` is this skill, not the overlay. An explicit
+  `artifact_key` on the obligation atom would make it fit; that is an upstream
+  change.
+
+No defect from twenty rounds of adversarial verification would have been caught
+by registering. The case for it was consistency, not defect-finding, and it is
+recorded as the weaker case it was. The mapping actually wanted is grounding
+this package's policy into a `loomground-versum` store on the full 5D+nD
+coordinate, which is knowledge work in a store and not a Python registry.
+
+### Compiling the governance block: what it can and cannot see
+
+`policy-compiler` compiles the block's fifteen norms with all four planes live
+and reports **zero conflicts** among the four prohibitions and three
+obligations. That zero is close to uninformative: `detect_conflicts` keys on
+bearer plus action after case and whitespace folding, and the block's action
+slugs are pairwise distinct, so they cannot collide by construction. A single
+hyphen (`value placeholder map` vs `value-placeholder map`) defeats it, and so
+does any paraphrase.
+
+The consequence worth recording: `resolve()` returns **`undetermined`** for
+"egress the original file byte for byte" — the `redact_audio` defect this
+document records — because the matcher is substring containment against
+`egress original unredacted text`. A compiled norm that cannot recognise its
+own flagship violation is not a gate. What the compiling was good for was
+forcing each norm to be checked for a binding, which found three that had none.
