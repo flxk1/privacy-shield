@@ -175,23 +175,33 @@ def _iban_ok(candidate: str) -> bool:
 # shape. Nothing about spacing, grouping, boundaries or punctuation.
 
 
-def _oracle_cards(
-    text: str, claimed: "list[tuple[int, int]]" = ()
-) -> "list[tuple[str, str, int, int]]":
+def _oracle_cards(text: str) -> "list[tuple[str, str, int, int]]":
     """Every Luhn-valid run of 13-19 digits, whatever lies between them.
 
-    *claimed* holds spans already established as some OTHER validated
-    identifier. A window overlapping one is refused, because no character can
-    belong to two identifiers at once: an IBAN's digits are the IBAN's, and a
-    Luhn-valid window made of an IBAN's tail plus the digits after it is not a
-    third identifier, it is the same characters counted twice.
+    NOTHING IS REFUSED, and the argument for refusing is written out here
+    because it was persuasive and wrong twice.
 
-    This is definitional, in the same way that "a letter cannot appear inside a
-    card number" is, and the detector has enforced it from the start via its
-    `avoid` argument. The oracle did not, so it reported residue for candidates
-    the detector rightly declined - and because the property test draws such a
-    line at random, `leak-gate` went red on some runs and green on others. An
-    intermittent gate is worse than a red one; it teaches people to re-run.
+    It said: a window overlapping a span already established as some other
+    validated identifier cannot be a third identifier, because no character
+    belongs to two identifiers at once - an IBAN's digits are the IBAN's, and a
+    Luhn-valid window made of an IBAN's tail plus the digits after it is the
+    same characters counted twice. True as far as it goes. What it licensed was
+    an oracle that could not SEE a genuine card whose first group a coincidental
+    IBAN claim happened to cover, and the gate then reported
+    "Beleg BE84 6613 1860    4526    0181    5908    3012    Ende" as clean in
+    all three egress modes with twelve of the card's sixteen digits standing in
+    the overlay.
+
+    Identity and coverage are different questions and only the second one is
+    this file's business. Whether those characters are "one identifier or two"
+    decides what LABEL a finding carries; whether they are still in the payload
+    decides whether the product kept its promise. So the oracle claims every
+    Luhn-valid window and asks only whether the overlay still contains it.
+
+    The double-counting this used to prevent is handled where it belongs, by
+    the detector covering the remainder of every window it does not label - and
+    `RESIDUE_RUN` below is the shared floor that makes the two agree, since a
+    fragment shorter than that is not reported by either.
 
     Punctuation of any width is skipped - two spaces, ten spaces, a dot and a
     space, a pipe with spaces either side. A letter ends the search, because a
@@ -212,10 +222,7 @@ def _oracle_cards(
                     break
                 if len(digits) >= 13:
                     candidate = "".join(digits)
-                    if _luhn_ok(candidate) and not any(
-                        start < claim_end and claim_start <= index
-                        for claim_start, claim_end in claimed
-                    ):
+                    if _luhn_ok(candidate):
                         found.append(
                             (candidate, text[start:index + 1], start, index + 1)
                         )
@@ -326,23 +333,20 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
     bound still lets it through to be reported.
     """
     found: list[tuple[str, str, str]] = []
-    # THE OFFSETS ARE CARRIED, not looked up again.
-    #
-    # `already` used to be rebuilt with `text.index(written)`, which finds the
-    # FIRST occurrence. A document containing the same IBAN twice therefore
-    # registered the first one's span twice and the second one's not at all, so
-    # every Luhn-valid window made out of the second copy's digits was offered
-    # as a card. A fail-open in the oracle's own overlap rule - the rule that
-    # stops it reporting one run of characters as two identifiers.
-    already: "list[tuple[int, int]]" = []
-    for canonical, as_written, start, end in _oracle_emails(text):
+    # The offsets each finder returns are carried rather than looked up again.
+    # They were rebuilt with `text.index(written)` - the FIRST occurrence - so a
+    # document holding the same IBAN twice registered one span twice and the
+    # other not at all. That fed the card pass's overlap rule, which has since
+    # been removed altogether; the offsets stay carried because looking a
+    # written form up by value is wrong however it is used.
+    for canonical, as_written, _start, _end in _oracle_emails(text):
         found.append(("email", canonical, as_written))
-        already.append((start, end))
-    for canonical, as_written, start, end in _oracle_ibans(text):
+    for canonical, as_written, _start, _end in _oracle_ibans(text):
         found.append(("iban", canonical, as_written))
-        already.append((start, end))
-    # Cards last, and told what the other validated layers already own.
-    for canonical, as_written, _start, _end in _oracle_cards(text, already):
+    # Cards are told nothing about what the other layers claimed, on purpose:
+    # see _oracle_cards. An overlapping window is still an identifier this file
+    # must be able to see the remains of.
+    for canonical, as_written, _start, _end in _oracle_cards(text):
         found.append(("credit_card", canonical, as_written))
     return [row for row in found if _oracle_terminators(row[2]) <= 1]
 
@@ -1843,26 +1847,47 @@ def test_a_mixture_of_terminators_in_one_document():
     ],
 )
 @pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
-def test_a_card_may_not_be_assembled_from_another_identifiers_digits(text, mode):
-    """The residue class that made the gate INTERMITTENT.
+def test_a_card_is_not_LABELLED_out_of_another_identifiers_digits(text, mode):
+    """The residue class that made the gate INTERMITTENT, restated.
 
     A Luhn-valid window built from an IBAN's tail plus the digits after it is
-    not a third identifier; it is the same characters counted twice. The
-    detector has refused this from the start through its `avoid` argument, the
-    oracle did not, and the property test draws such a line at random - so
-    `leak-gate` went red on some runs and green on others. An intermittent gate
-    is worse than a red one, because it teaches people to re-run.
+    not a third identifier; it is the same characters counted twice. This test
+    used to assert that the ORACLE does not report such a window, and that was
+    the wrong half of the sentence: identity decides a label, coverage decides
+    whether the product kept its promise, and an oracle that refuses to look at
+    a window cannot tell anybody what remains of it. That refusal hid a genuine
+    grouped card whose first four digits a coincidental IBAN claim happened to
+    cover - twelve of sixteen digits in a payload the gate called clean.
+
+    So the oracle sees these windows now, and what is asserted here is what
+    actually has to hold:
+
+      * the gate is clean in all three egress modes, because every piece of
+        the window nobody owns is shorter than MATERIAL_RESIDUE and therefore
+        below the floor this file itself calls immaterial;
+      * no finding is LABELLED a card out of the IBAN's own characters;
+      * and the neighbours keep their digits - the trailing "00 00 7" is not
+        redacted, which is the over-redaction this arrangement avoids.
 
     A UUID beside an account number beside trailing digits is an ordinary
     machine-generated line, not a 130-character concatenation, so this is not
     the artefact it was accepted as two rounds ago.
     """
     assert_no_leak(text, mode=mode)
-    assert not [
-        canonical
-        for kind, canonical, _written in validated_identifiers(text)
-        if kind == "credit_card"
-    ], "a card was assembled out of the IBAN's own digits"
+
+    from privacy_shield import identifiers
+
+    ibans = identifiers.find_ibans(text)
+    assert ibans, "this case is about a window overlapping an IBAN claim"
+    owned = set()
+    for start, end, _value in ibans:
+        owned.update(range(start, end))
+    for start, end, _value in identifiers.find_cards(
+        text, avoid=[(s, e) for s, e, _v in ibans]
+    ):
+        assert not (set(range(start, end)) & owned), (
+            f"a card span at [{start},{end}) is made of the IBAN's own characters"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1982,19 +2007,68 @@ def test_a_placeholder_is_a_hard_break_when_counting_residue():
     assert _residue_run("11113333", "Konto 1111 3333 offen", "1111 3333") == "11113333"
 
 
-def test_the_oracle_does_not_double_claim_a_repeated_identifier():
-    """`already` was built with `text.index(written)`, the FIRST occurrence.
+def test_the_oracle_sees_both_copies_of_a_repeated_identifier():
+    """Offsets are carried, not looked up by value.
 
-    A document containing the same IBAN twice registered the first one's span
-    twice and the second one's not at all, so every Luhn-valid window made out
-    of the second copy's digits was offered as a card - identifiers reported
-    twice, out of one run of characters, by the rule that exists to stop
-    exactly that.
+    They were rebuilt with `text.index(written)` - the FIRST occurrence - so a
+    document holding the same IBAN twice registered one span twice and the
+    other not at all. The card pass consumed those spans, and it no longer
+    does; what stays true, and is the part that was ever worth asserting, is
+    that both copies are SEEN. An oracle that can only find the first
+    occurrence of a value is an oracle that cannot report the second one
+    leaking.
     """
     text = f"Konto {EXAMPLE_IBAN} und nochmal {EXAMPLE_IBAN} Ende"
     kinds = [kind for kind, _canonical, _written in validated_identifiers(text)]
     assert kinds.count("iban") == 2, kinds
-    assert kinds.count("credit_card") == 0, (
-        "cards assembled from an IBAN's own digits are being reported: "
-        f"{kinds}"
+    assert_no_leak(text)
+
+
+# ---------------------------------------------------------------------------
+# The one constant the detector and this file DO share, and why
+# ---------------------------------------------------------------------------
+
+def test_the_detector_covers_down_to_this_files_own_materiality_floor():
+    """`identifiers.MATERIAL_RESIDUE` is this file's `RESIDUE_RUN`.
+
+    Sharing it is what makes the two agree by construction rather than by
+    measurement. The detector covers every unowned piece of a validating window
+    that is at least this long, so every piece it leaves is shorter than the
+    shortest fragment reported here - and no decision taken in the detector can
+    make this gate red.
+
+    It is not the kind of sharing the layout bounds were removed for. Those
+    were heuristics about the page, and teaching the oracle one blinds it to
+    whatever the detector refuses. This is a materiality POLICY that this file
+    owns and the detector obeys. If the detector's floor ever rises above this
+    one it goes back to leaking reportable residue, and this fails.
+    """
+    from privacy_shield import identifiers
+
+    assert identifiers.MATERIAL_RESIDUE == RESIDUE_RUN, (
+        f"the detector covers down to {identifiers.MATERIAL_RESIDUE} characters "
+        f"and this gate reports from {RESIDUE_RUN}; the gap between them is "
+        "residue nobody claims and nobody reports"
+    )
+
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_grouped_card_under_a_coincidental_iban_claim(mode):
+    """The reported blocker, verbatim.
+
+        'Beleg BE84 6613 1860    4526    0181    5908    3012    Ende'
+          -> 'Beleg [IBAN]    0181    5908    3012    Ende'
+
+    Twelve of sixteen digits of a Luhn-valid card in a payload the gate called
+    clean in all three egress modes, and `is_safe_for_external_llm` reported
+    "No PII detected" for it. The first eight characters of the reference
+    compact to a mod-97-valid Belgian length that reaches into the card's first
+    group, and round 19's contiguity precondition then refused the remainder of
+    every window covering the rest of it.
+
+    Both halves were blind at once: the detector refused to claim, and the
+    oracle refused to look, so nothing could report it.
+    """
+    assert_no_leak(
+        "Beleg BE84 6613 1860    4526    0181    5908    3012    Ende", mode=mode
     )

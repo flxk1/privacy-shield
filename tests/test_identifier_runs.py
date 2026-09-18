@@ -294,31 +294,56 @@ def test_a_coincidental_iban_does_not_suppress_a_genuine_one():
     assert _longest_surviving_digit_run(text, spans) == 0
 
 
-@pytest.mark.parametrize("seed", range(12))
-def test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole(seed):
-    """The symmetric case, which lost the card WHOLE.
+#: How a card is written on the page. The round-19 version of the test below
+#: built a CONTIGUOUS card only, so the shape this package exists for - four
+#: groups of four, out of `pdftotext` or a human hand - was never measured, and
+#: the rule that passed it refused every grouped card's remainder.
+CARD_GROUPINGS = [
+    pytest.param(None, "", id="contiguous"),
+    pytest.param(4, " ", id="four_by_four"),
+    pytest.param(4, "    ", id="four_by_four_wide_column"),
+    pytest.param(4, "-", id="four_by_four_hyphen"),
+    pytest.param(4, "\u00a0", id="four_by_four_nbsp"),
+    pytest.param(8, " ", id="eight_by_eight"),
+]
+
+
+@pytest.mark.parametrize("grouping, separator", CARD_GROUPINGS)
+@pytest.mark.parametrize("seed", range(4))
+def test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole(
+    seed, grouping, separator
+):
+    """The symmetric case, which lost the card WHOLE - in every grouping.
 
     A coincidental IBAN claim reaching into a card's first digits was handed to
     `find_cards` as `avoid`, and every window covering the rest of the card
-    overlapped it and was refused - so fifteen digits of a genuine card stood
-    in the payload under an [IBAN] label. On 400 constructed documents of this
-    shape it happened in 165; the fix claims the part of a validating window
-    nobody else owns, and it happened in none.
+    overlapped it and was refused, so the rest of a genuine card stood in the
+    payload under an [IBAN] label.
 
-    The document is built here rather than written down: a reference number
-    whose leading characters make a registered country code, a line break, a
-    label, and a nineteen-digit Luhn-closed number, with the reference's check
-    pair solved so that the whole assembly validates as an IBAN.
+    Round 19's version of this test built a CONTIGUOUS card and nothing else,
+    and the rule that passed it - claim the remainder only where the window
+    sits inside one unbroken group - left every GROUPED card leaking, which is
+    how a card is actually written. The grouping is a parameter now, and the
+    metric is the gate's own: no run of MATERIAL_RESIDUE characters of the card
+    may survive.
+
+    The document is built here rather than written down: a reference whose
+    leading characters make a registered country code, a line break, a label
+    and a Luhn-closed number, with the reference's check pair solved so that the
+    assembly validates as an IBAN.
     """
     rng = random.Random(seed)
     text = None
     for _attempt in range(400):
         card = _luhn_closed(rng, 19)
+        written = card if grouping is None else separator.join(
+            card[i:i + grouping] for i in range(0, len(card), grouping)
+        )
         for head in (3, 4, 5):
             tail = "".join(str(rng.randrange(10)) for _ in range(13 - head))
             for check in range(2, 99):
                 if identifiers.iban_ok(f"DE{check:02d}{tail}KARTE{card[:head]}"):
-                    text = f"Karte DE{check:02d}{tail}\nKarte {card}\nBetrag 90,00"
+                    text = f"Karte DE{check:02d}{tail}\nKarte {written}\nBetrag 90,00"
                     break
             if text:
                 break
@@ -330,15 +355,17 @@ def test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole(seed):
     assert ibans, "the coincidental IBAN claim is what this case is about"
     cards = identifiers.find_cards(text, avoid=[(s, e) for s, e, _v in ibans])
 
-    covered = set()
-    for start, end, _value in list(ibans) + list(cards):
-        covered.update(range(start, end))
-    at = text.index(card)
-    missing = sorted(set(range(at, at + len(card))) - covered)
-    assert not missing, (
-        f"{len(missing)} digits of a genuine card left standing; "
-        f"longest surviving run {_longest_surviving_digit_run(text, list(ibans) + list(cards))}"
-    )
+    # The gate's metric, not a span count: what SURVIVES, with a placeholder as
+    # a hard break, measured against the floor the gate reports at.
+    overlay = _overlay(text, list(ibans) + list(cards), "[X]")
+    segments = ["".join(c for c in part if c.isalnum()) for part in overlay.split("[X]")]
+    for size in range(len(card), identifiers.MATERIAL_RESIDUE - 1, -1):
+        for index in range(len(card) - size + 1):
+            fragment = card[index:index + size]
+            assert not any(fragment in segment for segment in segments), (
+                f"{size} of {len(card)} digits of a genuine card survived; "
+                f"overlay {overlay!r}"
+            )
 
 
 def _luhn_closed(rng, length):
@@ -350,21 +377,38 @@ def _luhn_closed(rng, length):
     raise AssertionError("unreachable: one of ten last digits closes Luhn")
 
 
-#: What claiming a validating window's unowned remainder is allowed to cost on
-#: 300 realistic German payment documents that hold one genuine IBAN each and
-#: no card at all. Every span here is over-redaction.
+#: What covering a validating window's unowned remainder COSTS on 300 realistic
+#: German payment documents that hold one genuine IBAN each and no card at all.
+#: Every span here is over-redaction, and the number went UP fivefold in round
+#: 20. That is the price of the blocker's fix and it is recorded rather than
+#: softened.
 #:
-#: Claiming the remainder unconditionally scored 117 spans over 1718 characters
-#: on this corpus - it ran out of the IBAN into the amount and the date beside
-#: it, on more than a third of the documents. Claiming the whole overlapping
-#: window scored 282 over 7391, nearly one mangled field per document.
-#: Restricting it to a window that sits inside ONE unbroken group scores what
-#: refusing the window outright scored, to the character: 6 spans over 82
-#: characters at 0719c79 and 6 over 82 here.
-IBAN_NEIGHBOURHOOD_BUDGET = 6
+#: Round 19 claimed the remainder only where the validating window sat inside
+#: one unbroken group, and scored 6 spans over 82 characters here - the same to
+#: the character as refusing the window outright, which is exactly what it
+#: turned out to be. A card written in four groups of four is not contiguous,
+#: so its remainder was never claimed and twelve of its sixteen digits egressed
+#: with the gate reporting no PII. A refusal expressed as a precondition is
+#: still a refusal.
+#:
+#: Measured on 400 documents of each shape, generated from layouts rather than
+#: from the rule:
+#:
+#:                  grouped leak  contiguous leak  cost on this corpus
+#:   refuse           200/200        200/200        6 spans /   82 chars
+#:   contiguous       200/200          0/200        6 spans /   82 chars
+#:   piece >= 13      200/200        200/200       61 spans / 1311 chars
+#:   piece >= 8         0/200          0/200       66 spans / 1350 chars
+#:   any piece          0/200          0/200      117 spans / 1718 chars
+#:
+#: Eight is `MATERIAL_RESIDUE`, which is the gate's own `RESIDUE_RUN`. Thirteen
+#: - the length of the shortest card - fails the grouped case, because the
+#: remainder there is twelve digits.
+IBAN_NEIGHBOURHOOD_BUDGET = 66
+IBAN_NEIGHBOURHOOD_CHARACTER_BUDGET = 1350
 
 
-def test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban():
+def test_covering_a_remainder_costs_this_much_beside_an_iban():
     rng = random.Random(1719)
     templates = [
         "Rechnung Nr. 2026-{ref}\nZahlbar auf IBAN {iban}\nBetrag 1.349,00 EUR\nFaellig 30.04.2026\n",
@@ -375,16 +419,23 @@ def test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban():
     ]
     countries = list(synth.IBAN_COUNTRIES)
     spans = 0
+    characters = 0
     for index in range(300):
         document = templates[index % len(templates)].format(
             iban=synth.make_iban(rng, countries[index % len(countries)]),
             ref="".join(str(rng.randrange(10)) for _ in range(rng.randint(4, 9))),
         )
         ibans = identifiers.find_ibans(document)
-        spans += len(identifiers.find_cards(document, avoid=[(s, e) for s, e, _v in ibans]))
-    assert spans <= IBAN_NEIGHBOURHOOD_BUDGET, (
+        found = identifiers.find_cards(document, avoid=[(s, e) for s, e, _v in ibans])
+        spans += len(found)
+        characters += sum(end - start for start, end, _v in found)
+    assert spans == IBAN_NEIGHBOURHOOD_BUDGET, (
         f"{spans} card spans on 300 documents that contain no card, "
-        f"budget {IBAN_NEIGHBOURHOOD_BUDGET}"
+        f"recorded {IBAN_NEIGHBOURHOOD_BUDGET}"
+    )
+    assert characters == IBAN_NEIGHBOURHOOD_CHARACTER_BUDGET, (
+        f"{characters} characters over-redacted, recorded "
+        f"{IBAN_NEIGHBOURHOOD_CHARACTER_BUDGET}"
     )
 
 

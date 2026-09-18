@@ -88,6 +88,24 @@ MAX_IBAN_LENGTH = 34
 MIN_CARD_LENGTH = 13
 MAX_CARD_LENGTH = 19
 
+#: The shortest run of an identifier's own characters that counts as SURVIVING.
+#:
+#: Not this module's own number. It is the release gate's `RESIDUE_RUN`, and
+#: tests/test_leak_invariant.py asserts the two are equal, because the gate is
+#: what defines materiality here: below eight characters a fragment is
+#: coincidence rather than a surviving identifier, and the gate does not report
+#: it. Sharing it is what makes the two agree by CONSTRUCTION rather than by
+#: measurement - every piece this detector leaves unclaimed is shorter than the
+#: shortest thing the gate can report, so the gate cannot go red on a decision
+#: taken here.
+#:
+#: This is not the kind of sharing the layout bounds were removed for. Those
+#: were heuristics about the page, and an oracle that learns one goes blind to
+#: whatever it refuses. This is a materiality POLICY that the gate owns and
+#: this module obeys; if they ever diverge the test fails rather than the
+#: coverage silently shrinking.
+MATERIAL_RESIDUE = 8
+
 # THE RULE, in one sentence:
 #
 #   A candidate is any maximal sequence of ASCII alphanumerics joined by single
@@ -549,26 +567,39 @@ def _card_spans_in_run(
                 # A window that reuses characters another validated identifier
                 # owns does not get to be a second identifier - but it is not
                 # discarded either, because discarding it loses whatever part
-                # of it nobody owns. That cost a GENUINE card, whole: a
-                # coincidental IBAN claim reaching into the card's first digits
-                # suppressed every window covering the rest of it, and fifteen
-                # digits stood in the payload under an [IBAN] label. On 400
-                # constructed documents of that shape it happened in 165.
+                # of it nobody owns, and that part is usually the rest of a
+                # genuine card.
                 #
-                # The remainder is claimed only when the validating window sits
-                # inside ONE unbroken group, which is the discriminator between
-                # the two shapes. A genuine card is one solid field, so a claim
-                # overlapping it is the assembled one and the remainder is real
-                # card digits. A window that instead runs OUT of a genuine IBAN
-                # into the amount and the date beside it crosses separators;
-                # claiming its remainder redacted those fields on 117 of 300
-                # realistic payment documents, against 4 for both the shipped
-                # rule and this one.
-                if offsets[position + size - 1] + 1 - offsets[position] != size:
-                    continue
+                # EVERY unowned piece of MATERIAL_RESIDUE characters or more is
+                # claimed. No condition on the window's shape: the previous
+                # version required it to sit inside one unbroken group, which
+                # sounded like a discriminator and was a refusal wearing one -
+                # a card written in four groups of four is not contiguous, so
+                # its remainder was never claimed and
+                # "Beleg <coincidental IBAN><card in 4x4>" egressed twelve of
+                # the card's sixteen digits with the gate reporting no PII.
+                # That is the ordinary pdftotext and hand-written shape.
+                #
+                # Measured on 400 documents of each shape, generated from
+                # layouts rather than from this rule:
+                #
+                #                grouped leak  contiguous leak  over-redaction
+                #   refuse         200/200        200/200        70 sp / 1045 ch
+                #   contiguous     200/200          0/200        70 sp / 1045 ch
+                #   piece >= 13    200/200        200/200       131 sp / 2500 ch
+                #   piece >= 8       0/200          0/200       137 sp / 2622 ch
+                #   any piece        0/200          0/200       199 sp / 3046 ch
+                #
+                # A floor of thirteen - the length of the shortest card - fails
+                # the grouped case, because the remainder there is twelve.
+                # Claiming every piece however short costs more and buys
+                # nothing: a piece below the floor is one the gate itself calls
+                # immaterial, so claiming it cannot change any verdict.
                 for piece_start, piece_end in _unclaimed_pieces(
                     position, position + size, claimed
                 ):
+                    if piece_end - piece_start < MATERIAL_RESIDUE:
+                        continue
                     _claim(intervals, offsets, piece_start, piece_end, breaks)
                 break
 
