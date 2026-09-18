@@ -231,9 +231,14 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   always defeats Luhn — that is what Luhn is for — and it is the most ordinary
   defect in an OCR'd or hand-typed document. So a `credit_card` pattern match
   that no checksum accepts is kept at **MEDIUM** confidence with
-  `checksum_validated=False`: redacted by default, invisible at
-  `min_confidence=HIGH`, and ranked with the patterns rather than in front of
-  them. The rank rule now asks the FINDING whether a checksum stands behind it
+  `checksum_validated=False`: redacted by default and ranked with the patterns
+  rather than in front of them. **It is NOT filtered out at
+  `min_confidence=HIGH`** — an earlier version of this paragraph said it was,
+  and that was wrong. `_match_patterns` filters on the *pattern's* declared
+  confidence; the demotion happens later, in the validation pass, and nothing
+  re-filters afterwards. A scan at `min_confidence=HIGH` still returns the
+  finding, at `medium`. Both tests cited below run at `LOW`, so neither
+  checked it. The rank rule now asks the FINDING whether a checksum stands behind it
   instead of asking its type. Tested:
   `tests/test_privacy_shield_regex_only.py::test_a_labelled_card_with_one_transcription_typo_is_still_claimed`,
   `::test_a_card_shape_cannot_outrank_a_checksum`.

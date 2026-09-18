@@ -161,8 +161,10 @@ trees — pin the major version.
   wrong digit went from 3 in 200 unclaimed to 73. A single wrong digit always
   defeats Luhn — that is what Luhn is for. A `credit_card` pattern match no
   checksum accepts is now kept at MEDIUM with `checksum_validated=False`:
-  redacted by default, absent at `min_confidence=HIGH`, and unable to outrank
-  anything, because the rank rule asks the finding rather than its type.
+  redacted by default and unable to outrank anything, because the rank rule
+  asks the finding rather than its type. It is NOT filtered out at
+  `min_confidence=HIGH`: that filter reads the pattern's declared confidence,
+  and the demotion happens after it.
   Tested: `tests/test_privacy_shield_regex_only.py::test_a_labelled_card_with_one_transcription_typo_is_still_claimed`,
   `::test_a_card_shape_cannot_outrank_a_checksum`.
 - **Four defects in the optional national layer, and a fifth in its speed.**
