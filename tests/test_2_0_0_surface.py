@@ -36,6 +36,131 @@ def test_the_console_script_is_privacy_shield_cli_main():
     assert callable(main)
 
 
+def test_the_base_package_declares_no_runtime_dependencies():
+    """`dependencies = []` was a claim, not a property.
+
+    The skill's governance block obliges
+    ``degrade_gracefully_without_optional_extras``; README, SKILL.md and the
+    limits document all say the base package installs with nothing. Until this
+    test existed the string appeared in one docstring and nowhere else - no
+    assertion anywhere in tests/ or .github/ read
+    ``pyproject.toml``'s ``project.dependencies``, so a dependency added to the
+    base package would have shipped green.
+
+    Every optional layer belongs in ``optional-dependencies`` behind an
+    availability check. That is what makes each Loomground plane optional and
+    what lets a consumer with none of them installed see no change.
+    """
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    declared = pyproject["project"].get("dependencies", [])
+
+    assert declared == [], (
+        "the base package has grown runtime dependencies: "
+        f"{declared}. Move them to [project.optional-dependencies] and reach "
+        "them behind an availability check, or this package stops being "
+        "installable with nothing."
+    )
+
+
+#: Import names of the distributions the optional extras install. Two things
+#: this list is NOT used for, both of which give the wrong answer:
+#:
+#: - a static scan for top-level imports. `onnx_contextual_pii` imports numpy at
+#:   module level and that is CORRECT: the module IS the semantic layer and is
+#:   only ever reached from an already-guarded call site.
+#: - "did importing the package reach it". `security_scanner` imports yaml
+#:   inside a try/except and degrades when it is absent; reaching a guarded
+#:   import when the extra happens to be installed is correct behaviour.
+#:
+#: The property that actually matters is absence: with every one of these made
+#: unimportable, the package still imports and the floor still detects.
+EXTRA_IMPORT_NAMES = frozenset(
+    {"numpy", "onnxruntime", "fitz", "PIL", "cv2", "openai", "stdnum",
+     "yaml", "schwifty", "hypothesis"}
+)
+
+#: Runs before anything else in the probe subprocess: makes every extra
+#: unimportable, whatever is installed, so the check does not depend on the
+#: environment it runs in. This is what lets a developer with the full dev
+#: extra reproduce the base-install CI job locally.
+_BLOCK_EXTRAS = (
+    "import sys\n"
+    f"_blocked = {sorted(EXTRA_IMPORT_NAMES)!r}\n"
+    "class _Blocker:\n"
+    "    def find_module(self, name, path=None):\n"
+    "        return self.find_spec(name, path) and self\n"
+    "    def find_spec(self, name, path=None, target=None):\n"
+    "        if name.split('.')[0] in _blocked:\n"
+    "            raise ImportError(f'{name} blocked by the optionality probe')\n"
+    "        return None\n"
+    "for _m in list(sys.modules):\n"
+    "    if _m.split('.')[0] in _blocked:\n"
+    "        del sys.modules[_m]\n"
+    "sys.meta_path.insert(0, _Blocker())\n"
+)
+
+
+def _probe(body: str) -> str:
+    """Run *body* in a subprocess where every optional extra is unimportable."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", _BLOCK_EXTRAS + body],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (
+        "the package does not work with the optional extras absent:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    return result.stdout.strip()
+
+
+def test_the_package_imports_with_every_optional_extra_absent():
+    """`dependencies = []` is satisfiable by a package that cannot be imported.
+
+    If a module the import graph reaches imports an extra unguarded, then
+    ``pip install privacy-shield`` installs something that raises on import.
+    Every extra is blocked here, so this fails exactly when that happens.
+    """
+    out = _probe(
+        "import privacy_shield\n"
+        "print(privacy_shield.__name__)\n"
+    )
+    assert out == "privacy_shield"
+
+
+def test_the_regex_floor_still_detects_with_every_extra_absent():
+    """The floor has to WORK without the extras, not merely import.
+
+    An import that succeeds and a scan that returns nothing is the same silent
+    absence this programme keeps finding, so the floor is exercised too. This
+    is the local reproduction of the base-install CI job.
+    """
+    out = _probe(
+        "from privacy_shield import scan_text\n"
+        "r = scan_text('Kontakt erika.mustermann@example.com Konto "
+        "DE89370400440532013000')\n"
+        "print(','.join(sorted({f.pii_type.value for f in r.findings})))\n"
+    )
+    assert "email" in out and "iban" in out, (
+        f"the regex/lexicon floor stopped detecting without the extras: {out!r}"
+    )
+
+
+def test_the_egress_gate_still_decides_with_every_extra_absent():
+    """The gate is the part a consumer relies on; it must not need an extra."""
+    out = _probe(
+        "from privacy_shield.gate import PrivacyGate\n"
+        "g = PrivacyGate()\n"
+        "r = g._decide_local({'text': 'streng vertraulich'}, 'openai')\n"
+        "print(r.allowed, r.classification)\n"
+    )
+    assert out.startswith("False "), (
+        f"a confidential document was not blocked without the extras: {out!r}"
+    )
+
+
 REMOVED_MODULES = [
     "privacy_shield.user_credentials",
     "privacy_shield.compliance_evidence_export",
