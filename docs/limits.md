@@ -82,10 +82,63 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
 
   **The bound itself remains**, and so does what it costs: an identifier
   interrupted more than once — needing a column narrower than about eight
-  characters — is not found. A bound exists at all because making every line
+  characters — is not found. Assembly across ONE terminator is **accepted**,
+  because `4111111111\n111111` is a card wrapped once and
+  `5100004821\n5100004822` is two document numbers, and nothing in the text
+  separates them: 11 over-redaction spans over 5 stacked-column documents,
+  pinned by
+  `tests/test_identifier_runs.py::test_stacked_numeric_columns_are_over_redacted`.
+  Bounding every group rather than only the interior ones was tried, refused
+  nothing the baseline accepted, and was reverted rather than kept. A bound exists at all because making every line
   break a joiner without limit would glue a document's lines into one run and
   let a column of figures be assembled into a checksum. Pinned by
   `::test_the_line_break_bound_is_one_and_this_is_what_it_costs`.
+- **National person numbers need the `[national]` extra AND a country.** With
+  `python-stdnum` installed and `PRIVACY_SHIELD_NATIONAL_COUNTRIES` set, 22
+  check-digit validators across 20 EU countries are applied to token-level
+  candidates. Both conditions are load-bearing and neither comes from the
+  library: `identifiers.identifier_runs` joins across every non-alphanumeric
+  character including line terminators, so an ordinary four-line letter is ONE
+  79-character run that every validator rejects; and `111222333` is a valid
+  Dutch BSN *and* a valid Czech *and* a valid Slovak birth number, so running
+  every country manufactures false positives and reports them as detections.
+  **Nothing is enabled by default.** Without the extra, or with no country
+  configured, this layer produces nothing and no other layer changes — the base
+  package keeps `dependencies = []` and the regex/lexicon floor is unaffected.
+  What is lost is a national number that no pattern covers.
+
+  **The evaluation's zero did not reproduce as evaluated.** It reported 0 false
+  positives over 951 tokens from 119 clean documents; over 136 candidate tokens
+  from 62 clean German business documents, three validators produced 20:
+  `de.stnr` 14 (it accepts invoice and order numbers — its check is too weak),
+  `si.ddv` 3 and `nl.bsn` 3 (stdnum accepts the eight-digit legacy form, and an
+  eight-digit customer number passes an eleven-test about one time in eleven).
+  `de.stnr` is dropped on that measurement; `si.ddv` and `lv.pvn` are dropped
+  because they are VAT — identifiers of an organisation — which contradicted
+  this layer's own person-only rule; `nl.bsn` is held to nine digits, the
+  current length. The remaining 21 produced none, and with **all 27 countries
+  enabled** the measured count is now **0**. Pinned by
+  `tests/test_national_ids.py`.
+
+  Not adopted, with the measurements in this document: **Presidio** and
+  **libpostal**. The **English label probe** is not restored.
+- **The run-based layer owns IBAN, card and e-mail detection.** It is
+  anchor-free, it validates, and it finds these whatever is glued to them. The
+  Layer-1 regexes are kept as candidate generators because they reach some
+  layouts differently, but for any type with a validator a pattern finding that
+  does not validate is dropped. Until round 18 the IBAN pattern emitted HIGH
+  confidence unvalidated, so it claimed a German VAT number
+  (`USt-IdNr. DE136695976`) with a span that crossed a line terminator, while
+  `find_ibans` correctly returned nothing — an unvalidated pattern outranking a
+  checksum, which is the structure this package was rejected for in round 9.
+  Tested: `tests/test_privacy_shield_regex_only.py::test_a_vat_number_is_not_an_iban`,
+  `::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+- **No character belongs to two identifiers.** A Luhn-valid window built from an
+  IBAN's tail plus the digits after it is the same characters counted twice, not
+  a third identifier. Both the detector and the gate's oracle refuse it; the
+  oracle did not until round 18, which made `leak-gate` red on some runs and
+  green on others. Tested:
+  `tests/test_leak_invariant.py::test_a_card_may_not_be_assembled_from_another_identifiers_digits`.
 - **A folder scan that could not read everything is not a clean result.**
   `walk_errors` lists the directories the walk could not enter,
   `scan_complete` is False when it is non-empty, and `all_allowed` is False as
@@ -259,10 +312,10 @@ All numbers below are measured in **CI's environment**, which is
 
 ```
 python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
-937 passed, 8 failed, 3 skipped
+974 passed, 8 failed, 3 skipped
 ```
 
-947 tests collected. The 2 skips are the `httpx` transport assertions in
+984 tests collected. The 2 skips are the `httpx` transport assertions in
 `tests/test_proxy_transport_guard.py` and
 `tests/test_privacy_shield_embeddings.py`; they do not run in CI either, and
 a previously reported "886 passed / 8 failed" was measured in a richer
@@ -274,10 +327,10 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 937 passed, 8 deselected.
+`tests` job runs 974 passed, 8 deselected.
 
 The leak invariant is its own CI job that `tests` waits on:
-`tests/test_leak_invariant.py`, 417 tests including a 300-document generated
+`tests/test_leak_invariant.py`, 428 tests including a 300-document generated
 battery in each of the four privacy modes and a hypothesis property run. With
 `hypothesis` absent the property half is skipped and the rest still runs.
 

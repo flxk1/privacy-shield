@@ -25,12 +25,18 @@ extract = ["PyMuPDF>=1.23", "opencv-python-headless>=4.8"]
 # unaffected. Required to run tests/test_local_model_endpoint_guard.py's
 # send-path assertions rather than skip them.
 openai = ["openai>=1"]
+# National person-number validators (python-stdnum): 27 EU countries with real
+# check digits, instead of per-country regexes we would write and not maintain.
+# OFF unless a country is configured - see privacy_shield/national.py and the
+# limits document. The base package keeps dependencies = [] and the
+# regex/lexicon floor is correct without this.
+national = ["python-stdnum>=1.19"]
 # Config layer + tests. hypothesis drives the property-based half of the
 # leak invariant (tests/test_leak_invariant.py); the deterministic battery
 # in the same file runs without it. schwifty is the external IBAN registry
 # tests/test_iban_registry.py checks the country/length table against - nothing
 # inside this package can notice that table going stale.
-dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024", "tomli>=2; python_version<'3.11'"]
+dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024", "python-stdnum>=1.19", "tomli>=2; python_version<'3.11'"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }

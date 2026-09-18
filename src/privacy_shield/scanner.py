@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
-from . import identifiers, names as names_module
+from . import identifiers, names as names_module, national
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,10 @@ class PIIType(str, Enum):
     SVNR = "svnr"  # German social security
     PASSPORT = "passport"
     ID_CARD = "id_card"
+    #: A national person number validated by python-stdnum (see national.py).
+    #: Only produced when that optional extra is installed AND a country is
+    #: configured; otherwise this type never appears.
+    NATIONAL_ID = "national_id"
 
     # Layer 2: Quasi-identifiers
     NAME = "name"
@@ -655,11 +659,21 @@ _email_ok = identifiers.email_ok
 _RFC_EMAIL = identifiers.RFC_EMAIL
 
 
+#: Types whose findings carry a CHECKSUM, and so outrank any pattern that
+#: merely overlaps them. NATIONAL_ID belongs here even though its validator
+#: lives in python-stdnum rather than in VALIDATORS below: a validated Dutch
+#: BSN was being redacted as a [PHONE], because the phone pattern overlapped it
+#: and supplied the placeholder.
+CHECKSUM_VALIDATED_TYPES = frozenset()
+
 VALIDATORS = {
     PIIType.IBAN: _iban_ok,
     PIIType.CREDIT_CARD: _luhn_ok,
     PIIType.EMAIL: _email_ok,
 }
+
+
+CHECKSUM_VALIDATED_TYPES = frozenset(VALIDATORS) | {PIIType.NATIONAL_ID}
 
 
 def is_validated_identifier(pii_type: PIIType, value: str) -> bool:
@@ -929,7 +943,9 @@ class PrivacyScanner:
         into another type's placeholder. A card is redacted as a card.
         """
         claimed = [
-            (f.start, f.end) for f in findings if f.pii_type in VALIDATORS
+            (f.start, f.end)
+            for f in findings
+            if f.pii_type in CHECKSUM_VALIDATED_TYPES
         ]
         if not claimed:
             return findings
@@ -943,7 +959,7 @@ class PrivacyScanner:
 
         kept: List[Finding] = []
         for finding in findings:
-            if finding.pii_type in VALIDATORS:
+            if finding.pii_type in CHECKSUM_VALIDATED_TYPES:
                 kept.append(finding)
                 continue
 
@@ -1016,6 +1032,48 @@ class PrivacyScanner:
                 zone=zone,
                 page=page,
             ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
+    def _merge_national(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Fold in validated national person numbers (see national.py).
+
+        Off unless `python-stdnum` is installed AND a country is configured.
+        The floor is correct without it; what is lost is in docs/limits.md.
+        """
+        if 1 not in self.layers:
+            return findings
+        if self._confidence_value(Confidence.HIGH) < self._confidence_value(
+            self.min_confidence
+        ):
+            return findings
+
+        merged = list(findings)
+        for start, end, value, country, scheme in national.find_national_ids(text):
+            if any(
+                f.pii_type is PIIType.NATIONAL_ID and f.start < end and start < f.end
+                for f in merged
+            ):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.NATIONAL_ID,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.HIGH,
+                layer=1,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+            ))
+            logger.debug("national id %s/%s claimed at [%d,%d)", country, scheme, start, end)
         merged.sort(key=lambda f: f.start)
         return merged
 
@@ -1153,7 +1211,9 @@ class PrivacyScanner:
         # walks maximal runs of identifier characters and offers the validator
         # every candidate substring. See identifiers.py for the precision cost.
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
+        findings = self._merge_national(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
+        findings = self._yield_to_validated(findings, text)
 
         # Sort by position
         findings.sort(key=lambda f: f.start)

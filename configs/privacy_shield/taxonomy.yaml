@@ -67,6 +67,16 @@ entities:
     default_action: review
     requires_review: true
 
+  # A national person number with a verified check digit (python-stdnum, see
+  # privacy_shield/national.py). Only ever produced when that optional extra is
+  # installed AND a country is configured, so on a default install this type
+  # never appears.
+  - id: national_id
+    canonical_name: NATIONAL_PERSON_NUMBER
+    detector_class: direct_identifier
+    default_action: review
+    requires_review: true
+
   - id: name
     canonical_name: PERSON_NAME
     detector_class: quasi_identifier

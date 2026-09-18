@@ -14,7 +14,9 @@ Sending a document to a cloud model sends every personal value in it. Detection 
 pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
 ```
 
-Zero required dependencies. Extras: `[semantic]` numpy>=1.24 +
+Zero required dependencies. Extras: `[national]` python-stdnum (22 check-digit validators for EU
+national person numbers; off unless a country is configured, see
+[docs/limits.md](docs/limits.md)), `[semantic]` numpy>=1.24 +
 onnxruntime>=1.16 (embeddings/shadow ONNX), `[extract]` PyMuPDF>=1.23 +
 opencv-python-headless>=4.8 (PDF/image, PyMuPDF AGPL), `[openai]` openai>=1
 (local-model client), `[dev]` pyyaml>=6 + pytest>=7.
@@ -77,7 +79,7 @@ wraps this for agents: package/CLI needs nothing else; MCP requires
 
 ## Status
 
-2.0.0 · 947 tests, 937 passing (CI extras; 2 skip without httpx) · Python >=3.10 · limits and gaps:
+2.0.0 · 984 tests, 974 passing (CI extras; 2 skip without httpx) · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
 
 ## License

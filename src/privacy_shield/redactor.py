@@ -210,6 +210,7 @@ class Redactor:
             PIIType.SVNR: "[SSN]",
             PIIType.PASSPORT: "[PASSPORT]",
             PIIType.ID_CARD: "[ID]",
+            PIIType.NATIONAL_ID: "[NATIONAL_ID]",
             PIIType.NAME: "[NAME]",
             PIIType.ADDRESS: "[ADDRESS]",
             PIIType.PLZ_CITY: "[LOCATION]",
