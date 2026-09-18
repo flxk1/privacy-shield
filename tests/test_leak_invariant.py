@@ -175,7 +175,9 @@ def _iban_ok(candidate: str) -> bool:
 # shape. Nothing about spacing, grouping, boundaries or punctuation.
 
 
-def _oracle_cards(text: str, claimed: "list[tuple[int, int]]" = ()) -> list[tuple[str, str]]:
+def _oracle_cards(
+    text: str, claimed: "list[tuple[int, int]]" = ()
+) -> "list[tuple[str, str, int, int]]":
     """Every Luhn-valid run of 13-19 digits, whatever lies between them.
 
     *claimed* holds spans already established as some OTHER validated
@@ -196,7 +198,7 @@ def _oracle_cards(text: str, claimed: "list[tuple[int, int]]" = ()) -> list[tupl
     letter cannot appear inside a card number; that is the definition of the
     identifier, not a rule about how it is laid out.
     """
-    found: list[tuple[str, str]] = []
+    found: "list[tuple[str, str, int, int]]" = []
     length = len(text)
     for start in range(length):
         if not (text[start].isascii() and text[start].isdigit()):
@@ -214,15 +216,17 @@ def _oracle_cards(text: str, claimed: "list[tuple[int, int]]" = ()) -> list[tupl
                         start < claim_end and claim_start <= index
                         for claim_start, claim_end in claimed
                     ):
-                        found.append((candidate, text[start:index + 1]))
+                        found.append(
+                            (candidate, text[start:index + 1], start, index + 1)
+                        )
             elif char.isalnum():
                 break
     return found
 
 
-def _oracle_ibans(text: str) -> list[tuple[str, str]]:
+def _oracle_ibans(text: str) -> "list[tuple[str, str, int, int]]":
     """Every registered-length, mod-97-valid IBAN, whatever lies between."""
-    found: list[tuple[str, str]] = []
+    found: "list[tuple[str, str, int, int]]" = []
     length = len(text)
     for start in range(length):
         if not (text[start].isascii() and text[start].isalpha()):
@@ -240,7 +244,9 @@ def _oracle_ibans(text: str) -> list[tuple[str, str]]:
                 if registered is not None and len(body) == registered:
                     candidate = "".join(body)
                     if _iban_ok(candidate):
-                        found.append((candidate, text[start:index + 1]))
+                        found.append(
+                            (candidate, text[start:index + 1], start, index + 1)
+                        )
                     break
             elif char.isalnum():
                 break
@@ -253,14 +259,14 @@ _ORACLE_EMAIL_SHAPE = re.compile(
 )
 
 
-def _oracle_emails(text: str) -> list[tuple[str, str]]:
+def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
     """Every RFC-shaped address, by trying every substring around each "@".
 
     No expansion over a character class - that would be a run rule. Every
     (start, end) pair within ORACLE_EMAIL_SPAN of the "@" is offered to the
     shape, and the longest that matches is taken.
     """
-    found: list[tuple[str, str]] = []
+    found: "list[tuple[str, str, int, int]]" = []
     for at, char in enumerate(text):
         if char != "@":
             continue
@@ -271,11 +277,11 @@ def _oracle_emails(text: str) -> list[tuple[str, str]]:
             for finish in range(high, at + 1, -1):
                 candidate = text[begin:finish]
                 if len(candidate) <= 254 and _ORACLE_EMAIL_SHAPE.match(candidate):
-                    if best is None or len(candidate) > len(best):
-                        best = candidate
+                    if best is None or len(candidate) > len(best[0]):
+                        best = (candidate, begin, finish)
                     break
         if best:
-            found.append((best, best))
+            found.append((best[0], best[0], best[1], best[2]))
     return found
 
 
@@ -320,17 +326,23 @@ def validated_identifiers(text: str) -> list[tuple[str, str, str]]:
     bound still lets it through to be reported.
     """
     found: list[tuple[str, str, str]] = []
-    for canonical, as_written in _oracle_emails(text):
+    # THE OFFSETS ARE CARRIED, not looked up again.
+    #
+    # `already` used to be rebuilt with `text.index(written)`, which finds the
+    # FIRST occurrence. A document containing the same IBAN twice therefore
+    # registered the first one's span twice and the second one's not at all, so
+    # every Luhn-valid window made out of the second copy's digits was offered
+    # as a card. A fail-open in the oracle's own overlap rule - the rule that
+    # stops it reporting one run of characters as two identifiers.
+    already: "list[tuple[int, int]]" = []
+    for canonical, as_written, start, end in _oracle_emails(text):
         found.append(("email", canonical, as_written))
-    for canonical, as_written in _oracle_ibans(text):
+        already.append((start, end))
+    for canonical, as_written, start, end in _oracle_ibans(text):
         found.append(("iban", canonical, as_written))
+        already.append((start, end))
     # Cards last, and told what the other validated layers already own.
-    already = [
-        (text.index(written), text.index(written) + len(written))
-        for _kind, _canonical, written in found
-        if written in text
-    ]
-    for canonical, as_written in _oracle_cards(text, already):
+    for canonical, as_written, _start, _end in _oracle_cards(text, already):
         found.append(("credit_card", canonical, as_written))
     return [row for row in found if _oracle_terminators(row[2]) <= 1]
 
@@ -366,6 +378,28 @@ def _compact(value: str) -> str:
     return "".join(char for char in value if char.isascii() and char.isalnum())
 
 
+def _compact_segments(overlay: str) -> "list[str]":
+    """The overlay compacted, but never ACROSS a placeholder.
+
+    Compacting the whole overlay manufactures adjacency. A placeholder stands
+    where text was taken out, so the characters either side of it were not
+    neighbours in the document; deleting it makes them neighbours, and a
+    fragment that never existed anywhere then "survives" in the overlay. The
+    occurrence-counting guard below cannot catch it, because the fragment does
+    not occur in the source either - `remaining >= source.count(fragment)`
+    compares 1 against 0.
+
+    That is one of the two mechanisms that made the release gate red on 3 of
+    400 hypothesis seeds: a standalone digit next to a retained UUID, with a
+    redaction between them.
+
+    A placeholder is therefore a HARD break. Nothing else is: an identifier
+    written across a line break or a column gap must still be counted as
+    residue, and those characters are still in the document.
+    """
+    return [_compact(part) for part in _PLACEHOLDER.split(overlay)]
+
+
 def _residue_run(identifier: str, overlay: str, text: str) -> str:
     """The longest contiguous stretch of *identifier* that SURVIVED.
 
@@ -382,12 +416,12 @@ def _residue_run(identifier: str, overlay: str, text: str) -> str:
     the retained first copy. Nothing had leaked.
     """
     needle = _compact(identifier)
-    haystack = _compact(_without_placeholders(overlay))
+    segments = _compact_segments(overlay)
     source = _compact(text)
     for size in range(len(needle), RESIDUE_RUN - 1, -1):
         for start in range(0, len(needle) - size + 1):
             fragment = needle[start:start + size]
-            remaining = haystack.count(fragment)
+            remaining = sum(segment.count(fragment) for segment in segments)
             if remaining and remaining >= source.count(fragment):
                 return fragment
     return ""
@@ -412,7 +446,13 @@ def leaks_in(text: str, document) -> list[str]:
     # So: the overlay may keep no more copies than the input had minus the ones
     # that were claimed. Nothing is softened for a real leak - a value detected
     # once and present once in the overlay still fails.
-    residual = _without_placeholders(overlay)
+    # Counted per placeholder-delimited segment, for the same reason
+    # _compact_segments exists: a value cannot SURVIVE across a redaction.
+    residual_segments = _PLACEHOLDER.split(overlay)
+
+    def _residual_count(value: str) -> int:
+        return sum(segment.count(value) for segment in residual_segments)
+
     counted: dict[str, int] = {}
     for span in document.spans:
         value = (span.value or "").strip()
@@ -420,10 +460,10 @@ def leaks_in(text: str, document) -> list[str]:
             counted[value] = counted.get(value, 0) + 1
     for value, claimed in counted.items():
         allowed = max(0, text.count(value) - claimed)
-        if residual.count(value) > allowed:
+        if _residual_count(value) > allowed:
             leaks.append(
                 f"a detected span survived: overlay keeps "
-                f"{residual.count(value)} copies, at most {allowed} expected"
+                f"{_residual_count(value)} copies, at most {allowed} expected"
             )
 
     for kind, canonical, as_written in validated_identifiers(text):
@@ -833,35 +873,15 @@ _NOISE = [
 ]
 
 
-# A spread of registered IBAN countries and their registered total lengths, so
-# the battery is not all one national format.
-_IBAN_COUNTRIES = {"DE": 22, "AT": 20, "NL": 18, "BE": 16, "ES": 24, "IT": 27, "NO": 15}
-
-
-def _make_iban(rng: random.Random, country: str = "DE") -> str:
-    """A syntactically real IBAN for *country*, with a computed check digit."""
-    bban = "".join(rng.choice("0123456789") for _ in range(_IBAN_COUNTRIES[country] - 4))
-    rotated = bban + "".join(str(int(ch, 36)) for ch in country) + "00"
-    check = 98 - int(rotated) % 97
-    return f"{country}{check:02d}{bban}"
-
-
-def _make_card(rng: random.Random) -> str:
-    body = "4" + "".join(rng.choice("0123456789") for _ in range(14))
-    total = 0
-    for index, char in enumerate(reversed(body)):
-        value = int(char)
-        if index % 2 == 0:
-            value *= 2
-            if value > 9:
-                value -= 9
-        total += value
-    return body + str((10 - total % 10) % 10)
-
-
-def _make_email(rng: random.Random) -> str:
-    local = rng.choice(["abcdef1234", "erika.mustermann", "m.mueller", "deadbeef99"])
-    return f"{local}@{rng.choice(['example.com', 'kanzlei.de', 'firma.org'])}"
+# The input generators come from tests/synth.py, which test_identifier_runs.py
+# uses too. Sharing them is not a break with this file's independence: what
+# must not be shared is how a candidate is FOUND and what decides that it is
+# valid, and neither of those is in there. Two copies of a check-digit
+# construction is the duplicated-registry mistake in miniature.
+from synth import IBAN_COUNTRIES as _IBAN_COUNTRIES  # noqa: E402
+from synth import make_card as _make_card  # noqa: E402
+from synth import make_email as _make_email  # noqa: E402
+from synth import make_iban as _make_iban  # noqa: E402
 
 
 #: Characters the battery writes between groups. The underscore and colon
@@ -1316,56 +1336,98 @@ def test_a_wide_column_gap_does_not_hide_a_card(gap, mode):
         assert document.pii_detected, document.overlay
 
 
-def test_the_span_bound_has_a_cliff_and_this_is_where_it_is():
-    """Pinned, not discovered.
+def test_there_is_no_width_at_which_the_detector_stops_claiming():
+    """The cliff is GONE, and this is what replaced the test that pinned it.
 
-    Any bound on how far a candidate may span has a width past which an
-    identifier is no longer found. Sweeping the multiplier from 4 to 1000
-    against both precision corpora does not move the false-positive count at
-    all - eight cards, no IBANs, at every value - so the bound buys no
-    precision and only sets where the cliff is. It is set at sixteen times the
-    identifier's length, which puts the cliff far past any real column, and it
-    is asserted here so that the next person to change it sees what they are
-    moving.
+    There used to be a width - eighty spaces between groups - past which a
+    card or an IBAN was no longer claimed. The test above this one asserted
+    where it was, which made it deliberate but did not make it safe: the
+    brute-force oracle has no width rule, so at eighty-one spaces it claimed
+    the identifier, the detector did not, and the gate reported "a validated
+    IBAN survived whole in the overlay". That is the gate going red for a
+    reason nobody decided, and it is the same mechanism the verifier found at
+    an interior group of seventeen.
+
+    Sweeping the multiplier from 4 to 1000 never moved the false-positive
+    count, so the bound bought no precision at any setting. It is removed. The
+    only bound left is the terminator count, which is definitional and which
+    the oracle shares and names.
     """
     from privacy_shield import identifiers
 
-    def caught(gap):
-        return bool(identifiers.find_cards(
-            (" " * gap).join(EXAMPLE_CARD[i:i + 4] for i in range(0, 16, 4))
-        ))
+    for gap in (0, 1, 4, 17, 80, 81, 200, 400):
+        spaced = (" " * gap).join(EXAMPLE_CARD[i:i + 4] for i in range(0, 16, 4))
+        assert identifiers.find_cards(spaced), f"card lost at a gap of {gap}"
+        spaced_iban = (" " * gap).join(
+            EXAMPLE_IBAN[i:i + 4] for i in range(0, len(EXAMPLE_IBAN), 4)
+        )
+        assert identifiers.find_ibans(spaced_iban), f"IBAN lost at a gap of {gap}"
+        assert_no_leak("Konto " + spaced_iban)
 
-    assert caught(80), "a gap inside the documented range is no longer found"
-    assert not caught(81), (
-        "the cliff moved; re-measure the false-positive corpora and update "
-        "docs/limits.md before keeping this"
+
+def test_a_long_neighbouring_token_does_not_make_the_detector_decline():
+    """The interior-group bound, and the red gate it caused.
+
+    "§ 203 StGB1_66eAD8A77dAA77dA1_66eAD8§ 203 StGB" compacts to a mod-97-valid
+    registered-length IBAN whose middle group is seventeen characters. The
+    oracle claimed it; the detector refused it at a bound of twelve; the gate
+    reported a leak. Reproduced at 3 reds in 400 hypothesis seeds at the
+    shipped example count, and 4 in 25 at 4000.
+
+    The candidate is not a plausible IBAN, and that is exactly why it could not
+    stay: refusing it here without the oracle being able to agree makes the
+    release gate a coin toss. Claiming it costs one over-redaction on a text
+    nobody sends.
+    """
+    from privacy_shield import identifiers
+
+    text = "§ 203 StGB1_66eAD8A77dAA77dA1_66eAD8§ 203 StGB"
+    assert any(kind == "iban" for kind, _c, _w in validated_identifiers(text)), (
+        "the oracle no longer claims this; the case has drifted"
     )
+    assert identifiers.find_ibans(text), "the detector declined what the oracle claims"
+    assert_no_leak(text)
 
 
 # ---------------------------------------------------------------------------
 # What the oracle shares with the detector, pinned
 # ---------------------------------------------------------------------------
 
-def test_the_oracle_outranges_the_detector():
-    """The search window must always reach further than the detector claims.
+def test_the_detector_declines_on_nothing_the_oracle_cannot_also_see():
+    """What replaced "the oracle outranges the detector".
 
-    It was 136, which is exactly the detector's MAX_SPAN_MULTIPLE times its
-    MAX_IBAN_LENGTH, reached by a different-sounding rationalisation. That is
-    not independence, and it was already too small: a 33-character IBAN in
-    four-groups with 16-space gaps spans 161.
+    That relation was `ORACLE_WINDOW > MAX_IBAN_LENGTH * MAX_SPAN_MULTIPLE`,
+    and it held only because the detector had a width limit. It no longer has
+    one, so the oracle can no longer outrange it and pretending otherwise would
+    be the same decorative claim as deriving the terminator set from Unicode.
 
-    There is no layout-free way to derive a window - how far an identifier
-    reaches IS a fact about layout - so the window is a safety cap on a
-    quadratic search, and the property that matters is this relation.
+    The property that actually protects the gate is the one asserted here: the
+    detector's ONLY reason to decline a checksum-valid candidate is the
+    terminator bound, which the oracle applies too. Anything wider, more
+    punctuated or more oddly grouped is claimed by both.
+
+    What the window costs is stated rather than hidden: past ORACLE_WINDOW
+    characters the oracle stops looking. That is a blind spot in the CHECK, not
+    a hole in the product - the detector has no width limit, so it still claims
+    what the oracle can no longer see, and this direction of disagreement
+    cannot produce a false green.
     """
     from privacy_shield import identifiers
 
-    furthest = identifiers.MAX_IBAN_LENGTH * identifiers.MAX_SPAN_MULTIPLE
-    assert ORACLE_WINDOW > furthest, (
-        f"the oracle sees {ORACLE_WINDOW} characters and the detector can "
-        f"claim a span of {furthest}; the oracle is blind to what the detector "
-        "does at its own limit"
-    )
+    rng = random.Random(1904)
+    for _ in range(40):
+        iban = _make_iban(rng, rng.choice(list(_IBAN_COUNTRIES)))
+        gap = " " * rng.randint(0, 40)
+        chunk = rng.randint(2, 6)
+        written = gap.join(iban[i:i + chunk] for i in range(0, len(iban), chunk))
+        text = rng.choice(["Konto ", "acct_", "Ref", ""]) + written
+        assert len(text) <= ORACLE_WINDOW, "this case would not be comparable"
+        oracle = {kind for kind, _c, _w in validated_identifiers(text)}
+        detector = bool(identifiers.find_ibans(text))
+        assert ("iban" in oracle) == detector, (
+            f"oracle {oracle} vs detector {detector} on a {len(text)}-character "
+            "layout: one of them has a rule the other does not"
+        )
 
 
 def test_the_oracle_sees_a_widely_spaced_iban_at_the_detectors_limit():
@@ -1644,33 +1706,64 @@ def test_the_shared_line_break_bound_cannot_hide_the_leak_class():
 
 
 def _every_terminator():
-    """Every way a line can end, DERIVED rather than typed.
+    """Every way a line can end, according to something that is not this repo.
 
-    A list of terminators is the same kind of list as a list of separators and
-    a list of Unicode categories, and each of those was walked around in turn.
-    The singles come from Unicode (Zl, Zp, and the ASCII controls); the
-    two-character sequences are the pairs of CR and LF.
+    The previous version of this claimed to DERIVE the set "rather than type
+    it" and then derived Unicode categories Zl and Zp - which are U+2028 and
+    U+2029, the two characters the list beside it already typed. Deriving the
+    members of a list from the list is decoration, and decoration in a gate is
+    worse than an honest constant because it stops people looking.
+
+    So the authority here is CPython's own notion of a line boundary,
+    `str.splitlines`, which is an independent implementation of the Unicode
+    rule and knows about three separators this package does not.
     """
-    import unicodedata
-
     singles = [
         chr(code)
         for code in range(0x3000)
-        if chr(code) in "\n\r\v\f\u0085"
-        or unicodedata.category(chr(code)) in ("Zl", "Zp")
+        if len(("a" + chr(code) + "b").splitlines()) > 1
     ]
     return singles + ["\r\n", "\n\r"]
 
 
 TERMINATORS = _every_terminator()
 
+#: The three CPython calls line boundaries and this package does not: FILE,
+#: GROUP and RECORD SEPARATOR. Named rather than silently missing.
+#:
+#: Both layers treat them as ordinary joiners, so an identifier written across
+#: one is CLAIMED rather than refused - the fail-closed direction, and the
+#: reason this difference is a disclosure and not a defect. The direction that
+#: would matter is the other one: if the ORACLE counted a terminator the
+#: detector did not, the oracle's one-break rule would drop candidates and hide
+#: whatever was leaking behind them.
+JOINED_NOT_TERMINATED = ["\x1c", "\x1d", "\x1e"]
 
-def test_the_terminator_set_is_derived_not_typed():
+
+def test_the_terminator_set_is_no_shorter_than_cpythons():
     """Guards the enumeration, so nothing built on it can be vacuous."""
     assert "\r\n" in TERMINATORS and "\n\r" in TERMINATORS
     assert "\n" in TERMINATORS and "\r" in TERMINATORS
     assert "\u2028" in TERMINATORS and "\u2029" in TERMINATORS
-    assert len(TERMINATORS) >= 8, TERMINATORS
+    assert len(TERMINATORS) >= 12, TERMINATORS
+
+    from privacy_shield.identifiers import count_terminators
+
+    missing = [
+        char for char in TERMINATORS
+        if len(char) == 1 and not count_terminators(char)
+    ]
+    assert missing == JOINED_NOT_TERMINATED, (
+        "the set of line boundaries this package does not count has changed: "
+        f"{[hex(ord(c)) for c in missing]}"
+    )
+
+
+@pytest.mark.parametrize("separator", JOINED_NOT_TERMINATED, ids=lambda s: hex(ord(s)))
+def test_a_separator_cpython_calls_a_line_break_is_claimed_not_refused(separator):
+    """The safe direction, asserted rather than assumed."""
+    text = "Karte " + EXAMPLE_CARD[:8] + separator + EXAMPLE_CARD[8:]
+    assert_no_leak(text)
 
 
 @pytest.mark.parametrize("terminator", TERMINATORS, ids=lambda s: repr(s))
@@ -1792,12 +1885,17 @@ def test_the_rule_does_not_blind_the_gate_to_a_real_card(text):
     assert_no_leak(text)
 
 
-def test_the_leak_gate_is_deterministic_across_seeds():
-    """The property half must not depend on which examples it draws.
+def test_two_hundred_further_generated_documents_do_not_leak():
+    """The battery's generator, run past the pinned seed.
 
-    Run the deterministic battery's own generator over a different seed from
-    the pinned one; the residue class above was reachable at random, so a
-    second seed is the cheapest standing check that it no longer is.
+    This used to be called "the leak gate is deterministic across seeds", and
+    it is not that test: the seed it varies is the BATTERY's, and the battery
+    is deterministic by construction. The randomness that made `leak-gate`
+    intermittently red lives in the hypothesis property, and nothing here
+    touched it. Named for what it does - 200 more documents, one more draw.
+
+    The test that does what the old name claimed is
+    test_the_property_holds_under_a_varied_hypothesis_seed, below.
     """
     rng = random.Random(18)
     for _ in range(200):
@@ -1809,3 +1907,94 @@ def test_the_leak_gate_is_deterministic_across_seeds():
             for value, written in planted:
                 assert written not in residual
                 assert value not in _compact(residual)
+
+
+# ---------------------------------------------------------------------------
+# Determinism of the PROPERTY, which is where the randomness actually is
+# ---------------------------------------------------------------------------
+#
+# "Ten fresh-database runs pass" is not determinism. Hypothesis draws from a
+# fresh random seed each run, so ten runs sample ten points out of a space
+# where the failure rate was 0.75% per run at the shipped example count and
+# 4 in 25 at 4000. A test that fixes the seed explicitly, over a spread of
+# seeds, is the only way to make an intermittent red reproducible - and the
+# only way to notice when it comes back.
+#
+# The seeds are written down. If one of them ever fails, it fails for
+# everybody, on every machine, until it is fixed.
+
+_SEEDS = [1, 2, 3, 5, 8, 13, 21, 34]
+
+
+@pytest.mark.skipif(given is None, reason="hypothesis is not installed")
+@pytest.mark.parametrize("hypothesis_seed", _SEEDS)
+def test_the_property_holds_under_a_varied_hypothesis_seed(hypothesis_seed):
+    from hypothesis import HealthCheck, given as _given, seed as _seed, settings as _settings
+
+    @_seed(hypothesis_seed)
+    @_settings(
+        max_examples=250,
+        deadline=None,
+        database=None,
+        derandomize=False,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    )
+    @_given(
+        st.lists(_fragment, min_size=1, max_size=8),
+        st.sampled_from([" ", "\n", ", ", ""]),
+        st.sampled_from(EGRESS_MODES),
+    )
+    def run(fragments, joiner, mode):
+        text = joiner.join(fragments)
+        if not text.strip():
+            return
+        document = scan(text, mode=mode, force_text=True).documents[0]
+        leaks = leaks_in(text, document)
+        assert not leaks, (
+            f"hypothesis seed {hypothesis_seed}\nmode={mode.value}\n"
+            f"input={text!r}\noverlay={document.overlay!r}\n" + "; ".join(leaks)
+        )
+
+    run()
+
+
+# ---------------------------------------------------------------------------
+# The oracle's own two fail-opens
+# ---------------------------------------------------------------------------
+
+def test_a_placeholder_is_a_hard_break_when_counting_residue():
+    """`_compact` deleted the space a redaction left behind.
+
+    `_without_placeholders` writes a space where a placeholder was and
+    `_compact` then removed it, so the characters either side became adjacent -
+    though a redaction is precisely what had separated them. A fragment made
+    across that join never existed in the source, so the occurrence guard
+    (`remaining >= source.count(fragment)`) compared 1 against 0 and reported a
+    leak for a value that had been removed.
+
+    One of the two mechanisms behind 3 red runs in 400 hypothesis seeds.
+    """
+    text = "1111 2222 3333"
+    assert _residue_run("11113333", "1111 [PHONE] 3333", text) == "", (
+        "a fragment spanning a placeholder was counted as residue"
+    )
+    # The other direction must not have been softened: real residue is real.
+    assert _residue_run("11113333", "Konto 1111 3333 offen", "1111 3333") == "11113333"
+
+
+def test_the_oracle_does_not_double_claim_a_repeated_identifier():
+    """`already` was built with `text.index(written)`, the FIRST occurrence.
+
+    A document containing the same IBAN twice registered the first one's span
+    twice and the second one's not at all, so every Luhn-valid window made out
+    of the second copy's digits was offered as a card - identifiers reported
+    twice, out of one run of characters, by the rule that exists to stop
+    exactly that.
+    """
+    text = f"Konto {EXAMPLE_IBAN} und nochmal {EXAMPLE_IBAN} Ende"
+    kinds = [kind for kind, _canonical, _written in validated_identifiers(text)]
+    assert kinds.count("iban") == 2, kinds
+    assert kinds.count("credit_card") == 0, (
+        "cards assembled from an IBAN's own digits are being reported: "
+        f"{kinds}"
+    )

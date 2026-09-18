@@ -16,6 +16,7 @@ import unicodedata
 
 import pytest
 
+import synth
 from privacy_shield import identifiers
 from privacy_shield.scanner import Confidence, PIIType, PrivacyScanner
 
@@ -254,6 +255,137 @@ def test_unregistered_country_code_is_not_an_iban():
     """
     assert not identifiers.find_ibans(f"ID {EXAMPLE_CARD}")
     assert identifiers.find_cards(f"ID {EXAMPLE_CARD}")
+
+
+def _overlay(text, spans, label="[X]"):
+    out = text
+    for start, end, _value in sorted(spans, reverse=True):
+        out = out[:start] + label + out[end:]
+    return out
+
+
+def _longest_surviving_digit_run(text, spans):
+    return max((len(run) for run in re.findall(r"\d+", _overlay(text, spans))), default=0)
+
+
+def test_a_coincidental_iban_does_not_suppress_a_genuine_one():
+    """The claim rule was implemented on the card pass only.
+
+    `_iban_spans_in_run` claimed the LEFTMOST valid window and then advanced by
+    its whole registered length, so a coincidence that happened to validate
+    stepped the search over a real IBAN starting inside it:
+
+        "B.E54.7/<a real DE IBAN>"  ->  "[IBAN]" + eleven digits of the account
+
+    The first eight characters compact to a mod-97-valid Belgian length. Which
+    of the two survived depended only on which started further left, and the
+    genuine one lost. Reported incidence on realistic German documents: six in
+    442, residue eight to fourteen characters.
+    """
+    text = f"B.E54.7/{EXAMPLE_IBAN}"
+    spans = identifiers.find_ibans(text)
+
+    covered = set()
+    for start, end, _value in spans:
+        covered.update(range(start, end))
+    genuine = text.index(EXAMPLE_IBAN)
+    missing = sorted(set(range(genuine, genuine + len(EXAMPLE_IBAN))) - covered)
+    assert not missing, f"{len(missing)} characters of the genuine IBAN uncovered"
+    assert _longest_surviving_digit_run(text, spans) == 0
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_a_genuine_card_under_a_coincidental_iban_claim_is_covered_whole(seed):
+    """The symmetric case, which lost the card WHOLE.
+
+    A coincidental IBAN claim reaching into a card's first digits was handed to
+    `find_cards` as `avoid`, and every window covering the rest of the card
+    overlapped it and was refused - so fifteen digits of a genuine card stood
+    in the payload under an [IBAN] label. On 400 constructed documents of this
+    shape it happened in 165; the fix claims the part of a validating window
+    nobody else owns, and it happened in none.
+
+    The document is built here rather than written down: a reference number
+    whose leading characters make a registered country code, a line break, a
+    label, and a nineteen-digit Luhn-closed number, with the reference's check
+    pair solved so that the whole assembly validates as an IBAN.
+    """
+    rng = random.Random(seed)
+    text = None
+    for _attempt in range(400):
+        card = _luhn_closed(rng, 19)
+        for head in (3, 4, 5):
+            tail = "".join(str(rng.randrange(10)) for _ in range(13 - head))
+            for check in range(2, 99):
+                if identifiers.iban_ok(f"DE{check:02d}{tail}KARTE{card[:head]}"):
+                    text = f"Karte DE{check:02d}{tail}\nKarte {card}\nBetrag 90,00"
+                    break
+            if text:
+                break
+        if text:
+            break
+    assert text, "could not construct the shape"
+
+    ibans = identifiers.find_ibans(text)
+    assert ibans, "the coincidental IBAN claim is what this case is about"
+    cards = identifiers.find_cards(text, avoid=[(s, e) for s, e, _v in ibans])
+
+    covered = set()
+    for start, end, _value in list(ibans) + list(cards):
+        covered.update(range(start, end))
+    at = text.index(card)
+    missing = sorted(set(range(at, at + len(card))) - covered)
+    assert not missing, (
+        f"{len(missing)} digits of a genuine card left standing; "
+        f"longest surviving run {_longest_surviving_digit_run(text, list(ibans) + list(cards))}"
+    )
+
+
+def _luhn_closed(rng, length):
+    digits = [rng.randrange(10) for _ in range(length - 1)]
+    for last in range(10):
+        candidate = "".join(map(str, digits)) + str(last)
+        if identifiers.luhn_ok(candidate):
+            return candidate
+    raise AssertionError("unreachable: one of ten last digits closes Luhn")
+
+
+#: What claiming a validating window's unowned remainder is allowed to cost on
+#: 300 realistic German payment documents that hold one genuine IBAN each and
+#: no card at all. Every span here is over-redaction.
+#:
+#: Claiming the remainder unconditionally scored 117 spans over 1718 characters
+#: on this corpus - it ran out of the IBAN into the amount and the date beside
+#: it, on more than a third of the documents. Claiming the whole overlapping
+#: window scored 282 over 7391, nearly one mangled field per document.
+#: Restricting it to a window that sits inside ONE unbroken group scores what
+#: refusing the window outright scored, to the character: 6 spans over 82
+#: characters at 0719c79 and 6 over 82 here.
+IBAN_NEIGHBOURHOOD_BUDGET = 6
+
+
+def test_claiming_a_remainder_does_not_eat_the_fields_beside_an_iban():
+    rng = random.Random(1719)
+    templates = [
+        "Rechnung Nr. 2026-{ref}\nZahlbar auf IBAN {iban}\nBetrag 1.349,00 EUR\nFaellig 30.04.2026\n",
+        "Ueberweisung\nEmpfaenger Muster GmbH\nIBAN {iban}\nBIC MUSTDE12XXX\nVerwendungszweck 4711{ref}\n",
+        "Kontoauszug\nIBAN {iban} 0,00 4.500,25 12.03.2026\nUmsatz {ref}\n",
+        "SEPA-Mandat\nIBAN {iban}, Mandatsreferenz M-{ref}-2026, Datum 01.02.2026\n",
+        "Gutschrift {ref} IBAN {iban} 2.100,00 EUR am 15.05.2026 gebucht\n",
+    ]
+    countries = list(synth.IBAN_COUNTRIES)
+    spans = 0
+    for index in range(300):
+        document = templates[index % len(templates)].format(
+            iban=synth.make_iban(rng, countries[index % len(countries)]),
+            ref="".join(str(rng.randrange(10)) for _ in range(rng.randint(4, 9))),
+        )
+        ibans = identifiers.find_ibans(document)
+        spans += len(identifiers.find_cards(document, avoid=[(s, e) for s, e, _v in ibans]))
+    assert spans <= IBAN_NEIGHBOURHOOD_BUDGET, (
+        f"{spans} card spans on 300 documents that contain no card, "
+        f"budget {IBAN_NEIGHBOURHOOD_BUDGET}"
+    )
 
 
 def test_email_found_behind_a_non_ascii_word_character():
@@ -568,12 +700,32 @@ def test_many_validated_ibans_do_not_make_the_scan_quadratic(count):
     and 800 took 4.5s, on the egress path. A statement of account is exactly
     the document that has hundreds. One pass with a binary search into the
     sorted avoid list instead.
+
+    DISTINCT IBANs, synthesised. The fixture used to be one IBAN repeated, and
+    that is a degenerate input now that overlapping valid windows are merged
+    into their union: a shifted window inside a repetition of the SAME number
+    validates, so all 200 chained into one span and the count assertion - not
+    the timing - failed. What the timing needs is many spans in `avoid`, and
+    what the pass must guarantee is that every IBAN is covered whole; both are
+    asserted, instead of a span count that was only ever a proxy.
     """
     import time
 
-    text = " ".join([EXAMPLE_IBAN] * count)
+    rng = random.Random(count)
+    countries = list(synth.IBAN_COUNTRIES)
+    ibans = [synth.make_iban(rng, countries[i % len(countries)]) for i in range(count)]
+    text = " ".join(ibans)
     avoided = [(start, end) for start, end, _v in identifiers.find_ibans(text)]
-    assert len(avoided) == count, len(avoided)
+    assert len(avoided) >= count * 0.9, len(avoided)
+
+    covered = set()
+    for start, end in avoided:
+        covered.update(range(start, end))
+    position = 0
+    for iban in ibans:
+        at = text.index(iban, position)
+        position = at + len(iban)
+        assert not set(range(at, position)) - covered, f"an IBAN was left partly uncovered"
 
     started = time.perf_counter()
     identifiers.find_cards(text, avoid=avoided)

@@ -44,6 +44,7 @@ contain no payment identifiers at all, so every hit is a false positive:
 
 from __future__ import annotations
 
+import bisect
 import re
 import unicodedata
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -124,51 +125,48 @@ MAX_CARD_LENGTH = 19
 # letter in a word rather than punctuation between digits.
 _LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
-#: A candidate may span at most this many times its own length, so a
-#: sixteen-digit card may occupy 256 columns and tolerate gaps of up to eighty
-#: characters.
-#:
-#: The number is high because measurement said the bound buys nothing. Swept
-#: from 4 to 1000 against both corpora, the false-positive count does not move
-#: at all - eight cards and no IBANs at every value. All the bound does is
-#: create a cliff, and at 4 the cliff was at exactly seventeen spaces:
-#: sixteen-space column gaps were claimed and seventeen-space ones egressed the
-#: card whole. A wide column in a monospaced report is an ordinary shape.
-#:
-#: It is not removed altogether because without any span limit two numbers at
-#: opposite ends of a long line could be assembled into one candidate. It is
-#: set where no real layout reaches. THE CLIFF STILL EXISTS - it is now at
-#: about eighty characters of gap - and it is pinned by
-#: test_the_span_bound_has_a_cliff_and_this_is_where_it_is rather than left to
-#: be discovered.
-#:
-#: This replaced "at most one joiner per two identifier characters", which was
-#: a bound on the TOTAL and still implied a hard limit of one per gap once the
-#: run rule required single joiners. Three-space padding is nine joiners for
-#: sixteen digits and was refused by it.
-MAX_SPAN_MULTIPLE = 16
+# THE LAYOUT BOUNDS: there is exactly ONE, and it is definitional.
+#
+# There used to be three. A span multiple (a candidate may occupy at most 16
+# times its own length), an interior-group limit (no whole group strictly
+# inside a candidate may exceed 12 characters), and the terminator count. The
+# first two are HEURISTICS, and both of them made the release gate red on
+# inputs nobody had decided about:
+#
+#   * interior group - an IBAN written across two article numbers was claimed
+#     by the brute-force oracle and refused here at an interior group of 17.
+#     The gate reported "a validated IBAN survived whole", intermittently,
+#     because the property test draws such a layout only sometimes. Measured
+#     at 3 reds in 400 hypothesis seeds.
+#
+#   * span multiple - the identical mechanism, latent rather than observed:
+#     the ECBS specimen IBAN written in groups of four with eighty-space gaps
+#     spans 19.2 times its length, so it is refused here, claimed by the
+#     oracle, and reported as a leak. The generator has simply never drawn a
+#     gap that wide.
+#
+# A bound the checker cannot see is a bound that turns a release gate into a
+# coin toss. A heuristic MUST NOT be shared with the oracle either - that is
+# how the line-break filter hid a whole leak class in round 14. So the
+# heuristics go, and what remains is the one bound that is a fact about the
+# identifier rather than about the page.
+#
+# WHAT THEY WERE WORTH, measured before removing them:
+#
+#              93 realistic documents     3000 digit-dense    300 wide columns
+#   both        card 27 / iban 0          2999 / 10           300 / 0
+#   neither     card 27 / iban 0          2998 / 13           300 / 0
+#
+# Nothing on realistic text; three extra IBAN false positives per 3000
+# documents of deliberate digit soup. The cost of KEEPING them was a gate that
+# goes red 0.75% of CI runs for a reason nobody chose.
+#
+# What stops unbounded assembly now is the terminator bound, which confines
+# any candidate to at most two lines. Within those two lines there is no width
+# limit, and that is a deliberate fail-closed trade: an over-redacted table row
+# is survivable, an unclaimed account number is not. It is stated in
+# docs/limits.md as an accepted cost rather than left to be discovered.
 
-#: The longest INTERIOR group a multi-group candidate may contain.
-#:
-#: This is what separates GROUPING from ASSEMBLY, and the word "interior" is
-#: doing all the work. Whatever a candidate's first and last groups look like,
-#: the groups strictly between them are whole, and in a real layout a whole
-#: group is small: four for a card or an IBAN, six for the middle of an Amex,
-#: two on a densely spaced form. When a Luhn window instead falls across a list
-#: of separate numbers, the group in the middle is a whole other number -
-#: thirteen digits of an article code, seven of a phone number.
-#:
-#: Bounding the longest group ANYWHERE was tried first and cannot work: "DE89
-#: 370400440532013000" is an ordinary way to write an IBAN and its second group
-#: is eighteen characters, longer than the thirteen-character groups that have
-#: to be refused. Requiring whole-group ALIGNMENT was tried next and cannot
-#: work either: a glued prefix on a spaced number ("7" run together with
-#: "4111 1111 1111 1111") starts in the middle of its first group, which is the
-#: entire case this detector exists to catch. Only the interior is reliable,
-#: because only the interior is never clipped by the candidate's own edges.
-#:
-#: A candidate with fewer than three groups has no interior and is unbounded.
-MAX_INTERIOR_GROUP = 12
 
 #: One line TERMINATOR, however many characters it is written with.
 #:
@@ -362,70 +360,118 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
         yield "".join(compact), offsets
 
 
-def _within_layout_bounds(
-    text: str, offsets: List[int], start: int, size: int
-) -> bool:
-    """Is this candidate compact enough to be one identifier?
+def terminator_offsets(text: str) -> List[int]:
+    """Where every line terminator in *text* STARTS, in order.
 
-    The bound is what keeps "anything that is not an identifier character,
-    however many of them" from assembling prose into a checksum. It is stated
-    on the SPAN - how many columns the candidate occupies - rather than on the
-    number of gaps or their width, because layout varies both and neither is a
-    property of the identifier.
-
-    Counted from the ORIGINAL offsets, which is where the punctuation actually
-    is; invisible characters were dropped before the run was built and are
-    correctly invisible here too.
+    Computed once per document so the bound below is O(1) per candidate. It
+    used to slice the candidate out of the text and re-scan it, which is linear
+    in the span - and with no span limit left to cap it, that is quadratic in
+    the length of a line on the egress path. This repo has paid for that
+    failure mode three times.
     """
-    span = offsets[start + size - 1] + 1 - offsets[start]
-    if span > size * MAX_SPAN_MULTIPLE:
-        return False
-
-    claimed = text[offsets[start]:offsets[start + size - 1] + 1]
-    if count_terminators(claimed) > MAX_LINE_BREAKS:
-        return False
-
-    groups: List[int] = []
-    current = 0
-    for position in range(offsets[start], offsets[start + size - 1] + 1):
-        if text[position].isascii() and text[position].isalnum():
-            current += 1
-        elif not _is_transparent(text[position]):
-            if current:
-                groups.append(current)
-            current = 0
-    if current:
-        groups.append(current)
-    longest = max(groups) if groups else 0
-
-    # "Single group" means ONE unbroken group, not "span equals size". A soft
-    # hyphen inside an otherwise solid account number makes the span one longer
-    # than the identifier while splitting nothing.
-    if longest == size:
-        return True
-
-    # There is deliberately NO bound on the number of groups. One was tried -
-    # "the average group must hold at least two characters", to reject text
-    # punctuated down to singles like "4.1.1.1.1..." - and it refused
-    # "4 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1", which is what `pdftotext` emits for a
-    # letter-spaced field on a form. The two shapes are identical; nothing in
-    # the text separates them. So single-character groups are accepted and the
-    # dotted-prose shape is over-redacted with them.
-
-    # No condition on the EDGES. Requiring at least one of them to sit on a
-    # group boundary was tried and is wrong: text glued to BOTH ends of a
-    # spaced number clips both edges, and
-    # "Art. 6 DSGVO4111 1111 1111 1111Ref " then egressed the card whole. The
-    # brute-force oracle caught it, which is the whole reason it has no run
-    # rule of its own. The cost of dropping the condition is one more
-    # false positive on the realistic corpus, a window assembled across a
-    # single separator out of two adjacent numbers in a list - a trade that
-    # goes the safe way.
-    return all(group <= MAX_INTERIOR_GROUP for group in groups[1:-1])
+    return [match.start() for match in LINE_TERMINATOR.finditer(text)]
 
 
-def _iban_spans_in_run(text: str, compact: str, offsets: List[int]) -> List[Span]:
-    spans: List[Span] = []
+def _within_layout_bounds(
+    offsets: List[int], start: int, size: int, breaks: List[int]
+) -> bool:
+    """Is this candidate ONE value rather than pieces of several lines?
+
+    The only layout question left. A value that wraps in a narrow column is
+    continued on the next line, so it is interrupted once; a column of separate
+    numbers is interrupted between every pair. Counting interruptions is a fact
+    about the identifier. How wide the page is, how many columns the value
+    occupies and how long a neighbouring token happens to be are facts about
+    the page, and every bound this module ever stated on those turned the
+    release gate into a coin toss - see the block above MAX_LINE_BREAKS.
+
+    A claim always begins and ends on an alphanumeric, so a terminator sequence
+    is never half inside it: counting the sequences that START inside the span
+    is exact, CRLF included.
+    """
+    first = offsets[start]
+    last = offsets[start + size - 1]
+    inside = bisect.bisect_right(breaks, last) - bisect.bisect_left(breaks, first)
+    return inside <= MAX_LINE_BREAKS
+
+
+def _claim(
+    intervals: List[List[int]],
+    offsets: List[int],
+    start: int,
+    end: int,
+    breaks: List[int],
+) -> None:
+    """Cover ``[start, end)``, merging into the previous claim where they OVERLAP.
+
+    Overlap, not adjacency. Two claims that merely touch in the compact run are
+    separated in the text by whatever sat between them, and merging those
+    swallowed it: 800 consecutive IBANs separated by single spaces came out as
+    one span reaching across all of them, because each started exactly where
+    the last ended. A window is already contiguous over its own separators, so
+    merging on adjacency buys no coverage at all.
+
+    Claims arrive with non-decreasing starts, so an overlap can only be with
+    the last interval. The union is taken rather than the wider of the two,
+    which is what makes "no validating window is ever left partially covered"
+    hold: picking one of two overlapping windows guesses which digits are the
+    identifier, and a wrong guess leaves the rest of it in the payload.
+
+    The one thing that stops a merge is the terminator bound on the UNION. An
+    interval that grew past it used to be discarded whole afterwards, throwing
+    away the valid window that started it; here the claim simply stands on its
+    own instead, and the two overlapping spans are merged downstream by the
+    redactor.
+    """
+    if intervals and start < intervals[-1][1]:
+        union_end = max(intervals[-1][1], end)
+        first = intervals[-1][0]
+        if _within_layout_bounds(offsets, first, union_end - first, breaks):
+            intervals[-1][1] = union_end
+            return
+    intervals.append([start, end])
+
+
+def _unclaimed_pieces(
+    start: int, end: int, claimed: "set[int]"
+) -> List[Tuple[int, int]]:
+    """``[start, end)`` minus the positions another identifier already owns."""
+    pieces: List[Tuple[int, int]] = []
+    run: Optional[int] = None
+    for position in range(start, end):
+        if position in claimed:
+            if run is not None:
+                pieces.append((run, position))
+                run = None
+        elif run is None:
+            run = position
+    if run is not None:
+        pieces.append((run, end))
+    return pieces
+
+
+def _iban_spans_in_run(
+    compact: str, offsets: List[int], breaks: List[int]
+) -> List[Span]:
+    """Every registered-length, mod-97-valid window, merged where they overlap.
+
+    Nothing is picked, for the same reason the card pass picks nothing. This
+    used to claim the LEFTMOST valid window and then skip its whole length,
+    which meant a COINCIDENTAL IBAN suppressed a genuine one and the claiming
+    order decided which survived:
+
+        "B.E54.7/<a real DE IBAN>"  ->  "[IBAN]<11 digits of the account>"
+
+    The first eight characters compact to a mod-97-valid Belgian length, the
+    genuine IBAN starts five characters in, and advancing past the coincidence
+    stepped over it. Measured at about one document in seventy-four on
+    realistic German business text, with eight to fourteen characters of a real
+    account number left in a payload cleared for egress.
+
+    So every valid window is claimed, the search advances one character at a
+    time, and overlapping claims are merged into their union.
+    """
+    intervals: List[List[int]] = []
     position = 0
     limit = len(compact) - MIN_IBAN_LENGTH + 1
     while position < limit:
@@ -443,21 +489,22 @@ def _iban_spans_in_run(text: str, compact: str, offsets: List[int]) -> List[Span
             position += 1
             continue
         candidate = compact[position:position + registered]
-        if iban_ok(candidate) and _within_layout_bounds(text, offsets, position, registered):
-            spans.append(
-                (offsets[position], offsets[position + registered - 1] + 1, candidate)
-            )
-            position += registered
-            continue
+        if iban_ok(candidate) and _within_layout_bounds(
+            offsets, position, registered, breaks
+        ):
+            _claim(intervals, offsets, position, position + registered, breaks)
         position += 1
-    return spans
+    return [
+        (offsets[start], offsets[end - 1] + 1, compact[start:end])
+        for start, end in intervals
+    ]
 
 
 def _card_spans_in_run(
-    text: str,
     compact: str,
     offsets: List[int],
     claimed: "set[int]",
+    breaks: List[int],
 ) -> List[Span]:
     """Every Luhn-valid window in every digit run, merged where they overlap.
 
@@ -472,6 +519,13 @@ def _card_spans_in_run(
     are merged into their union, which cannot leave a validating window
     partially covered. The cost is that adjacent digits go too; that is the
     over-redaction this module's docstring quantifies.
+
+    THE INVARIANT, stated once for both passes: no validating window is ever
+    left partially covered. Which identifier gets the LABEL is decided by
+    whoever claims first, so no character is reported twice - but what gets
+    COVERED is every character of every window that validates. Round 18 stated
+    the first half and implemented it as a REFUSAL, which reduced coverage;
+    non-reuse may decide a label, never a redaction.
     """
     intervals: List[List[int]] = []
     for run in _DIGIT_RUN.finditer(compact):
@@ -479,37 +533,44 @@ def _card_spans_in_run(
         if run_end - run_start < MIN_CARD_LENGTH:
             continue
         for position in range(run_start, run_end - MIN_CARD_LENGTH + 1):
-            if position in claimed:
-                continue
             for size in range(MAX_CARD_LENGTH, MIN_CARD_LENGTH - 1, -1):
                 if position + size > run_end:
                     continue
-                # No character may belong to two identifiers. Skipping only a
-                # window that STARTS inside a claimed span let a window start
-                # before an IBAN and run across it, reusing the IBAN's own
-                # digits as part of a "card".
-                if any(index in claimed for index in range(position, position + size)):
+                if not luhn_ok(compact[position:position + size]):
                     continue
-                if luhn_ok(compact[position:position + size]) and _within_layout_bounds(
-                    text, offsets, position, size
-                ):
-                    # Extend the previous interval only if the UNION still
-                    # respects the terminator bound. Merging without that
-                    # check produced a union spanning two terminators, which
-                    # the re-check below then discarded WHOLE - throwing away
-                    # the valid window that started it. A card padded with
-                    # underscores on a line of its own went out that way,
-                    # while the same card in isolation was claimed.
-                    if intervals and position <= intervals[-1][1]:
-                        union_end = max(intervals[-1][1], position + size)
-                        union = text[
-                            offsets[intervals[-1][0]]:offsets[union_end - 1] + 1
-                        ]
-                        if count_terminators(union) <= MAX_LINE_BREAKS:
-                            intervals[-1][1] = union_end
-                            break
-                    intervals.append([position, position + size])
+                if not _within_layout_bounds(offsets, position, size, breaks):
+                    continue
+                overlaps = any(
+                    index in claimed for index in range(position, position + size)
+                )
+                if not overlaps:
+                    _claim(intervals, offsets, position, position + size, breaks)
                     break
+                # A window that reuses characters another validated identifier
+                # owns does not get to be a second identifier - but it is not
+                # discarded either, because discarding it loses whatever part
+                # of it nobody owns. That cost a GENUINE card, whole: a
+                # coincidental IBAN claim reaching into the card's first digits
+                # suppressed every window covering the rest of it, and fifteen
+                # digits stood in the payload under an [IBAN] label. On 400
+                # constructed documents of that shape it happened in 165.
+                #
+                # The remainder is claimed only when the validating window sits
+                # inside ONE unbroken group, which is the discriminator between
+                # the two shapes. A genuine card is one solid field, so a claim
+                # overlapping it is the assembled one and the remainder is real
+                # card digits. A window that instead runs OUT of a genuine IBAN
+                # into the amount and the date beside it crosses separators;
+                # claiming its remainder redacted those fields on 117 of 300
+                # realistic payment documents, against 4 for both the shipped
+                # rule and this one.
+                if offsets[position + size - 1] + 1 - offsets[position] != size:
+                    continue
+                for piece_start, piece_end in _unclaimed_pieces(
+                    position, position + size, claimed
+                ):
+                    _claim(intervals, offsets, piece_start, piece_end, breaks)
+                break
 
     # No post-hoc filter. The bound is enforced when intervals are extended,
     # above, so an interval can never exceed it - and discarding a whole
@@ -523,8 +584,9 @@ def _card_spans_in_run(
 def find_ibans(text: str) -> List[Span]:
     """Every checksum-valid IBAN in *text*, found without a word boundary."""
     spans: List[Span] = []
+    breaks = terminator_offsets(text)
     for compact, offsets in identifier_runs(text):
-        spans.extend(_iban_spans_in_run(text, compact, offsets))
+        spans.extend(_iban_spans_in_run(compact, offsets, breaks))
     return spans
 
 
@@ -539,8 +601,6 @@ def find_cards(text: str, avoid: Optional[List[Tuple[int, int]]] = None) -> List
     # list. It used to loop every offset for every avoid span, which is
     # quadratic in the number of validated IBANs on the page: 200 IBANs took
     # 0.32s and 800 took 4.5s, on the egress path.
-    import bisect
-
     merged: List[Tuple[int, int]] = []
     for start, end in sorted(avoid or []):
         if merged and start <= merged[-1][1]:
@@ -550,6 +610,7 @@ def find_cards(text: str, avoid: Optional[List[Tuple[int, int]]] = None) -> List
     starts = [start for start, _end in merged]
 
     spans: List[Span] = []
+    breaks = terminator_offsets(text)
     for compact, offsets in identifier_runs(text):
         if not offsets:
             continue
@@ -559,7 +620,7 @@ def find_cards(text: str, avoid: Optional[List[Tuple[int, int]]] = None) -> List
                 index = bisect.bisect_right(starts, origin) - 1
                 if index >= 0 and origin < merged[index][1]:
                     blocked.add(position)
-        spans.extend(_card_spans_in_run(text, compact, offsets, blocked))
+        spans.extend(_card_spans_in_run(compact, offsets, blocked, breaks))
     return spans
 
 
