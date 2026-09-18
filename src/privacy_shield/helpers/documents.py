@@ -255,7 +255,12 @@ def save_documents_store(
             for old in snapshots[30:]:
                 old.unlink(missing_ok=True)
         except Exception as exc:
-            logger.debug("Failed rotating document snapshot files for %s: %s", base_path, exc)
+            # `base_path` is not a name in this function, so a failed snapshot -
+            # an unwritable recovery directory, a host_app with no USER_ROOT -
+            # raised NameError out of save_documents_store and the store was
+            # never written at all. The handler exists precisely so a snapshot
+            # failure does not cost the save.
+            logger.debug("Failed rotating document snapshot files for %s: %s", docs_path, exc)
 
     tmp_file = None
     try:
@@ -626,7 +631,13 @@ def build_folder_context(host_app: Any, folder_path: str, max_chars: int = 20000
                 text = entry.read_text(errors="replace")[:remaining]
             elif suffix in PARSEABLE_EXTS and hasattr(host_app, "_read_contract_file_text"):
                 text = str(host_app._read_contract_file_text(str(entry)) or "")[:remaining]
-        except Exception:
+        except Exception as exc:
+            # A file that cannot be read drops out of the context with no trace
+            # in the returned string, so the caller cannot tell a folder of
+            # three documents from a folder of three where two failed to open.
+            # The return type is a str and cannot carry that, so the log is the
+            # only channel there is - it must at least exist.
+            logger.debug("skipping unreadable folder-context file %s: %s", entry, exc)
             continue
         if not text.strip():
             continue

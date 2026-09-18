@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import tempfile
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+from ._tools import channel_unavailable, operand, run_tool, tool_available
 
 logger = logging.getLogger(__name__)
 
@@ -103,32 +104,27 @@ class AudioResult:
 
 def _check_ffmpeg() -> bool:
     """Check if ffmpeg is available."""
-    try:
-        subprocess.run(
-            ["ffmpeg", "-version"],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except Exception:
-        return False
+    return tool_available("ffmpeg")
 
 
 def _check_ffprobe() -> bool:
     """Check if ffprobe is available."""
-    try:
-        subprocess.run(
-            ["ffprobe", "-version"],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except Exception:
-        return False
+    return tool_available("ffprobe")
 
 
-def _extract_audio_metadata(file_path: Path) -> AudioMetadata:
-    """Extract metadata from audio file using ffprobe and local fallbacks."""
+def _extract_audio_metadata(
+    file_path: Path,
+    errors: Optional[List[str]] = None,
+) -> AudioMetadata:
+    """Extract metadata from audio file using ffprobe and local fallbacks.
+
+    Appends a channel-unavailable error to *errors* when no tag reader is
+    present. ID3 frames are a PII channel of their own - TPE1 names a person,
+    COMM is free text, APIC is a photograph - and the only two readers here are
+    ffprobe and mutagen, neither declared by any extra. With both absent this
+    returned `pii_fields=[]`, which reads as "no personal data in the tags" and
+    meant "no reader opened the tags".
+    """
     metadata = AudioMetadata(
         duration_seconds=0.0,
         sample_rate=0,
@@ -136,14 +132,18 @@ def _extract_audio_metadata(file_path: Path) -> AudioMetadata:
         format="unknown",
     )
 
-    if _check_ffprobe():
+    have_ffprobe = _check_ffprobe()
+    if have_ffprobe:
         try:
             _extract_av_metadata(file_path, metadata)
         except Exception as exc:
             logger.debug("Primary audio tag extraction failed for %s: %s", file_path, exc)
+            have_ffprobe = False
 
+    have_mutagen = False
     try:
         from mutagen import File as MutagenFile
+        have_mutagen = True
         audio = MutagenFile(str(file_path))
         if audio:
             info = getattr(audio, "info", None)
@@ -162,6 +162,8 @@ def _extract_audio_metadata(file_path: Path) -> AudioMetadata:
                     value = str(audio.tags[key])
                     metadata.raw_tags[str(key)] = value[:200]
                 _apply_audio_tags(metadata, dict(audio.tags))
+    except ImportError as exc:
+        logger.debug("Mutagen not installed: %s", exc)
     except Exception as exc:
         logger.debug("Mutagen audio metadata extraction failed for %s: %s", file_path, exc)
 
@@ -174,38 +176,68 @@ def _extract_audio_metadata(file_path: Path) -> AudioMetadata:
     if metadata.format == "unknown":
         metadata.format = file_path.suffix.lower().lstrip(".") or "unknown"
 
+    # `wave` is in the standard library but reads only RIFF geometry - never a
+    # tag - so it does not make this channel available.
+    if errors is not None and not have_ffprobe and not have_mutagen:
+        errors.append(
+            channel_unavailable(
+                "container_tags",
+                "no tag reader available (need ffprobe on PATH or `pip install mutagen`)",
+            )
+        )
+
     return metadata
 
 
+_NAMED_ATTRS = {
+    "title": "title",
+    "artist": "artist",
+    "album": "album",
+    "date": "year",
+    "year": "year",
+    "comment": "comment",
+}
+
+
 def _apply_audio_tags(metadata: AudioMetadata, tags: Dict[str, Any]) -> None:
-    tag_map = {
-        "title": "title",
-        "artist": "artist",
-        "album": "album",
-        "date": "year",
-        "year": "year",
-        "comment": "comment",
-        "TITLE": "title",
-        "ARTIST": "artist",
-        "ALBUM": "album",
-        "DATE": "year",
-        "YEAR": "year",
-        "COMMENT": "comment",
-    }
-    for tag_key, attr in tag_map.items():
-        if tag_key not in tags:
-            continue
+    """Record every tag present, and flag the PII ones by the shared taxonomy.
+
+    This used to iterate a hardcoded six-key map and flag exactly two of them
+    (`artist`, `comment`), which lost three things at once: every ID3 frame id
+    (mutagen keys an mp3's tags `TPE1`/`COMM::eng`, none of which were in the
+    map, so a fully installed mutagen still reported no tag PII); every field
+    the map did not list (composer, lyricist, encodedby, owner, publisher, the
+    QuickTime `©`-prefixed forms); and cover art, which is a photograph. The
+    classification now comes from `metadata.tag_pii_type`, the one table.
+    """
+    from .metadata import normalise_tag_key, tag_pii_type
+
+    for tag_key in list(tags):
         raw_value = tags[tag_key]
         if isinstance(raw_value, (list, tuple)):
             value = str(raw_value[0]) if raw_value else ""
         else:
             value = str(raw_value)
+
+        name = normalise_tag_key(tag_key)
+        pii_type = tag_pii_type(tag_key)
+
+        # An embedded payload (APIC cover art, GEOB) has no text value worth
+        # recording, and its presence is the whole finding.
+        if pii_type == "embedded_payload":
+            if name not in metadata.pii_fields:
+                metadata.pii_fields.append(name)
+            continue
+
         if not value:
             continue
-        setattr(metadata, attr, value)
+
+        attr = _NAMED_ATTRS.get(name)
+        if attr:
+            setattr(metadata, attr, value)
         metadata.raw_tags[str(tag_key)] = value[:200]
-        if attr in ("artist", "comment") and attr not in metadata.pii_fields:
-            metadata.pii_fields.append(attr)
+        if pii_type and name not in metadata.pii_fields:
+            metadata.pii_fields.append(name)
 
 
 def _extract_wave_metadata(file_path: Path, metadata: AudioMetadata) -> None:
@@ -228,18 +260,16 @@ def _extract_wave_metadata(file_path: Path, metadata: AudioMetadata) -> None:
 
 
 def _extract_av_metadata(file_path: Path, metadata: AudioMetadata) -> None:
-    result = subprocess.run(
+    result = run_tool(
         [
             "ffprobe",
             "-v", "quiet",
             "-print_format", "json",
             "-show_format",
             "-show_streams",
-            str(file_path),
+            "-i", operand(file_path),
         ],
-        capture_output=True,
         text=True,
-        check=True,
     )
 
     import json
@@ -250,13 +280,23 @@ def _extract_av_metadata(file_path: Path, metadata: AudioMetadata) -> None:
     metadata.duration_seconds = float(fmt.get("duration", metadata.duration_seconds or 0))
     metadata.bitrate = int(fmt.get("bit_rate", 0)) if fmt.get("bit_rate") else metadata.bitrate
 
+    seen_audio = False
     for stream in data.get("streams", []):
-        if stream.get("codec_type") == "audio":
+        if stream.get("codec_type") == "audio" and not seen_audio:
+            seen_audio = True
             if not metadata.sample_rate:
                 metadata.sample_rate = int(stream.get("sample_rate", 0))
             if not metadata.channels:
                 metadata.channels = int(stream.get("channels", 0))
-            break
+        # Cover art is carried as a video stream with the attached_pic
+        # disposition. It is a photograph inside the audio file, with its own
+        # EXIF block, and it is not a format-level tag - so reading only
+        # `format.tags` never saw it.
+        if stream.get("disposition", {}).get("attached_pic"):
+            if "picture" not in metadata.pii_fields:
+                metadata.pii_fields.append("picture")
+        # Per-stream tags, which the format-level read also skipped.
+        _apply_audio_tags(metadata, stream.get("tags", {}) or {})
 
     _apply_audio_tags(metadata, fmt.get("tags", {}))
 
@@ -267,21 +307,21 @@ def _convert_to_wav(input_path: Path, output_path: Path) -> bool:
         return False
 
     try:
-        subprocess.run(
+        run_tool(
             [
                 "ffmpeg",
-                "-i", str(input_path),
+                "-nostdin",
+                "-i", operand(input_path),
                 "-ar", "16000",  # 16kHz for speech
                 "-ac", "1",  # Mono
                 "-c:a", "pcm_s16le",
                 "-y",  # Overwrite
-                str(output_path),
-            ],
-            capture_output=True,
-            check=True,
+                operand(output_path),
+            ]
         )
         return True
-    except Exception:
+    except Exception as exc:
+        logger.debug("Audio conversion to wav failed for %s: %s", input_path, exc)
         return False
 
 
@@ -484,14 +524,14 @@ class AudioProcessor:
             return result
 
         # Extract metadata
-        result.metadata = _extract_audio_metadata(path)
+        result.metadata = _extract_audio_metadata(path, result.errors)
 
         # Initialize STT engine
         try:
             _, engine_name = self._init_stt()
             result.stt_engine = engine_name
         except ImportError as e:
-            result.errors.append(str(e))
+            result.errors.append(channel_unavailable("speech_to_text", e))
             result.processing_time_ms = (time.perf_counter() - start_time) * 1000
             return result
 
@@ -504,7 +544,12 @@ class AudioProcessor:
                 transcription_path = Path(tmp.name)
 
             if not _convert_to_wav(path, transcription_path):
-                result.errors.append("Failed to convert audio to WAV")
+                result.errors.append(
+                    channel_unavailable(
+                        "speech_to_text",
+                        "could not decode to wav (need ffmpeg on PATH)",
+                    )
+                )
                 result.processing_time_ms = (time.perf_counter() - start_time) * 1000
                 return result
 
@@ -553,57 +598,75 @@ class AudioProcessor:
         Args:
             file_path: Input audio path.
             output_path: Output audio path.
-            segments_to_redact: Segments to redact.
-            redaction_type: 'silence' or 'beep'.
+            segments_to_redact: Segments to silence. May be empty: the tags and
+                any cover art are redacted regardless.
+            redaction_type: 'silence' (the only implemented behaviour).
 
         Returns:
-            True if successful.
+            True only if a redacted file was written.
+
+        **This used to copy the input to the output byte for byte and return
+        True whenever `segments_to_redact` was empty**, which is the state the
+        caller is in whenever transcription found nothing - and no STT engine is
+        declared by any extra of this package, so "found nothing" is the default
+        outcome. The artefact cleared for egress was the original file: ID3
+        artist, COMM free text, cover art, every byte. An empty segment list is
+        not a reason to skip redaction, because the tags and the attached
+        picture are PII channels of their own; it only means there is no speech
+        to silence.
         """
         if not _check_ffmpeg():
             return False
 
-        if not segments_to_redact:
-            # Just copy the file
-            try:
-                import shutil
-                shutil.copy(str(file_path), str(output_path))
-                return True
-            except Exception:
-                return False
+        if redaction_type not in ("silence", "beep"):
+            logger.debug("unknown redaction_type %r", redaction_type)
+            return False
+        if redaction_type == "beep":
+            # `beep` built the identical `volume=0` filtergraph as `silence`, so
+            # the documented option did nothing. Refuse rather than silently
+            # substitute: a caller who asked for an audible marker and got
+            # silence cannot tell a redacted gap from a pause in the recording.
+            logger.debug("redaction_type='beep' is not implemented")
+            return False
 
         try:
-            # Build ffmpeg filter for redaction
             filter_parts = []
-
-            for seg in sorted(segments_to_redact, key=lambda s: s.start_time):
-                start = seg.start_time
-                end = seg.end_time
-
-                if redaction_type == "beep":
-                    # Generate beep tone for duration
-                    filter_parts.append(
-                        f"volume=enable='between(t,{start},{end})':volume=0"
-                    )
-                else:
-                    # Silence
-                    filter_parts.append(
-                        f"volume=enable='between(t,{start},{end})':volume=0"
-                    )
+            for seg in sorted(segments_to_redact or [], key=lambda s: float(s.start_time)):
+                # float() rather than interpolating the attribute: a
+                # TranscriptSegment is a plain dataclass with no validation, and
+                # these values are formatted straight into an ffmpeg
+                # filtergraph, where a string would be read as filter syntax.
+                start = float(seg.start_time)
+                end = float(seg.end_time)
+                filter_parts.append(
+                    f"volume=enable='between(t,{start!r},{end!r})':volume=0"
+                )
 
             filter_str = ",".join(filter_parts) if filter_parts else "anull"
 
-            subprocess.run(
+            run_tool(
                 [
                     "ffmpeg",
-                    "-i", str(file_path),
+                    "-nostdin",
+                    "-i", operand(file_path),
+                    # Take the audio and only the audio. Cover art rides along
+                    # as an attached_pic video stream and ffmpeg's default
+                    # stream selection would have copied it into the output.
+                    "-map", "0:a",
+                    "-vn",
                     "-af", filter_str,
+                    # Container tags are PII (artist, comment, copyright) and
+                    # ffmpeg copies them by default; -1 means copy from nowhere.
+                    # The `:s` form is needed as well because per-stream tags
+                    # are not covered by the global one.
+                    "-map_metadata", "-1",
+                    "-map_metadata:s", "-1",
                     "-y",
-                    str(output_path),
-                ],
-                capture_output=True,
-                check=True,
+                    operand(output_path),
+                ]
             )
             return True
 
-        except Exception:
+        except Exception as exc:
+            logger.debug("redact_audio failed for %s: %s", file_path, exc)
             return False

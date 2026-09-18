@@ -930,8 +930,15 @@ class SecurityScanner:
                         description="Base64-encoded suspicious content",
                         context=self._get_context(text, match.start(), match.end()),
                     ))
-            except Exception:
-                continue  # Not valid base64 or decode error
+            except Exception as exc:
+                # Unreachable for anything BASE64_PATTERN matches - the pattern
+                # only ever matches a multiple of four alphabet characters, so
+                # the `+ "=="` always decodes - which is why this silence never
+                # showed up as a missed payload. Logged rather than swallowed so
+                # that if the pattern is ever widened to an unpadded run, a
+                # payload dropped here is visible instead of invisible.
+                logger.debug("base64 candidate could not be decoded: %s", exc)
+                continue
 
     def _check_invisible_chars(self, text: str, findings: List[ThreatFinding]) -> None:
         """Check for invisible/zero-width characters."""

@@ -318,10 +318,155 @@ next round starts from this rather than rediscovering it:
   installed; the `privacy-shield` skill's `privacy_scan` tool requires
   `loomground-mcp`.
 
+## Limits of the media paths (images, audio, video, file metadata)
+
+- **A media overlay is TEXT, never a re-encoded media file.** `DocumentScan.overlay`
+  is a `str`. For an image it is the redacted OCR text, for audio the redacted
+  transcript, for video transcript plus frame text. `scan()` never produces a
+  cleaned image, audio file or video: `redact_image`, `redact_audio`,
+  `redact_video` and `strip_metadata` are separate, caller-driven APIs that are
+  **not on the `egress_allowed` path at all** and are reached only through
+  `PrivacyShield.strip_metadata` or the media classes directly. So "only the
+  overlay egresses" is true of a media file in the narrow sense that the only
+  thing the pipeline hands back is a redacted text projection — and the source
+  media file is never made safe to send. If you need to forward the file, that
+  is the redaction API's job, and you must check its return value.
+- **The raw metadata VALUE is local-only telemetry; the field NAME travels.**
+  `ShieldResult.metadata_pii_fields` and `DocumentScan.findings_by_type` carry
+  names (`GPS`, `Artist`, `gps`), never values. `ImageMetadata.to_dict()`,
+  `AudioMetadata.to_dict()` and `VideoMetadata.to_dict()` **do** carry raw
+  values (`gps`, `owner`, `artist`, `comment`, `camera_make`) and are not
+  reachable from `ShieldResult`; `MetadataFinding.value` likewise. Nothing in
+  the package forwards them, and `tests/test_media_egress_promise.py::test_the_media_overlay_is_text_and_never_the_raw_metadata_value`
+  pins that. Treat them the way `SpanFinding.value` is treated: on-machine only.
+- **Every media PII channel needs a backend this package does not declare, and
+  in CI's own configuration NONE of them is present.** `[extract]` installs
+  PyMuPDF and opencv; it does **not** install Pillow, and image EXIF reading is
+  Pillow-only. OCR needs `paddleocr`, `pytesseract` or `python-doctr`; STT needs
+  `faster-whisper`, `openai-whisper` or `vosk`; container tags need `ffprobe` on
+  PATH or `mutagen`; frame and audio-track extraction need `ffmpeg` on PATH;
+  the comprehensive metadata reader needs `exiftool` on PATH; the PDF and Office
+  metadata fallbacks need `pypdf` and `python-docx`. None of these is in any
+  extra. So with `pip install ".[dev,semantic,extract,openai]"` an image is
+  scanned with no EXIF reader, no OCR engine and no face detector, an mp3 with
+  no tag reader and no transcriber, and a video with nothing at all.
+- **An unavailable channel is now visible, and that is the whole of the fix.**
+  Each missing channel records a per-document error prefixed
+  `media_channel_unavailable:` — the same mechanism the folder walk uses for an
+  undecodable binary, above. It does **not** change the egress verdict: a media
+  file whose channels could not run is still `egress_allowed=True`, because the
+  gate decides on source classification. **`all_allowed` is therefore not a
+  statement that every media file was read.** A consumer that needs that must
+  check `any(e.startswith("media_channel_unavailable") for e in doc.errors)`.
+  Before this, those channels returned empty-handed in silence: a photograph of
+  a letter, an interview recording and a geotagged site video all came back
+  `pii_detected=False, errors=[], egress_allowed=True`.
+- **Face detection has no working backend at the declared floor.** `[extract]`
+  pins `opencv-python-headless>=4.8` with no ceiling; opencv 5.0, which that
+  floor resolves to today, ships **no Haar cascade XML**, so the fallback
+  detector stopped existing on a transitive upgrade. With `mediapipe` absent as
+  well, no face is ever detected. This is reported, not silent, but a face in an
+  image is not found in the shipped configuration.
+- **`redact_image`, `redact_audio` and `redact_video` return False rather than
+  report a redaction they did not perform.** Specifically: `blur_faces=True`
+  with no detector, or on a processor built with `detect_faces=False`, refuses;
+  a `cv2.imwrite` that fails refuses (its return value used to be discarded, so
+  a pre-existing file at the output path was reported as the redacted copy);
+  `redact_video(blur_faces=True)` refuses, because video face blurring is not
+  implemented; `redaction_type="beep"` refuses, because it built the same
+  `volume=0` filter as `silence`. **`redact_audio` with no speech segments no
+  longer copies the input to the output.** It used to `shutil.copy` and return
+  True — the artefact cleared for egress was the original file, tags, cover art
+  and all — and an empty segment list is the default outcome, since no STT
+  engine is declared.
+- **Face blurring in video is not implemented**, and text-box blackout in video
+  is not implemented. Asking for either returns False.
+- **`strip_metadata` verifies its own output and refuses when it cannot prove
+  the metadata is gone.** It re-reads the output through the same parsers AND
+  searches the output **bytes** for each value the input carried, in UTF-8,
+  UTF-16-BE and Latin-1. Two consequences. First, the PDF path is now correct:
+  `set_metadata({})` clears only the DocInfo dictionary, the XMP packet holds
+  the same author and title, and a default PyMuPDF save keeps the superseded
+  objects in the file, so the author's name and the document subject stayed
+  recoverable from a file the function had returned True about. Second, the
+  check **deliberately over-refuses**: a metadata value that also appears in
+  the page's visible text cannot be removed by a metadata strip, and
+  `strip_metadata` will return False rather than claim it is gone. Fail-closed
+  wins, as with the digit-run over-redaction above. Values shorter than six
+  characters are not byte-searched, because they collide with ordinary binary
+  content.
+- **Only `.jpg`, `.jpeg`, `.png` and `.pdf` can be stripped without `exiftool`,
+  and the PDF path additionally needs `PRIVACY_SHIELD_ENABLE_PYMUPDF=1`.**
+  Everything else returns False. Note that `extractor.py` latches that
+  environment variable at **import** time while `media/metadata.py` reads it per
+  call, so setting it after the package is imported changes metadata handling
+  and not text extraction.
+- **Container tag classification is one table.** `media/metadata.tag_pii_type`
+  is the single entry point; `audio.py` and `video.py` consume it. It normalises
+  ID3 frame ids (`TPE1`, `COMM::eng`, `APIC:cover`), Vorbis/QuickTime words
+  (`ARTIST`, `©xyz`) and namespaced names (`EXIF:Artist`,
+  `Composite:GPSPosition`) to the word form the field tables use. Previously
+  each module carried its own subset — audio flagged `artist` and `comment`
+  only and matched no ID3 frame id at all, so a fully installed `mutagen`
+  still reported an mp3 as carrying no tag PII; video flagged `artist` plus two
+  literal GPS keys and dropped `author`, `title`, `comment` and
+  `creation_time` into `raw_tags`, which no result object exposes.
+- **Video GPS is looked for under every spelling a phone writes**, at format
+  AND stream level: `location`, `location-eng`, `com.apple.quicktime.location.*`,
+  `com.android.location`, `gps*`, `©xyz`. Two exact keys were matched before,
+  at format level only.
+- **Cover art and embedded payloads are reported by presence, not content.**
+  An ID3 `APIC` frame or an ffprobe `attached_pic` stream is a photograph
+  inside an audio file, with its own EXIF block; it is flagged as
+  `embedded_payload` and is **not** recursively scanned.
+- **An EXIF thumbnail (IFD1) is reported as `EXIFThumbnail`, not examined.**
+  A crop, rotation or downscale by an editor that rewrites the main image and
+  not IFD1 leaves the original frame in the thumbnail. The merged dict
+  `_getexif()` returns drops IFD1 entirely, so nothing had looked; presence is
+  now flagged, but the thumbnail's own content is not OCR'd or face-detected.
+- **`MakerNote` is flagged and not parsed.** It is an opaque per-vendor blob
+  that routinely repeats the serial number, the owner name and the GPS fix;
+  presence is the finding.
+- **External media tools are invoked through one seam**, `media/_tools.py`:
+  list-form argv, never `shell=True`, every file operand resolved to an
+  absolute path, and every call bounded by a timeout. The absolute path is the
+  fix for a real reachable case — `runner.scan` passes a single file straight
+  through with no extension filter, so a file named `-delete_original!` or `-i`
+  reached `exiftool`/`ffprobe` as a bare option token; none of these tools
+  honours the `--` end-of-options convention, so resolving the path is the
+  portable answer. The timeout is the fix for a malformed container blocking a
+  folder scan indefinitely.
+- **`security_scanner.py` is not on the egress path.** It is a prompt-injection
+  / jailbreak / hidden-instruction detector for documents on their way **into**
+  an LLM prompt — the inbound mirror of the PII scanner. It is exported from
+  `privacy_shield/__init__.py` and listed in `docs/pipeline.md`, but nothing in
+  `scanner.py`, `shield.py`, `runner.py` or `gate.py` calls it, so no
+  `egress_allowed` verdict depends on it. Pinned by
+  `tests/test_media_egress_promise.py::test_security_scanner_is_not_on_the_egress_path`,
+  which fails if it is ever wired in.
+
 ## Known gaps
 
 The ONNX contextual model is shadow-only (no promotion); there is no bundled
 pre-embedded PII-context file.
+
+**A PDF's DocInfo values are reported by field name and never scanned.**
+`extractor.py` reads `/Author`, `/Title`, `/Subject`, `/Creator` and
+`/Producer` into `ExtractionResult.metadata`, and `shield._process_document`
+turns `author`, `creator` and `last_modified_by` into
+`metadata_pii_fields` entries — field names only. The VALUES are not appended
+to `extracted_text`, so they are never offered to the scanner and never
+redacted. A `/Subject` reading `Patientenakte 4711` is reported as
+`{"metadata": 1}`. Fixing this means changing `extractor.py` or `shield.py`,
+neither of which is in the media territory. PDF annotation contents and AcroForm
+field values ARE reached, because PyMuPDF's `page.get_text()` includes their
+appearance streams — measured, not assumed, and one of the things this round
+could not break.
+
+**`PrivacyShield(enable_ocr=False)` silently disables the EXIF and
+face-detection channels too**, because `shield._process_image` returns before
+constructing the processor. The flag is named for one channel and gates three.
+`shield.py` is outside the media territory; recorded here rather than fixed.
 
 ## Test split
 
@@ -331,14 +476,20 @@ All numbers below are measured in **CI's environment**, which is
 
 ```
 python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
-974 passed, 8 failed, 3 skipped
+969 passed, 8 failed, 4 skipped
 ```
 
-984 tests collected. The 2 skips are the `httpx` transport assertions in
+`--collect-only` reports 971 items; the run above reports 972 outcomes,
+because two of the skips are module-level `importorskip` skips rather than
+collected items. The same numbers on python 3.14, CI's other matrix leg.
+Two of the 4 skips are the `httpx` transport assertions in
 `tests/test_proxy_transport_guard.py` and
 `tests/test_privacy_shield_embeddings.py`; they do not run in CI either, and
 a previously reported "886 passed / 8 failed" was measured in a richer
-environment than CI's and was not reproducible. The 8
+environment than CI's and was not reproducible. The other 2 are the
+Pillow-gated EXIF assertions in `tests/test_media_egress_promise.py` — Pillow is
+declared by no extra, so they skip loudly in CI's configuration and pass where
+it is installed. The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -346,7 +497,49 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 974 passed, 8 deselected.
+`tests` job runs 969 passed, 8 deselected.
+
+### The media paths' coverage, before and after
+
+Measured with `coverage run --source src/privacy_shield/media -m pytest`:
+
+```
+                 before (521fec2)          after
+media/__init__.py     0%                   100%
+media/_tools.py       -  (did not exist)   100%
+media/audio.py        0%   (308 stmts)      46%
+media/image.py        0%   (321 stmts)      45%
+media/metadata.py     0%   (256 stmts)      59%
+media/video.py        0%   (203 stmts)      79%
+media/ TOTAL          0%  (1093 stmts,      57%  (1298 stmts)
+                           0 executed)
+helpers/documents.py 18%                    31%
+security_scanner.py  35% (import only)      57%
+```
+
+**`media/` was at 0.0% — not one of 1,093 statements executed by the whole
+902-test suite.** `tests/test_privacy_shield_media_inputs.py`, the only file
+named for media, replaces every processor with a `SimpleNamespace`, so it tests
+`shield.py`'s plumbing and never imports `privacy_shield.media` at all; that is
+why the modules did not even appear in a coverage report. The `security_scanner.py`
+35% was its module-level pattern definitions running on import, with no
+behavioural test anywhere.
+
+The 43–57% remainder in `image.py` and `audio.py` is the engine-specific
+bodies — the paddleocr, tesseract, doctr, mediapipe, faster-whisper, whisper
+and vosk branches — which cannot execute without those packages. That is the
+undeclared-dependency limit above, measured.
+
+`tests/test_media_egress_promise.py` is the media counterpart of the leak
+invariant: 69 tests, 67 of which run in CI's configuration. Its fixtures are
+assembled from the format specifications as raw bytes (JPEG APP1/TIFF for EXIF
+including a hand-built IFD1 thumbnail, ID3v2.3 for audio tags, ISO-BMFF `udta`
+for the QuickTime location atom) rather than with Pillow's, mutagen's or
+ffmpeg's writers, and its EXIF field vectors are tag names transcribed from
+EXIF 2.32 rather than derived from `PII_EXIF_FIELDS`. That is deliberate: the
+seventh time a check in this package shared an assumption with the code it
+checked was an IBAN test that generated its vectors from the package's own
+definition of an IBAN and therefore could not fail.
 
 The leak invariant is its own CI job that `tests` waits on:
 `tests/test_leak_invariant.py`, 428 tests including a 300-document generated

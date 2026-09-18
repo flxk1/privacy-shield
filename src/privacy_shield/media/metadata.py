@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import os
 import logging
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
+
+from ._tools import operand, run_tool
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,112 @@ CONTENT_FIELDS = {
 # All PII-relevant fields combined
 ALL_PII_FIELDS = GPS_FIELDS | NAME_FIELDS | ORG_FIELDS | ID_FIELDS | DATE_FIELDS | CONTENT_FIELDS
 
+# ID3v2 frame identifiers -> the logical field name the tables above are keyed
+# on. Without this every ID3 lookup missed: mutagen reports an MP3's tags under
+# their four-character frame ID (`TPE1`, `COMM::eng`, `TIT2`), the tables are
+# keyed on words (`id3:artist`), and `_classify_pii_type("ID3:TPE1")` therefore
+# returned None. An mp3 whose TPE1 named a person and whose COMM held a witness
+# statement reported no metadata PII with mutagen fully installed.
+ID3_FRAME_FIELDS = {
+    "TPE1": "artist",
+    "TPE2": "albumartist",
+    "TPE3": "conductor",
+    "TPE4": "arranger",
+    "TCOM": "composer",
+    "TEXT": "lyricist",
+    "TOLY": "lyricist",
+    "TOPE": "artist",
+    "TIT1": "title",
+    "TIT2": "title",
+    "TIT3": "title",
+    "TALB": "album",
+    "TDRC": "date",
+    "TDAT": "date",
+    "TYER": "year",
+    "TDRL": "date",
+    "TOWN": "owner",
+    "TPUB": "publisher",
+    "TCOP": "copyright",
+    "TENC": "encodedby",
+    "COMM": "comment",
+    "USLT": "lyrics",
+    "TXXX": "comment",
+    "WOAR": "artist",
+    "APIC": "picture",
+    "GEOB": "attachment",
+    "PRIV": "private",
+    "UFID": "uniquefileid",
+}
+
+# Tags whose payload is an embedded file rather than text: cover art is a
+# photograph and can carry a face and its own EXIF block, GEOB is arbitrary.
+# There is no text to scan, so presence alone is the finding.
+EMBEDDED_PAYLOAD_FIELDS = {"picture", "attachment", "coverart", "metadata_block_picture"}
+
+
+def normalise_tag_key(key: object) -> str:
+    """A container tag key reduced to the word form the field tables use.
+
+    Handles the three shapes a tag key arrives in: an ID3 frame id, possibly
+    with a description suffix (`COMM::eng`, `TXXX:Author`); a Vorbis/QuickTime
+    word in any case (`ARTIST`, `©ART`); and an already-prefixed field name
+    (`EXIF:Artist`, `ID3:TPE1`).
+    """
+    text = str(key).strip()
+    if ":" in text:
+        head, _, tail = text.partition(":")
+        # `COMM::eng` and `TXXX:Author` are one frame id plus a description;
+        # `EXIF:Artist` and `Composite:GPSPosition` are a namespace plus a
+        # field. The frame table decides which shape this is, because guessing
+        # from a fixed namespace list got `Composite:` and `File:` wrong.
+        if head.upper() in ID3_FRAME_FIELDS:
+            text = head
+        else:
+            text = (tail or head).partition(":")[0]
+    text = text.strip()
+    frame = ID3_FRAME_FIELDS.get(text.upper())
+    if frame:
+        return frame
+    return text.lstrip("©").lower()
+
+
+# The field tables are keyed on namespaced names (`id3:title`, `exif:artist`).
+# A normalised tag key is the bare word, so the tables are re-indexed by their
+# last component - derived from the tables themselves, so adding a field to a
+# table is enough and there is no second list to keep in step.
+_PII_FIELD_WORD_TYPES = {
+    word: pii_type
+    for table, pii_type in (
+        (GPS_FIELDS, "gps"),
+        (NAME_FIELDS, "name"),
+        (ID_FIELDS, "device_id"),
+        (CONTENT_FIELDS, "content"),
+        (DATE_FIELDS, "datetime"),
+        (ORG_FIELDS, "organization"),
+    )
+    for word in (f.split(":")[-1] for f in table)
+}
+
+
+def tag_pii_type(key: object) -> Optional[str]:
+    """The PII type for a container tag key, or None.
+
+    The single entry point for audio, video and image tag classification, so
+    the field taxonomy above is stated once. `audio.py` and `video.py` each had
+    their own hand-written subset - audio flagged `artist` and `comment` only,
+    video flagged `artist` and two literal GPS keys - and both missed the rest
+    of the same table.
+    """
+    name = normalise_tag_key(key)
+    if not name:
+        return None
+    if name in EMBEDDED_PAYLOAD_FIELDS:
+        return "embedded_payload"
+    word_type = _PII_FIELD_WORD_TYPES.get(name)
+    if word_type:
+        return word_type
+    return _classify_pii_type(name)
+
 
 def _classify_pii_type(field_name: str) -> Optional[str]:
     """Classify the PII type for a metadata field."""
@@ -137,9 +244,10 @@ def _classify_pii_type(field_name: str) -> Optional[str]:
 def _check_exiftool() -> bool:
     """Check if exiftool is available."""
     try:
-        subprocess.run(["exiftool", "-ver"], capture_output=True, check=True)
+        run_tool(["exiftool", "-ver"])
         return True
-    except Exception:
+    except Exception as exc:
+        logger.debug("exiftool unavailable: %s", exc)
         return False
 
 
@@ -209,11 +317,9 @@ class MetadataExtractor:
         """Extract metadata using exiftool."""
         try:
             import json
-            output = subprocess.run(
-                ["exiftool", "-json", "-a", "-G", str(path)],
-                capture_output=True,
+            output = run_tool(
+                ["exiftool", "-json", "-a", "-G", operand(path)],
                 text=True,
-                check=True,
             )
 
             data = json.loads(output.stdout)
@@ -227,7 +333,7 @@ class MetadataExtractor:
                     str_value = str(value)[:500]  # Truncate long values
 
                     # Check if this is a PII field
-                    pii_type = _classify_pii_type(key)
+                    pii_type = tag_pii_type(key)
 
                     if pii_type:
                         result.pii_findings.append(MetadataFinding(
@@ -278,7 +384,7 @@ class MetadataExtractor:
                         key = f"EXIF:{tag}"
                         str_value = str(value)[:500]
 
-                        pii_type = _classify_pii_type(key)
+                        pii_type = tag_pii_type(key)
                         if pii_type:
                             result.pii_findings.append(MetadataFinding(
                                 field_name=key,
@@ -307,7 +413,7 @@ class MetadataExtractor:
                     str_value = str(value)[:500]
                     field_key = f"ID3:{key}"
 
-                    pii_type = _classify_pii_type(field_key)
+                    pii_type = tag_pii_type(field_key)
                     if pii_type or "artist" in str(key).lower():
                         result.pii_findings.append(MetadataFinding(
                             field_name=field_key,
@@ -340,7 +446,7 @@ class MetadataExtractor:
                         field_key = f"PDF:{key}"
                         str_value = str(value)[:500]
 
-                        pii_type = _classify_pii_type(field_key)
+                        pii_type = tag_pii_type(field_key)
                         if pii_type:
                             result.pii_findings.append(MetadataFinding(
                                 field_name=field_key,
@@ -365,7 +471,7 @@ class MetadataExtractor:
                     continue
                 field_key = f"PDF:{str(key).lstrip('/')}"
                 str_value = str(value)[:500]
-                pii_type = _classify_pii_type(field_key)
+                pii_type = tag_pii_type(field_key)
                 if pii_type:
                     result.pii_findings.append(MetadataFinding(
                         field_name=field_key,
@@ -404,7 +510,7 @@ class MetadataExtractor:
                     field_key = f"Office:{key}"
                     str_value = str(value)[:500]
 
-                    pii_type = _classify_pii_type(field_key)
+                    pii_type = tag_pii_type(field_key)
                     if pii_type or key in ("author", "last_modified_by"):
                         result.pii_findings.append(MetadataFinding(
                             field_name=field_key,
@@ -436,10 +542,20 @@ class MetadataExtractor:
             preserve_fields: Fields to preserve (if any).
 
         Returns:
-            True if successful.
+            True only if the output file exists and no longer carries any of
+            the input's metadata PII.
+
+        Every strategy below is followed by :meth:`_verify_stripped`, because a
+        strip that reports success without checking is a promise the caller
+        cannot audit - and each of the three was making exactly that promise
+        falsely. Verification errs towards refusal: if a value cannot be shown
+        to be gone, this returns False and the caller must not egress the
+        output.
         """
         input_p = Path(input_path)
         output_p = Path(output_path)
+
+        before = self.extract(input_p)
 
         # Use exiftool if available (most comprehensive)
         if _check_exiftool():
@@ -450,10 +566,18 @@ class MetadataExtractor:
                     for field in preserve_fields:
                         cmd.extend([f"-{field}<{field}"])
 
-                cmd.extend(["-o", str(output_p), str(input_p)])
+                # exiftool's -o refuses to overwrite an existing target, and a
+                # stale file left at that path would otherwise have been
+                # reported as the stripped copy.
+                if output_p.exists():
+                    output_p.unlink()
 
-                subprocess.run(cmd, capture_output=True, check=True)
-                return True
+                cmd.extend(["-o", operand(output_p), operand(input_p)])
+
+                run_tool(cmd)
+                if self._verify_stripped(before, output_p, preserve_fields):
+                    return True
+                logger.debug("exiftool strip left metadata behind in %s", output_p)
 
             except Exception as exc:
                 logger.debug("ExifTool metadata strip attempt failed for %s: %s", input_p, exc)
@@ -462,11 +586,100 @@ class MetadataExtractor:
         suffix = input_p.suffix.lower()
 
         if suffix in (".jpg", ".jpeg", ".png"):
-            return self._strip_image_metadata(input_p, output_p)
+            stripped = self._strip_image_metadata(input_p, output_p)
         elif suffix == ".pdf":
-            return self._strip_pdf_metadata(input_p, output_p)
+            stripped = self._strip_pdf_metadata(input_p, output_p)
+        else:
+            return False
 
-        return False
+        return stripped and self._verify_stripped(before, output_p, preserve_fields)
+
+    def _verify_stripped(
+        self,
+        before: MetadataResult,
+        output_path: Path,
+        preserve_fields: Optional[Set[str]] = None,
+    ) -> bool:
+        """Did the strip actually remove what the input carried?
+
+        Two independent checks, because the first alone is what made the PDF
+        path lie. Reading the output's metadata back through the same parsers
+        said "clean" while the author's name and the patient file number were
+        still sitting in the file as superseded objects - PyMuPDF's default
+        save keeps them, so anything that walks the xref recovers them. So the
+        second check reads the BYTES, the way the leak gate does on the text
+        side.
+        """
+        if not output_path.exists():
+            return False
+
+        keep = {str(f).lower() for f in (preserve_fields or set())}
+
+        after = self.extract(output_path)
+        for finding in after.pii_findings:
+            if normalise_tag_key(finding.field_name) not in keep:
+                logger.debug("metadata survived the strip: %s", finding.field_name)
+                return False
+
+        needles: List[tuple[str, bytes]] = []
+        for finding in before.pii_findings:
+            if normalise_tag_key(finding.field_name) in keep:
+                continue
+            value = finding.value.strip()
+            # Short values collide with ordinary binary content; a name, a file
+            # reference or a serial number is longer than this.
+            if len(value) < 6:
+                continue
+            for encoding in ("utf-8", "utf-16-be", "latin-1"):
+                try:
+                    needles.append((finding.field_name, value.encode(encoding)))
+                except UnicodeError as exc:
+                    # Not encodable in this charset, so the file cannot hold it
+                    # in this charset either. Logged rather than swallowed: a
+                    # silent skip here is a check that quietly stopped running.
+                    logger.debug("cannot search for %r as %s: %s", value, encoding, exc)
+
+        if not needles:
+            return True
+
+        found = self._first_needle_in_file(output_path, needles)
+        if found:
+            logger.debug("value of %s is still present in %s", found, output_path)
+            return False
+
+        return True
+
+    @staticmethod
+    def _first_needle_in_file(
+        path: Path,
+        needles: List[tuple[str, bytes]],
+    ) -> Optional[str]:
+        """Scan *path* in chunks for any needle. Returns the field name, or None.
+
+        Chunked rather than `read_bytes()` because the file being verified is
+        attacker-controlled and unbounded in size - `strip_metadata` applies no
+        size limit of its own, unlike `shield.process_file` - and a whole-file
+        read turns one large input into a memory spike. The overlap is one byte
+        short of the longest needle so nothing hides on a chunk boundary.
+        """
+        overlap = max(len(n) for _, n in needles) - 1
+        chunk_size = max(1 << 20, overlap + 1)
+        try:
+            with path.open("rb") as handle:
+                tail = b""
+                while True:
+                    block = handle.read(chunk_size)
+                    if not block:
+                        return None
+                    window = tail + block
+                    for field_name, needle in needles:
+                        if needle in window:
+                            return field_name
+                    tail = window[-overlap:] if overlap else b""
+        except OSError as exc:
+            logger.debug("cannot verify %s: %s", path, exc)
+            # Unreadable output cannot be shown to be clean.
+            return "<unreadable output>"
 
     def _strip_image_metadata(self, input_path: Path, output_path: Path) -> bool:
         """Strip metadata from image using PIL."""
@@ -478,10 +691,18 @@ class MetadataExtractor:
                 data = list(img.getdata())
                 clean_img = Image.new(img.mode, img.size)
                 clean_img.putdata(data)
+                # An index-mode image keeps its colours in the palette, which
+                # Image.new() does not carry over, so the "cleaned" copy came
+                # out rendering against an empty one.
+                if img.mode in ("P", "PA"):
+                    palette = img.getpalette()
+                    if palette:
+                        clean_img.putpalette(palette)
                 clean_img.save(output_path)
                 return True
 
-        except Exception:
+        except Exception as exc:
+            logger.debug("PIL metadata strip failed for %s: %s", input_path, exc)
             return False
 
     def _strip_pdf_metadata(self, input_path: Path, output_path: Path) -> bool:
@@ -493,12 +714,25 @@ class MetadataExtractor:
             import fitz
 
             with fitz.open(str(input_path)) as doc:
-                # Clear metadata
+                # `set_metadata({})` clears the DocInfo dictionary and nothing
+                # else. The XMP packet in the catalogue is a separate store of
+                # the same author/title/subject and needs its own call, and a
+                # default save keeps the superseded objects in the file, so the
+                # old values stayed recoverable from the output. garbage=4
+                # drops the unreferenced objects, clean sanitises the content
+                # streams.
+                doc.del_xml_metadata()
                 doc.set_metadata({})
-                doc.save(str(output_path))
+                doc.save(
+                    str(output_path),
+                    garbage=4,
+                    deflate=True,
+                    clean=True,
+                )
                 return True
 
-        except Exception:
+        except Exception as exc:
+            logger.debug("PyMuPDF metadata strip failed for %s: %s", input_path, exc)
             try:
                 from pypdf import PdfReader, PdfWriter
                 reader = PdfReader(str(input_path))
@@ -509,5 +743,6 @@ class MetadataExtractor:
                 with output_path.open("wb") as f:
                     writer.write(f)
                 return True
-            except Exception:
+            except Exception as inner:
+                logger.debug("pypdf metadata strip failed for %s: %s", input_path, inner)
                 return False

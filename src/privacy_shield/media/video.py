@@ -8,14 +8,15 @@ All processing is 100% local - no external API calls.
 from __future__ import annotations
 
 import logging
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from ._tools import channel_unavailable, operand, run_tool, tool_available
 from .audio import AudioProcessor, AudioResult, TranscriptSegment
 from .image import ImageProcessor, FaceRegion, TextRegion, BoundingBox
+from .metadata import normalise_tag_key, tag_pii_type
 
 logger = logging.getLogger(__name__)
 
@@ -108,24 +109,96 @@ class VideoResult:
 
 def _check_ffmpeg() -> bool:
     """Check if ffmpeg is available."""
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-        return True
-    except Exception:
-        return False
+    return tool_available("ffmpeg")
 
 
 def _check_ffprobe() -> bool:
     """Check if ffprobe is available."""
+    return tool_available("ffprobe")
+
+
+# The QuickTime/ISO-BMFF location atom surfaces under several keys, and a phone
+# writes more than one of them. `location` and the reverse-DNS Apple key were
+# the only two matched; `location-eng` is the language-tagged form ffprobe
+# reports for the `udta.©xyz` atom and is frequently the ONLY one present, and
+# Android writes `com.android.*`. Matching is done on a normalised prefix so a
+# new language suffix does not need a new entry.
+_GPS_TAG_PREFIXES = (
+    "location",
+    "com.apple.quicktime.location",
+    "com.android.location",
+    "gps",
+    "xyz",
+)
+
+
+def _looks_like_gps_tag(key: object) -> bool:
+    name = str(key).strip().lower().lstrip("©")
+    return any(name.startswith(prefix) for prefix in _GPS_TAG_PREFIXES)
+
+
+def _apply_container_tags(metadata: VideoMetadata, tags: Dict[str, Any]) -> None:
+    """Record container tags and flag the PII ones by the shared taxonomy.
+
+    Only `artist` and two literal GPS keys used to reach `pii_fields`, while
+    `title`, `creation_time`, `comment`, `author`, `copyright`, `composer` and
+    the QuickTime `©`-prefixed forms were stored in `raw_tags` - which does not
+    appear in `to_dict()` and never reaches `ShieldResult` - and dropped. The
+    classification is now `metadata.tag_pii_type`, the same table audio and the
+    metadata extractor use.
+    """
+    for key, value in (tags or {}).items():
+        text = str(value)
+        metadata.raw_tags[str(key)] = text[:200]
+
+        name = normalise_tag_key(key)
+        if name == "title":
+            metadata.title = metadata.title or text
+        elif name == "artist":
+            metadata.artist = metadata.artist or text
+        elif name in ("creation_time", "creationdate", "date"):
+            metadata.creation_time = metadata.creation_time or text
+
+        if _looks_like_gps_tag(key):
+            if "gps" not in metadata.pii_fields:
+                metadata.pii_fields.append("gps")
+            if metadata.gps is None:
+                metadata.gps = _parse_iso6709(text)
+            continue
+
+        if tag_pii_type(key) and name not in metadata.pii_fields:
+            metadata.pii_fields.append(name)
+
+
+def _parse_iso6709(gps_str: object) -> Optional[tuple]:
+    """Parse an ISO 6709 location string (`+48.1372+011.5756/`)."""
     try:
-        subprocess.run(["ffprobe", "-version"], capture_output=True, check=True)
-        return True
-    except Exception:
-        return False
+        import re
+
+        match = re.match(r"([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)", str(gps_str))
+        if match:
+            return (float(match.group(1)), float(match.group(2)))
+    except Exception as exc:
+        # Was `logger.debug(..., video_path, exc)` - `video_path` is not a name
+        # in this module, so every arrival here raised NameError out of metadata
+        # extraction instead of logging. The handler that parses GPS out of a
+        # video container had never once executed.
+        logger.debug("Failed to parse ISO 6709 location %r: %s", gps_str, exc)
+    return None
 
 
-def _extract_video_metadata(file_path: Path) -> VideoMetadata:
-    """Extract metadata from video file using ffprobe."""
+def _extract_video_metadata(
+    file_path: Path,
+    errors: Optional[List[str]] = None,
+) -> VideoMetadata:
+    """Extract metadata from video file using ffprobe.
+
+    Appends a channel-unavailable error to *errors* when ffprobe is absent.
+    ffprobe is the only reader here and it is not a Python package, so it is
+    not installable by any extra: without it a geotagged video returned
+    `pii_fields=[]` and `errors=[]`, i.e. certified as carrying no metadata PII
+    by a code path that never opened the container.
+    """
     metadata = VideoMetadata(
         duration_seconds=0.0,
         width=0,
@@ -135,22 +208,24 @@ def _extract_video_metadata(file_path: Path) -> VideoMetadata:
     )
 
     if not _check_ffprobe():
+        if errors is not None:
+            errors.append(
+                channel_unavailable("container_metadata", "ffprobe not on PATH")
+            )
         return metadata
 
     try:
         import json
-        result = subprocess.run(
+        result = run_tool(
             [
                 "ffprobe",
                 "-v", "quiet",
                 "-print_format", "json",
                 "-show_format",
                 "-show_streams",
-                str(file_path),
+                "-i", operand(file_path),
             ],
-            capture_output=True,
             text=True,
-            check=True,
         )
 
         data = json.loads(result.stdout)
@@ -177,37 +252,22 @@ def _extract_video_metadata(file_path: Path) -> VideoMetadata:
             elif stream.get("codec_type") == "audio":
                 metadata.audio_codec = stream.get("codec_name")
 
-        # Tags
-        tags = fmt.get("tags", {})
-        if "title" in tags:
-            metadata.title = str(tags["title"])
-        if "artist" in tags:
-            metadata.artist = str(tags["artist"])
-            metadata.pii_fields.append("artist")
-        if "creation_time" in tags:
-            metadata.creation_time = str(tags["creation_time"])
+            # Per-stream tags. The QuickTime location atom and creation_time
+            # both live here as often as at format level, and only format
+            # level was read.
+            _apply_container_tags(metadata, stream.get("tags", {}))
 
-        # Store raw tags
-        for key, value in tags.items():
-            metadata.raw_tags[key] = str(value)[:200]
-
-        # Check for GPS in tags (common in phone videos)
-        for key in ["location", "com.apple.quicktime.location.ISO6709"]:
-            if key in tags:
-                metadata.pii_fields.append("gps")
-                # Parse GPS string if possible
-                try:
-                    gps_str = tags[key]
-                    # Format: +48.1234+011.5678/
-                    import re
-                    match = re.match(r"([+-]\d+\.\d+)([+-]\d+\.\d+)", gps_str)
-                    if match:
-                        metadata.gps = (float(match.group(1)), float(match.group(2)))
-                except Exception as exc:
-                    logger.debug("Failed to parse GPS metadata for %s: %s", video_path, exc)
+        _apply_container_tags(metadata, fmt.get("tags", {}))
 
     except Exception as exc:
-        logger.debug("Failed to extract video metadata for %s: %s", video_path, exc)
+        # Was `logger.debug(..., video_path, exc)`. Any failure in this block -
+        # a malformed duration, a non-numeric width, ffprobe emitting
+        # something other than JSON - raised NameError out of this function
+        # instead of logging, destroying the real cause and abandoning the
+        # metadata pass with an error the caller could not act on.
+        logger.debug("Failed to extract video metadata for %s: %s", file_path, exc)
+        if errors is not None:
+            errors.append(channel_unavailable("container_metadata", exc))
 
     return metadata
 
@@ -218,22 +278,22 @@ def _extract_audio_track(video_path: Path, output_path: Path) -> bool:
         return False
 
     try:
-        subprocess.run(
+        run_tool(
             [
                 "ffmpeg",
-                "-i", str(video_path),
+                "-nostdin",
+                "-i", operand(video_path),
                 "-vn",  # No video
                 "-acodec", "pcm_s16le",
                 "-ar", "16000",
                 "-ac", "1",
                 "-y",
-                str(output_path),
-            ],
-            capture_output=True,
-            check=True,
+                operand(output_path),
+            ]
         )
         return True
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to extract audio track from %s: %s", video_path, exc)
         return False
 
 
@@ -242,14 +302,27 @@ def _extract_frames(
     output_dir: Path,
     fps: float = 1.0,
     max_frames: int = 100,
-) -> List[tuple]:
-    """
-    Extract frames from video.
+) -> Tuple[List[tuple], Optional[str]]:
+    """Extract frames from video.
 
-    Returns list of (frame_path, frame_number, timestamp) tuples.
+    Returns ``(frames, error)`` where frames is a list of
+    ``(frame_path, frame_number, timestamp)``. The error is not None whenever
+    the frame channel could not run - without it, "ffmpeg is not installed"
+    and "this video contains no frames with anything in them" were the same
+    empty list.
     """
     if not _check_ffmpeg():
-        return []
+        return [], channel_unavailable("video_frames", "ffmpeg not on PATH")
+
+    try:
+        rate = float(fps)
+    except (TypeError, ValueError):
+        rate = 0.0
+    if rate <= 0:
+        # `timestamp = i / fps` divided by zero, which the blanket handler
+        # below caught and turned into "no frames", so a misconfigured sample
+        # rate silently disabled the whole visual channel.
+        return [], channel_unavailable("video_frames", f"frame_sample_rate={fps!r}")
 
     frames = []
 
@@ -257,29 +330,29 @@ def _extract_frames(
         # Extract frames at specified FPS
         pattern = output_dir / "frame_%04d.jpg"
 
-        subprocess.run(
+        run_tool(
             [
                 "ffmpeg",
-                "-i", str(video_path),
-                "-vf", f"fps={fps}",
-                "-frames:v", str(max_frames),
+                "-nostdin",
+                "-i", operand(video_path),
+                "-vf", f"fps={rate!r}",
+                "-frames:v", str(int(max_frames)),
                 "-q:v", "2",  # Quality
                 "-y",
-                str(pattern),
-            ],
-            capture_output=True,
-            check=True,
+                operand(pattern),
+            ]
         )
 
         # Collect extracted frames
         for i, frame_path in enumerate(sorted(output_dir.glob("frame_*.jpg"))):
-            timestamp = i / fps
+            timestamp = i / rate
             frames.append((frame_path, i, timestamp))
 
     except Exception as exc:
         logger.debug("Failed to extract video frames for %s: %s", video_path, exc)
+        return frames, channel_unavailable("video_frames", exc)
 
-    return frames
+    return frames, None
 
 
 class VideoProcessor:
@@ -363,7 +436,7 @@ class VideoProcessor:
             return result
 
         # Extract metadata
-        result.metadata = _extract_video_metadata(path)
+        result.metadata = _extract_video_metadata(path, result.errors)
 
         # Create temp directory for processing
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -375,24 +448,45 @@ class VideoProcessor:
                 if _extract_audio_track(path, audio_path):
                     try:
                         result.audio_result = self.audio_processor.process(audio_path)
+                        # The sub-processor's own channel gaps are this
+                        # result's gaps: an unavailable STT engine is the
+                        # reason this video has no transcript.
+                        for err in result.audio_result.errors:
+                            if err not in result.errors:
+                                result.errors.append(err)
                     except Exception as e:
                         result.errors.append(f"Audio processing error: {str(e)}")
+                else:
+                    result.errors.append(
+                        channel_unavailable(
+                            "video_audio_track",
+                            "could not demux an audio track (need ffmpeg on PATH)",
+                        )
+                    )
 
             # Process video frames
             if self.process_frames and self.image_processor:
                 frames_dir = tmp_path / "frames"
                 frames_dir.mkdir()
 
-                frames = _extract_frames(
+                frames, frames_error = _extract_frames(
                     path,
                     frames_dir,
                     fps=self.frame_sample_rate,
                     max_frames=self.max_frames,
                 )
+                if frames_error:
+                    result.errors.append(frames_error)
 
                 for frame_path, frame_num, timestamp in frames:
                     try:
                         img_result = self.image_processor.process(frame_path)
+                        # Per-frame channel gaps are identical across frames;
+                        # record each distinct one once rather than a hundred
+                        # times.
+                        for err in img_result.errors:
+                            if err not in result.errors:
+                                result.errors.append(err)
 
                         frame_result = FrameResult(
                             frame_number=frame_num,
@@ -436,44 +530,69 @@ class VideoProcessor:
             strip_metadata: Whether to remove metadata.
 
         Returns:
-            True if successful.
+            True only if every requested redaction was applied.
+
+        `blur_faces` defaults to True and **was silently ignored** - the body
+        never built a video filter, so the function accepted "blur every face
+        in this video", did not, and returned True. A caller had no way to
+        learn that the artefact cleared for egress still showed every face in
+        it. Face blurring is still not implemented; the difference is that
+        asking for it now fails instead of passing.
         """
         if not _check_ffmpeg():
             return False
 
+        if blur_faces:
+            logger.debug(
+                "redact_video cannot blur faces (not implemented); refusing to "
+                "report success for a request it cannot honour"
+            )
+            return False
+
+        if redact_text_boxes:
+            logger.debug("redact_video cannot black out text boxes (not implemented)")
+            return False
+
         try:
-            # Build filter complex
-            video_filters = []
             audio_filters = []
 
-            # Face blur requires frame-by-frame processing (out of scope here);
-            # this strips metadata and optionally mutes audio segments.
             if redact_audio_segments:
-                for seg in sorted(redact_audio_segments, key=lambda s: s.start_time):
+                for seg in sorted(redact_audio_segments, key=lambda s: float(s.start_time)):
+                    start = float(seg.start_time)
+                    end = float(seg.end_time)
                     audio_filters.append(
-                        f"volume=enable='between(t,{seg.start_time},{seg.end_time})':volume=0"
+                        f"volume=enable='between(t,{start!r},{end!r})':volume=0"
                     )
 
-            vf = ",".join(video_filters) if video_filters else None
             af = ",".join(audio_filters) if audio_filters else None
 
             cmd = [
                 "ffmpeg",
-                "-i", str(file_path),
+                "-nostdin",
+                "-i", operand(file_path),
             ]
 
-            if vf:
-                cmd.extend(["-vf", vf])
             if af:
                 cmd.extend(["-af", af])
 
             if strip_metadata:
-                cmd.extend(["-map_metadata", "-1"])
+                # The global form alone leaves per-stream tags in place, and
+                # the QuickTime location atom - the GPS fix on every phone
+                # video - is a stream tag as often as a format tag. Both forms
+                # are required; with only the first, `strip_metadata=True`
+                # returned a video that still knew where it was shot.
+                cmd.extend([
+                    "-map_metadata", "-1",
+                    "-map_metadata:s", "-1",
+                    "-map_chapters", "-1",
+                    "-fflags", "+bitexact",
+                ])
 
-            cmd.extend(["-y", str(output_path)])
+            cmd.extend(["-y", operand(output_path)])
 
-            subprocess.run(cmd, capture_output=True, check=True)
+            run_tool(cmd)
             return True
 
-        except Exception:
+        except Exception as exc:
+            logger.debug("redact_video failed for %s: %s", file_path, exc)
             return False

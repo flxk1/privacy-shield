@@ -27,6 +27,8 @@ try:
 except ImportError:
     HAS_CV2 = False
 
+from ._tools import channel_unavailable
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,14 +178,69 @@ PII_EXIF_FIELDS = {
     "EXIF SerialNumber",
     "EXIF BodySerialNumber",
     "EXIF LensSerialNumber",
+    "Image CameraSerialNumber",
+    "EXIF CameraOwnerName",
+    "EXIF ImageUniqueID",
+    "Image HostComputer",
+    # Vendor blob. Undocumented per vendor and routinely carries the serial
+    # number, the owner name, the lens, the shutter count and a second copy of
+    # the GPS fix; it survives every "strip the fields I recognise" approach
+    # because it is one opaque field.
+    "EXIF MakerNote",
+    # Windows Explorer's property fields, written by the file Properties dialog
+    # and by Office. Ordinary users put names and notes here.
+    "Image XPAuthor",
+    "Image XPComment",
+    "Image XPSubject",
+    "Image XPTitle",
+    "Image XPKeywords",
     # Dates
     "EXIF DateTimeOriginal",
     "EXIF DateTimeDigitized",
     "Image DateTime",
+    "EXIF OffsetTime",
+    "EXIF OffsetTimeOriginal",
+    # More of the GPS block than a latitude/longitude pair: the timestamp
+    # places the subject in time and the altitude and dest-* fields place them
+    # in space independently of GPSLatitude/GPSLongitude.
+    "GPS GPSAltitude",
+    "GPS GPSDateStamp",
+    "GPS GPSTimeStamp",
+    "GPS GPSProcessingMethod",
+    "GPS GPSAreaInformation",
+    "GPS GPSDestLatitude",
+    "GPS GPSDestLongitude",
     # Software
     "Image Software",
     "Image ProcessingSoftware",
 }
+
+# PII_EXIF_FIELDS is written in `<IFD> <TagName>` form; Pillow reports the bare
+# tag name. Until this mapping existed the constant above was dead: `pii_fields`
+# was populated from an inline three-tag `if` (Artist/Copyright/
+# ImageDescription) and nothing consulted the declared set, so an image whose
+# only personal data sat in `UserComment`, `CameraOwnerName`, `MakerNote` or a
+# body serial number was read, stored in `metadata.exif`, and reported as
+# carrying no metadata PII at all.
+_PII_EXIF_TAG_NAMES = frozenset(
+    field.split(" ")[-1] for field in PII_EXIF_FIELDS
+) | {"GPSInfo"}
+
+# The EXIF thumbnail (IFD1) is a second, independent JPEG inside the file. A
+# crop, a rotation or a downscale applied by an editor that rewrites the main
+# image without rewriting IFD1 leaves the ORIGINAL frame in the thumbnail, so
+# the face or the document that was cropped out is still in the artefact.
+EXIF_THUMBNAIL_FIELD = "EXIFThumbnail"
+
+
+def exif_tag_is_pii(tag: str) -> bool:
+    """Is this Pillow EXIF tag name one PII_EXIF_FIELDS declares as PII?
+
+    Pure, dependency-free, and the single place the declared set is read, so a
+    test can check the declaration against the EXIF specification without
+    needing Pillow or an image.
+    """
+    return tag in _PII_EXIF_TAG_NAMES
 
 
 def _convert_gps_to_decimal(gps_data: Any, ref: str) -> Optional[float]:
@@ -320,8 +377,15 @@ class ImageProcessor:
 
         raise ImportError("No face detector available. Install mediapipe or opencv-python")
 
-    def _extract_exif(self, image_path: Path) -> ImageMetadata:
-        """Extract EXIF metadata from image."""
+    def _extract_exif(self, image_path: Path) -> Tuple[ImageMetadata, Optional[str]]:
+        """Extract EXIF metadata. Returns (metadata, channel-unavailable error).
+
+        The error is not an exception: a missing Pillow is a missing *channel*,
+        and the caller has to be able to tell "no EXIF PII in this image" from
+        "nobody opened this image". `[extract]` installs PyMuPDF and opencv but
+        not Pillow, so in the configuration CI certifies this returns the second
+        of those.
+        """
         metadata = ImageMetadata(
             width=0,
             height=0,
@@ -329,7 +393,10 @@ class ImageProcessor:
         )
 
         if not HAS_PIL:
-            return metadata
+            return metadata, channel_unavailable(
+                "exif_metadata",
+                "Pillow not installed (pip install pillow)",
+            )
 
         try:
             with Image.open(image_path) as img:
@@ -360,19 +427,33 @@ class ImageProcessor:
                                 gps_data.get("GPSLongitude"),
                                 gps_data.get("GPSLongitudeRef", "E"),
                             )
-                            if lat and lon:
+                            # `if lat and lon` treated a coordinate of exactly
+                            # 0.0 as absent, so a fix on the equator or the
+                            # prime meridian - which is also where a broken
+                            # geotag lands, 0N/0E being the single most common
+                            # bogus coordinate in the wild - was reported as an
+                            # image with no GPS at all.
+                            if lat is not None and lon is not None:
                                 metadata.gps = (lat, lon)
-                                metadata.pii_fields.append("GPS")
+                            for gps_tag in gps_data:
+                                if exif_tag_is_pii(str(gps_tag)):
+                                    metadata.pii_fields.append("GPS")
+                                    break
+                            else:
+                                if metadata.gps is not None:
+                                    metadata.pii_fields.append("GPS")
                         else:
                             metadata.exif[tag] = str(value)[:200]  # Truncate long values
 
-                            # Check for PII fields
+                            if exif_tag_is_pii(tag):
+                                metadata.pii_fields.append(tag)
+
+                            # Named accessors, kept for callers. These are
+                            # local-only telemetry: the raw value never reaches
+                            # the overlay, only the field NAME does.
                             if tag in ("Artist", "Copyright", "ImageDescription"):
                                 metadata.owner = str(value)
-                                metadata.pii_fields.append(tag)
-                            elif tag == "DateTime":
-                                metadata.datetime = str(value)
-                            elif tag == "DateTimeOriginal":
+                            elif tag in ("DateTime", "DateTimeOriginal"):
                                 metadata.datetime = str(value)
                             elif tag == "Make":
                                 metadata.camera_make = str(value)
@@ -380,19 +461,52 @@ class ImageProcessor:
                                 metadata.camera_model = str(value)
                             elif tag == "Software":
                                 metadata.software = str(value)
+
+                if self._has_exif_thumbnail(img):
+                    metadata.pii_fields.append(EXIF_THUMBNAIL_FIELD)
         except Exception as exc:
             logger.debug("EXIF extraction failed for %s: %s", image_path, exc)
+            return metadata, channel_unavailable("exif_metadata", exc)
 
-        return metadata
+        return metadata, None
 
-    def _run_ocr(self, image_path: Path) -> List[TextRegion]:
-        """Run OCR on image."""
+    @staticmethod
+    def _has_exif_thumbnail(img: Any) -> bool:
+        """Does this image carry an IFD1 thumbnail?
+
+        Read through the public `getexif()` rather than the merged `_getexif()`
+        dict, because the merge drops IFD1 entirely - which is why a thumbnail
+        holding the pre-crop original was invisible here.
+        """
+        try:
+            from PIL import ExifTags
+
+            exif = img.getexif()
+            thumb = exif.get_ifd(ExifTags.IFD.IFD1)
+            if not thumb:
+                return False
+            # 0x0201/0x0202 = JPEGInterchangeFormat(+Length): an embedded JPEG.
+            # 0x0111/0x0117 = StripOffsets(+ByteCounts): an embedded bitmap.
+            return any(tag in thumb for tag in (0x0201, 0x0202, 0x0111, 0x0117))
+        except Exception as exc:
+            logger.debug("EXIF thumbnail probe failed: %s", exc)
+            return False
+
+    def _run_ocr(self, image_path: Path) -> Tuple[List[TextRegion], Optional[str]]:
+        """Run OCR on image. Returns (regions, channel-unavailable error).
+
+        No OCR engine is declared by any extra of this package: paddleocr,
+        pytesseract and python-doctr are all optional third-party installs. With
+        none of them present this used to return an empty region list and no
+        error, so a photograph of a document scanned clean and `errors` was
+        empty - the image was never read.
+        """
         regions: List[TextRegion] = []
 
         try:
             engine, engine_name = self._init_ocr()
-        except ImportError:
-            return regions
+        except ImportError as exc:
+            return regions, channel_unavailable("ocr", exc)
 
         try:
             if engine_name == "paddleocr":
@@ -454,20 +568,32 @@ class ImageProcessor:
                                 ))
         except Exception as exc:
             logger.debug("OCR failed for %s: %s", image_path, exc)
+            return regions, channel_unavailable("ocr", exc)
 
-        return regions
+        return regions, None
 
-    def _detect_faces_in_image(self, image_path: Path) -> List[FaceRegion]:
-        """Detect faces in image."""
+    def _detect_faces_in_image(
+        self, image_path: Path
+    ) -> Tuple[List[FaceRegion], Optional[str]]:
+        """Detect faces. Returns (faces, channel-unavailable error).
+
+        A face is biometric data and is the one image PII channel with no text
+        equivalent, so an unavailable detector is the difference between "no
+        faces in this photograph" and "no detector looked". Neither mediapipe
+        nor a Haar cascade is declared: `[extract]` pins
+        `opencv-python-headless>=4.8` with no ceiling, and opencv 5.0 - which
+        that floor resolves to - **ships no cascade XML at all**, so the fallback
+        detector silently stopped existing on a transitive upgrade.
+        """
         faces: List[FaceRegion] = []
 
         if not self.detect_faces:
-            return faces
+            return faces, None
 
         try:
             detector, detector_name = self._init_face_detector()
-        except ImportError:
-            return faces
+        except ImportError as exc:
+            return faces, channel_unavailable("face_detection", exc)
 
         try:
             if detector_name == "mediapipe":
@@ -510,8 +636,9 @@ class ImageProcessor:
                             ))
         except Exception as exc:
             logger.debug("Face detection failed for %s: %s", image_path, exc)
+            return faces, channel_unavailable("face_detection", exc)
 
-        return faces
+        return faces, None
 
     def process(self, file_path: Union[str, Path]) -> ImageResult:
         """
@@ -538,12 +665,21 @@ class ImageProcessor:
 
         # Extract metadata
         if self.extract_metadata:
-            result.metadata = self._extract_exif(path)
+            result.metadata, meta_error = self._extract_exif(path)
+            if meta_error:
+                result.errors.append(meta_error)
 
         # Run OCR
         try:
-            result.text_regions = self._run_ocr(path)
-            result.ocr_engine = self.ocr_engine_name
+            result.text_regions, ocr_error = self._run_ocr(path)
+            if ocr_error:
+                result.errors.append(ocr_error)
+            # Only claim an engine that actually initialised. This used to
+            # report `ocr_engine="auto"` - and so `extraction_method="ocr_auto"`
+            # in the audit log - for an image no OCR engine had touched,
+            # because `auto` is the *requested* value and `_init_ocr` overwrites
+            # it only on success.
+            result.ocr_engine = None if ocr_error else self.ocr_engine_name
             result.full_text = " ".join(r.text for r in result.text_regions)
         except Exception as e:
             result.errors.append(f"OCR error: {str(e)}")
@@ -551,7 +687,9 @@ class ImageProcessor:
         # Detect faces
         if self.detect_faces:
             try:
-                result.faces = self._detect_faces_in_image(path)
+                result.faces, face_error = self._detect_faces_in_image(path)
+                if face_error:
+                    result.errors.append(face_error)
                 result.face_detector = self._face_detector_name
             except Exception as e:
                 result.errors.append(f"Face detection error: {str(e)}")
@@ -579,9 +717,25 @@ class ImageProcessor:
             strip_metadata: Whether to remove EXIF data.
 
         Returns:
-            True if successful.
+            True only if every requested redaction was applied and written.
+
+        A False return means the caller must not egress anything: there is no
+        partial success here. Three ways this used to return True over an
+        artefact that had lost nothing -
+
+        - `blur_faces=True` with no face detector installed. `_detect_faces_in_image`
+          swallowed the ImportError and returned an empty list, so "blur every
+          face" became "blur nothing" and reported success. In the configuration
+          CI certifies there is no detector.
+        - `blur_faces=True` on a processor built with `detect_faces=False`. The
+          guard inside the detector returns early, same silent empty list.
+        - `cv2.imwrite` returning False - an extension it cannot encode (`.gif`,
+          `.heic`), an unwritable directory. Its return value was discarded, so
+          when an output file already existed at that path the ORIGINAL bytes
+          stayed there and were reported as the redacted copy.
         """
         if not HAS_CV2 or not HAS_PIL:
+            logger.debug("redact_image needs both opencv and Pillow")
             return False
 
         try:
@@ -592,12 +746,30 @@ class ImageProcessor:
 
             # Blur faces
             if blur_faces:
-                faces = self._detect_faces_in_image(Path(file_path))
+                if not self.detect_faces:
+                    logger.debug(
+                        "redact_image(blur_faces=True) on a processor built with "
+                        "detect_faces=False: refusing to report success"
+                    )
+                    return False
+                faces, face_error = self._detect_faces_in_image(Path(file_path))
+                if face_error:
+                    logger.debug("redact_image cannot blur faces: %s", face_error)
+                    return False
                 for face in faces:
                     x, y, w, h = face.bbox.x, face.bbox.y, face.bbox.width, face.bbox.height
-                    roi = img[y:y+h, x:x+w]
+                    # Clamp to the frame. A detector box that runs off the edge
+                    # produced a negative slice start, which numpy reads from
+                    # the far end, and the write-back then failed on a shape
+                    # mismatch - a whole redaction lost to one edge face.
+                    height, width = img.shape[:2]
+                    x0, y0 = max(0, x), max(0, y)
+                    x1, y1 = min(width, x + w), min(height, y + h)
+                    if x1 <= x0 or y1 <= y0:
+                        return False
+                    roi = img[y0:y1, x0:x1]
                     blurred = cv2.GaussianBlur(roi, (99, 99), 30)
-                    img[y:y+h, x:x+w] = blurred
+                    img[y0:y1, x0:x1] = blurred
 
             # Black out text regions
             if redact_text_regions:
@@ -607,7 +779,9 @@ class ImageProcessor:
                     cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 0), -1)
 
             # Save without EXIF
-            cv2.imwrite(str(output_path), img)
+            if not cv2.imwrite(str(output_path), img):
+                logger.debug("cv2.imwrite could not write %s", output_path)
+                return False
 
             # Optionally strip all metadata using PIL
             if strip_metadata and HAS_PIL:
@@ -616,8 +790,16 @@ class ImageProcessor:
                     data = list(pil_img.getdata())
                     clean_img = Image.new(pil_img.mode, pil_img.size)
                     clean_img.putdata(data)
+                    # Index-mode images carry their colours in the palette, not
+                    # in the data, so a fresh Image.new() left the output
+                    # rendering against an empty palette.
+                    if pil_img.mode in ("P", "PA"):
+                        palette = pil_img.getpalette()
+                        if palette:
+                            clean_img.putpalette(palette)
                     clean_img.save(output_path)
 
             return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("redact_image failed for %s: %s", file_path, exc)
             return False
