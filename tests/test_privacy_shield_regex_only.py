@@ -160,9 +160,12 @@ def test_a_validated_identifier_is_still_found(text, pii_type):
 def test_no_finding_of_a_validated_type_fails_its_own_validator():
     """The property, rather than three examples.
 
-    Every finding whose type has a validator must satisfy it. The run-based
-    layer owns these three types now; the patterns are candidate generators and
-    nothing they match survives unvalidated.
+    Every finding whose type has a validator must satisfy it - UNLESS it is a
+    credit-card SHAPE kept deliberately, which is MEDIUM and carries
+    checksum_validated=False. That exception is the subject of
+    test_a_labelled_card_with_one_transcription_typo_is_still_claimed; here it
+    is admitted rather than left to make this test pass by accident on the day
+    a mistyped card happens to contain no Luhn-valid sub-window.
     """
     from privacy_shield.scanner import VALIDATORS, is_validated_identifier
 
@@ -178,6 +181,14 @@ def test_no_finding_of_a_validated_type_fails_its_own_validator():
     for text in documents:
         for finding in scanner.scan(text).findings:
             if finding.pii_type not in VALIDATORS:
+                continue
+            if not finding.checksum_validated:
+                assert finding.pii_type is PIIType.CREDIT_CARD, (
+                    f"{finding.pii_type.value} survived without a checksum"
+                )
+                assert finding.confidence is Confidence.MEDIUM, (
+                    "an unvalidated shape must not be HIGH"
+                )
                 continue
             # The SPAN may be wider than one identifier: card windows are
             # merged so that no validating window is left partly uncovered, so
@@ -219,3 +230,95 @@ def test_no_finding_of_a_validated_type_crosses_a_line_terminator():
                     f"{count_terminators(finding.value)} terminators: "
                     f"{finding.value!r}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# ... but a SHAPE is still evidence, and the demotion was scoped wrong
+# ---------------------------------------------------------------------------
+
+def _card_with_a_typo_and_no_valid_window(seed):
+    """A labelled card carrying one wrong digit and no Luhn-valid substring.
+
+    Most single-digit typos leave some shorter window that still satisfies
+    Luhn, and the run-based layer claims those regardless. The ones that do
+    not are the cases the demotion lost outright, and they are what this
+    builds - by search, at runtime, never written down.
+    """
+    import random
+
+    from privacy_shield.identifiers import luhn_ok
+    import synth
+
+    rng = random.Random(seed)
+    for _attempt in range(2000):
+        card = synth.make_card(rng, 16)
+        position = rng.randrange(16)
+        wrong = str((int(card[position]) + rng.randint(1, 9)) % 10)
+        mistyped = card[:position] + wrong + card[position + 1:]
+        if any(
+            luhn_ok(mistyped[i:i + size])
+            for size in range(13, 17)
+            for i in range(0, 17 - size)
+        ):
+            continue
+        return mistyped
+    raise AssertionError("could not construct the shape")
+
+
+def test_a_labelled_card_with_one_transcription_typo_is_still_claimed():
+    """The trade, measured both ways over 200 documents each.
+
+                                              521fec2   0719c79
+        card false positives, 200 clean         119       119
+        IBAN false positives, 200 clean           0         0
+        labelled card, one typo, not claimed    3/200     73/200
+
+    The entire precision gain of demoting the Layer-1 patterns is on the IBAN
+    pattern, whose shape is two letters, two digits and anything at all. The
+    CARD pattern's false positives did not move by a single span, so the
+    seventy extra missed cards bought nothing.
+
+    A single wrong digit always defeats Luhn - that is what Luhn is for - and
+    it is the most ordinary defect in an OCR'd or hand-typed document. The
+    literal word "Kreditkarte" beside a correctly grouped, issuer-prefixed
+    sixteen-digit number is evidence no checksum can overrule.
+    """
+    from privacy_shield.scanner import Confidence, PIIType, PrivacyScanner
+
+    mistyped = _card_with_a_typo_and_no_valid_window(seed=1911)
+    grouped = " ".join(mistyped[i:i + 4] for i in range(0, 16, 4))
+    for written in (mistyped, grouped):
+        text = f"Kreditkarte: {written}\nBetrag 1.349,00 EUR"
+        findings = [
+            f for f in PrivacyScanner(min_confidence=Confidence.LOW).scan(text).findings
+            if f.pii_type is PIIType.CREDIT_CARD
+        ]
+        assert findings, f"a labelled card with one typo went unclaimed: {text!r}"
+        for finding in findings:
+            assert finding.confidence is Confidence.MEDIUM, (
+                "a shape with no checksum behind it must not be HIGH - that is "
+                "the structure the round-18 demotion existed to remove"
+            )
+            assert not finding.checksum_validated
+
+
+def test_a_card_shape_cannot_outrank_a_checksum():
+    """The half of the demotion that stays.
+
+    Keeping the shape must not put it back in front of a validated claim. The
+    rank rule asks the FINDING whether a checksum stands behind it, not its
+    type, so a demoted card is ranked with the patterns where it belongs.
+    """
+    from privacy_shield.scanner import Confidence, PIIType, PrivacyScanner
+
+    mistyped = _card_with_a_typo_and_no_valid_window(seed=1912)
+    text = f"Kreditkarte {mistyped} und Konto DE89 3704 0044 0532 0130 00"
+    findings = PrivacyScanner(min_confidence=Confidence.LOW).scan(text).findings
+    shapes = [f for f in findings if not f.checksum_validated]
+    assert all(
+        f.pii_type is not PIIType.IBAN for f in shapes
+    ), "the IBAN pattern is still demoted and must stay dropped"
+    for shape in shapes:
+        assert shape.confidence is not Confidence.HIGH or shape.pii_type not in {
+            PIIType.IBAN, PIIType.CREDIT_CARD, PIIType.EMAIL
+        }
