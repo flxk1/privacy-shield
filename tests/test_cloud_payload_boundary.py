@@ -62,23 +62,31 @@ _ORIGINALS_A = (
 )
 
 
-def _walk(node: Any) -> Iterator[Any]:
+def _walk(node: Any, _seen: set[int] | None = None) -> Iterator[Any]:
     """Every key and every value reachable from *node*, at any depth.
 
     Dataclasses and objects with a ``__dict__`` are walked too: a future field
-    holding an object that carries the map must not hide behind it.
+    holding an object that carries the map must not hide behind it. Identity is
+    tracked because that is exactly the kind of field that could introduce a
+    cycle, and this test has to FAIL on such a payload rather than exhaust the
+    stack before it can assert anything.
     """
+    seen = set() if _seen is None else _seen
+    if id(node) in seen:
+        return
+    seen.add(id(node))
+
     yield node
     if isinstance(node, dict):
         for key, value in node.items():
-            yield from _walk(key)
-            yield from _walk(value)
+            yield from _walk(key, seen)
+            yield from _walk(value, seen)
     elif isinstance(node, (list, tuple, set, frozenset)):
         for item in node:
-            yield from _walk(item)
+            yield from _walk(item, seen)
     elif hasattr(node, "__dict__") and not isinstance(node, type):
         for value in vars(node).values():
-            yield from _walk(value)
+            yield from _walk(value, seen)
 
 
 def _strings(node: Any) -> list[str]:
