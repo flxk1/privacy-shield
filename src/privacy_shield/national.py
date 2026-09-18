@@ -125,7 +125,7 @@ PERSON_NUMBER_MODULES: Dict[str, Tuple[Tuple[str, int], ...]] = {
     "es": (("stdnum.es.dni", 9), ("stdnum.es.nie", 9)),
     "fi": (("stdnum.fi.hetu", 10),),
     "fr": (("stdnum.fr.nir", 15),),
-    "gr": (),
+    "gr": (("stdnum.gr.amka", 11),),
     "hr": (("stdnum.hr.oib", 11),),
     "hu": (),
     "ie": (("stdnum.ie.pps", 8),),
@@ -139,8 +139,42 @@ PERSON_NUMBER_MODULES: Dict[str, Tuple[Tuple[str, int], ...]] = {
     "pt": (),
     "ro": (("stdnum.ro.cnp", 13),),
     "se": (("stdnum.se.personnummer", 10),),
-    "si": (),
+    "si": (("stdnum.si.emso", 13),),
     "sk": (("stdnum.sk.rc", 10),),
+}
+
+#: Countries this layer knows and CANNOT validate, with the reason.
+#:
+#: An empty tuple in the table above is a country whose code `configured_countries`
+#: used to accept in silence, so a caller who set PRIVACY_SHIELD_NATIONAL_COUNTRIES=pt
+#: got a layer that validated as configured and detected nothing - which is
+#: precisely the defect `stdnum.at.svnr` was fixed for, sitting in the same
+#: table. Eight codes were in that state and `pt` joined them in round 19 when
+#: `pt.nif` was dropped.
+#:
+#: Three of the eight were not limitations at all. `python-stdnum` ships a
+#: PERSON number for Greece (`gr.amka`, the social security number), for
+#: Portugal (`pt.cc`, the citizen card) and for Slovenia (`si.emso`, the unique
+#: master citizen number); none had been looked for, because the table was
+#: written from the country list rather than from what the library has. Greece
+#: and Slovenia are configured above and measured like the rest. Portugal is
+#: not, on a measurement - see below.
+NO_PERSON_NUMBER_VALIDATOR: Dict[str, str] = {
+    "cy": "python-stdnum has only cy.vat",
+    "hu": "python-stdnum has only hu.anum, which is VAT",
+    "lu": "python-stdnum has only lu.tva, which is VAT",
+    "lv": "python-stdnum has only lv.pvn, which is VAT",
+    "mt": "python-stdnum has only mt.vat",
+    # MEASURED, not assumed. stdnum.pt.cc is a person number and it is dropped
+    # anyway, for the reason de.stnr was: its check cannot carry a claim. It
+    # accepts a REPEATED DIGIT at every one of the ten digits across lengths
+    # twelve to twenty, including twelve zeros, so it matched a 15-digit IMEI
+    # and a contract number written in groups - 6 false positives on 200 clean
+    # documents and 2 on the 62-document set, where every other validator
+    # accepts at most one or two repeated strings at a single length.
+    "pt": "stdnum.pt.cc accepts a repeated-digit string at every digit and "
+          "every length from 12 to 20, including all zeros; dropped on that "
+          "measurement, as de.stnr was",
 }
 
 #: The shortest and longest national number worth offering to a validator.
@@ -187,6 +221,21 @@ def configured_countries(countries: Optional[Sequence[str]] = None) -> Tuple[str
             logger.warning(
                 "%s: %r is not a country this layer knows; ignoring it",
                 _ENV_COUNTRIES, country,
+            )
+            continue
+        if not PERSON_NUMBER_MODULES[code]:
+            # LOUD, and excluded. "Configured" has to mean "will be validated",
+            # otherwise this function reports a country it does nothing about
+            # and the caller reads the empty result as "no national numbers in
+            # this document". A warning rather than an exception because the
+            # scan itself is still correct: what is missing is a validator, not
+            # the caller's judgement, and failing an egress scan over a
+            # documented gap trades a silent absence for a dead product.
+            logger.warning(
+                "%s: %r is known but has no person-number validator (%s); "
+                "nothing will be detected for it",
+                _ENV_COUNTRIES, country,
+                NO_PERSON_NUMBER_VALIDATOR.get(code, "no reason recorded"),
             )
             continue
         if code not in seen:

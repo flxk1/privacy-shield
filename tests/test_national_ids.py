@@ -32,6 +32,9 @@ CLEAN = list(CLEAN_DEV) + list(CLEAN_HELD_OUT) + list(CLEAN_ADVERSARIAL) + list(
 #: birth number, which is the whole reason country scoping exists.
 AMBIGUOUS = "111222333"
 
+#: The longest candidate the token pass would ever offer a validator.
+MAX_TOKEN_FOR_PROBE = national.MAX_TOKEN
+
 needs_stdnum = pytest.mark.skipif(
     not national.available(), reason="python-stdnum absent; see the degradation test"
 )
@@ -186,7 +189,12 @@ def test_scoping_excludes_a_country_that_was_not_configured():
 #: generated documents built from ordinary German business field shapes -
 #: invoice, order, meter, contract, personnel and file numbers - and it is not
 #: small.
-NATIONAL_FP_BUDGET = 0
+#: ONE, not zero - `gr.amka` accepts an eleven-digit token that is in fact a
+#: German telephone number written with a space. Greece was one of the eight
+#: countries this layer silently did nothing for, so the cost of waking it up
+#: shows up here. The zero this corpus used to report was withdrawn a round ago
+#: for being too small to mean anything; it is kept as a floor, not as a claim.
+NATIONAL_FP_BUDGET = 1
 
 #: Every country enabled, on 200 documents of ordinary German business fields.
 #:
@@ -198,8 +206,14 @@ NATIONAL_FP_BUDGET = 0
 #:
 #:   0719c79   cz.rc 21, hr.oib 17, nl.bsn 12, dk.cpr 11, pt.nif 8, pl.pesel 2,
 #:             lt.asmens 1, it.codicefiscale 1, se.personnummer 1, be.nn 1 = 75
-#:   here      hr.oib 17, at.vnr 15, nl.bsn 13, dk.cpr 10, pl.pesel 2,
+#:   round 19  hr.oib 17, at.vnr 15, nl.bsn 13, dk.cpr 10, pl.pesel 2,
 #:             lt.asmens 1, se.personnummer 1, be.nn 1, cz.rc 1 = 61
+#:   here      the same plus gr.amka 1 = 62, because Greece and Slovenia were
+#:             silently doing nothing and now are not. si.emso measures 0.
+#:             Portugal's stdnum.pt.cc is a person number and is dropped on a
+#:             measurement anyway: it accepts a repeated digit at every digit
+#:             and every length from 12 to 20, all zeros included, and scored 6
+#:             here and 2 on the 62-document set.
 #:
 #: THE NUMBER IS STILL HIGH, and no minimum length will fix it: what remains is
 #: ten- and eleven-digit schemes whose mod-11 check accepts about one arbitrary
@@ -208,7 +222,7 @@ NATIONAL_FP_BUDGET = 0
 #: works - Germany alone measures 0, France alone 0, Italy alone 0 - and the
 #: only thing that would fix the full-scope number is corroborating evidence
 #: near the token, which is a design decision and not a constant.
-WIDE_FP_BUDGET = 61
+WIDE_FP_BUDGET = 62
 
 
 def _wide_clean_corpus():
@@ -503,4 +517,123 @@ def test_candidate_tokens_is_not_superlinear():
     assert elapsed < 1.0, (
         f"4 KB of extracted text took {elapsed:.2f}s in candidate_tokens; "
         "the pair enumeration is back"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A country code with no validator is the `at` defect, spelled differently
+# ---------------------------------------------------------------------------
+
+def test_a_country_with_no_validator_is_not_configurable(caplog):
+    """`configured_countries(['pt'])` returned `('pt',)` and detected nothing.
+
+    Eight of the twenty-seven codes carried an empty tuple, so the layer
+    reported itself configured for a country it does nothing about and the
+    caller read the empty result as "no national numbers in this document".
+    That is exactly what `stdnum.at.svnr` did, sitting in the same table -
+    and `pt` joined the set in round 19 when `pt.nif` was dropped for being a
+    company identifier.
+
+    "Configured" now means "will be validated". The code is excluded and the
+    reason is logged at WARNING, not debug, because debug is where the `at`
+    defect lived for a round.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        assert national.configured_countries(["cy", "de"]) == ("de",)
+    assert any("no person-number validator" in record.message for record in caplog.records), (
+        "a dead country was excluded in silence"
+    )
+
+
+def test_every_country_either_validates_or_says_why_not():
+    unexplained = [
+        country for country, modules in national.PERSON_NUMBER_MODULES.items()
+        if not modules and country not in national.NO_PERSON_NUMBER_VALIDATOR
+    ]
+    assert not unexplained, (
+        f"{unexplained} have no validator and no recorded reason, which is how "
+        "eight of them went unnoticed"
+    )
+    stale = [
+        country for country in national.NO_PERSON_NUMBER_VALIDATOR
+        if national.PERSON_NUMBER_MODULES.get(country)
+    ]
+    assert not stale, f"{stale} are recorded as unvalidatable and have validators"
+
+
+#: What `python-stdnum` offers for the five that cannot be validated here, and
+#: what each of those modules IS. Every one identifies an organisation.
+ORGANISATION_ONLY_MODULES = {
+    "cy": {"vat"},
+    "hu": {"anum"},
+    "lu": {"tva"},
+    "lv": {"pvn"},
+    "mt": {"vat"},
+}
+
+
+@needs_stdnum
+@pytest.mark.parametrize("country", sorted(ORGANISATION_ONLY_MODULES))
+def test_an_unvalidatable_country_has_nothing_but_company_identifiers(country):
+    """Generated from the library, not from a list kept by hand.
+
+    The table was written from the EU country list rather than from what
+    `python-stdnum` actually has, and three countries recorded as impossible
+    were not: the library ships `gr.amka`, `pt.cc` and `si.emso`, all of them
+    PERSON numbers, and none had been looked for. This asks the library what it
+    has for the remaining five, so the day it gains a person number for one of
+    them this fails and asks for a decision instead of leaving the country
+    quietly dead.
+    """
+    import importlib
+    import pkgutil
+
+    package = importlib.import_module("stdnum." + country)
+    present = {module.name for module in pkgutil.iter_modules(package.__path__)}
+    unexpected = present - ORGANISATION_ONLY_MODULES[country]
+    assert not unexpected, (
+        f"python-stdnum now has {sorted(unexpected)} for {country!r}; if any of "
+        "them identifies a PERSON it belongs in PERSON_NUMBER_MODULES, measured"
+    )
+
+
+@needs_stdnum
+@pytest.mark.parametrize(
+    "country, path, minimum",
+    [
+        (country, path, minimum)
+        for country, entries in national.PERSON_NUMBER_MODULES.items()
+        for path, minimum in entries
+    ],
+    ids=lambda value: value if isinstance(value, str) else str(value),
+)
+def test_no_configured_validator_accepts_a_string_of_zeros(country, path, minimum):
+    """A check digit that accepts all zeros is a format match, not a check.
+
+    No scheme issues an all-zero identifier, so a validator that accepts one is
+    telling you it checked the SHAPE. `stdnum.pt.cc` did, at every length from
+    twelve to twenty, and it matched a fifteen-digit IMEI and a contract number
+    written in groups of four. It is a genuine person number - the Portuguese
+    citizen card - and it is dropped anyway, for the reason `de.stnr` was.
+
+    Generated rather than enumerated: this asks every configured validator the
+    question, so the next weak one is caught on the day it is added rather than
+    on the day somebody measures a corpus.
+    """
+    import importlib
+
+    module = importlib.import_module(path)
+    accepted = []
+    for length in range(minimum, MAX_TOKEN_FOR_PROBE + 1):
+        candidate = "0" * length
+        try:
+            if module.is_valid(candidate):
+                accepted.append(length)
+        except Exception:
+            continue
+    assert not accepted, (
+        f"{path} accepts a string of zeros at lengths {accepted}; its check "
+        "cannot carry a claim against arbitrary business text"
     )
