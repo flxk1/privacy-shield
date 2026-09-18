@@ -67,37 +67,80 @@ Span = Tuple[int, int, str]
 #:                 one time in eleven. KEPT at nine digits, which is the
 #:                 current BSN length, and zero false positives there.
 #:
-#: The minimum-digits column is this module's own and not stdnum's: a validator
-#: may accept a shorter legacy form than the scheme now issues, and a shorter
+#: The minimum column is this module's own and not stdnum's: a validator may
+#: accept a shorter legacy form than the scheme now issues, and a shorter
 #: number means a weaker check.
+#:
+#: It is a minimum ALPHANUMERIC LENGTH. It used to be read as a minimum digit
+#: COUNT while four of the values had been taken from the scheme's total
+#: length, so those four could not fire for a person at any input:
+#:
+#:   ie.pps            seven digits and one or two letters, minimum 8 digits
+#:   es.nie            a letter, seven digits and a letter, minimum 8 digits
+#:   it.codicefiscale  eleven letters short of its own minimum of 11 digits
+#:   fi.hetu           nine digits and a check character, minimum 10 digits
+#:
+#: Every value below is now checked against the lengths in `python-stdnum`'s
+#: own documented examples, by test_every_configured_validator_can_actually_
+#: fire, so a minimum that makes a validator dead fails the suite instead of
+#: reporting no false positives.
+#:
+#: DROPPED, because the scheme cannot tell a person from a company:
+#:
+#:   es.nif   accepts the CIF, which is a company identifier
+#:   pt.nif   the NIPC, a company number, shares the format AND the check
+#:   si.ddv, lv.pvn   VAT, dropped in round 18 for the same reason
+#:   de.stnr  14 false positives on 62 clean documents: invoice and order
+#:            numbers pass it
+#:
+#: it.codicefiscale is KEPT at sixteen characters, which is the personal form.
+#: Its eleven-digit form is a partita IVA - the company one - so the length is
+#: what separates them.
+#: Minimums deliberately set ABOVE a form the library documents, with the
+#: reason. Every one of them excludes a real but weaker variant, and each is
+#: the same judgement: a form with a weaker check, or no check at all, cannot
+#: carry a claim against arbitrary business text.
+#:
+#: Named here so that "this validator cannot fire on its own documented
+#: example" stays a test failure everywhere else.
+DELIBERATELY_ABOVE_A_DOCUMENTED_FORM: Dict[str, str] = {
+    "stdnum.nl.bsn": "the eight-digit legacy BSN; nine is the current length",
+    "stdnum.cz.rc": "the nine-digit pre-1954 form, which has NO check digit "
+                    "at all - 19 false positives on 200 clean documents, one "
+                    "after this floor",
+    "stdnum.sk.rc": "the nine-digit pre-1954 form; identical scheme to cz.rc",
+    "stdnum.it.codicefiscale": "the eleven-digit form, which is a partita IVA "
+                               "- a company. Sixteen is the personal one",
+}
+
 PERSON_NUMBER_MODULES: Dict[str, Tuple[Tuple[str, int], ...]] = {
-    "at": (("stdnum.at.svnr", 10),),
+    "at": (("stdnum.at.vnr", 10),),
     "be": (("stdnum.be.nn", 11),),
     "bg": (("stdnum.bg.egn", 10),),
     "cy": (),
-    "cz": (("stdnum.cz.rc", 9),),
+    "cz": (("stdnum.cz.rc", 10),),
     "de": (("stdnum.de.idnr", 11),),
     "dk": (("stdnum.dk.cpr", 10),),
     "ee": (("stdnum.ee.ik", 11),),
-    "es": (("stdnum.es.dni", 8), ("stdnum.es.nie", 8), ("stdnum.es.nif", 8)),
+    "es": (("stdnum.es.dni", 9), ("stdnum.es.nie", 9)),
     "fi": (("stdnum.fi.hetu", 10),),
-    "fr": (("stdnum.fr.nir", 13),),
+    "fr": (("stdnum.fr.nir", 15),),
     "gr": (),
     "hr": (("stdnum.hr.oib", 11),),
     "hu": (),
     "ie": (("stdnum.ie.pps", 8),),
-    "it": (("stdnum.it.codicefiscale", 11),),
+    "it": (("stdnum.it.codicefiscale", 16),),
     "lt": (("stdnum.lt.asmens", 11),),
     "lu": (),
     "lv": (),
     "mt": (),
     "nl": (("stdnum.nl.bsn", 9),),
     "pl": (("stdnum.pl.pesel", 11),),
-    "pt": (("stdnum.pt.nif", 9),),
+    "pt": (),
     "ro": (("stdnum.ro.cnp", 13),),
     "se": (("stdnum.se.personnummer", 10),),
     "si": (),
-    "sk": (("stdnum.sk.rc", 9),),
+    "sk": (("stdnum.sk.rc", 10),),
 }
 
 #: The shortest and longest national number worth offering to a validator.
@@ -168,26 +211,50 @@ def candidate_tokens(text: str) -> List[Span]:
         # the label on, and "BSN 111222333" is not a Dutch BSN, it is a label
         # and a BSN. Every validator says no to it, which is exactly how an
         # adoption measurement reads "0 false positives" while testing nothing.
-        parts = list(re.finditer(r"[0-9A-Za-z]+", match.group()))
+        parts = [
+            (piece.start(), piece.end(), piece.group())
+            for piece in re.finditer(r"[0-9A-Za-z]+", match.group())
+        ]
         base = match.start()
+        sizes = [len(piece) for _s, _e, piece in parts]
+        digit_counts = [
+            sum(character.isdigit() for character in piece)
+            for _s, _e, piece in parts
+        ]
         for first in range(len(parts)):
+            # BREAK, not continue. Extending `last` can only make the candidate
+            # longer, so once it is past MAX_TOKEN every remaining pair is too -
+            # and the old loop went on building a slice and running a regex
+            # substitution over every one of them BEFORE testing the length.
+            # Quadratic pairs times a linear slice each: 8.7 KB of text took
+            # 9.17 seconds here and 17 KB took 72.5, on the egress path, which
+            # is the third time this repo has shipped a gate too slow to run.
+            # A gate nobody can afford to run is a gate that gets bypassed.
+            total = 0
+            digits = 0
             for last in range(first, len(parts)):
-                start = base + parts[first].start()
-                end = base + parts[last].end()
-                value = text[start:end]
-                compact = re.sub(r"[^0-9A-Za-z]", "", value)
-                if not MIN_TOKEN <= len(compact) <= MAX_TOKEN:
+                total += sizes[last]
+                if total > MAX_TOKEN:
+                    break
+                digits += digit_counts[last]
+                if total < MIN_TOKEN:
                     continue
                 # Every national number in the registry is mostly digits, so a
                 # candidate that is mostly letters is prose. Without this the
                 # pass offered "Sehr geehrte Damen" to twenty-seven validators.
-                if sum(character.isdigit() for character in compact) < MIN_TOKEN - 2:
+                if digits < MIN_TOKEN - 2:
                     continue
+                start = base + parts[first][0]
+                end = base + parts[last][1]
                 if (start, end) in seen:
                     continue
                 seen.add((start, end))
-                tokens.append((start, end, value))
+                tokens.append((start, end, text[start:end]))
     return tokens
+
+
+class MissingValidator(RuntimeError):
+    """A module this table names is not in the installed `python-stdnum`."""
 
 
 def _validators(countries: Sequence[str]):
@@ -197,12 +264,21 @@ def _validators(countries: Sequence[str]):
         for path, minimum in PERSON_NUMBER_MODULES.get(country, ()):
             try:
                 module = importlib.import_module(path)
-            except ImportError:
-                logger.debug("stdnum module %s unavailable", path)
-                continue
+            except ImportError as error:
+                # LOUD. This was a debug line, and `stdnum.at.svnr` - which
+                # does not exist, the module is `stdnum.at.vnr` - made "at" a
+                # silently dead country whose code still passed validation as
+                # configurable. An adoption measurement over a dead validator
+                # reads zero false positives and means nothing, which is the
+                # same failure as a validator that can never fire.
+                raise MissingValidator(
+                    f"{path} is not in the installed python-stdnum; "
+                    "PERSON_NUMBER_MODULES names a module that is not there"
+                ) from error
             checker = getattr(module, "is_valid", None)
-            if checker is not None:
-                yield country, path.rsplit(".", 1)[-1], checker, minimum
+            if checker is None:
+                raise MissingValidator(f"{path} has no is_valid()")
+            yield country, path.rsplit(".", 1)[-1], checker, minimum
 
 
 def find_national_ids(
@@ -225,9 +301,17 @@ def find_national_ids(
 
     found: List[Tuple[int, int, str, str, str]] = []
     for start, end, value in candidate_tokens(text):
-        digits = sum(character.isdigit() for character in value)
+        # LENGTH, not digit count. The column below was read as "minimum
+        # digits" and four validators were given a minimum taken from the
+        # scheme's TOTAL length, so they could never fire for a person at all:
+        # an Irish PPS number is seven digits and a letter, a Spanish NIE is a
+        # letter, seven digits and a letter, a Finnish HETU is nine digits and
+        # a check character, and an Italian codice fiscale is eleven letters
+        # short of its own minimum. Four dead validators reporting no false
+        # positives, for the same reason a dead country does.
+        size = sum(character.isalnum() for character in value)
         for country, scheme, is_valid, minimum in checkers:
-            if digits < minimum:
+            if size < minimum:
                 continue
             try:
                 if is_valid(value):

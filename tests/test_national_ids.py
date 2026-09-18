@@ -129,11 +129,40 @@ def test_prose_is_not_offered_to_twenty_seven_validators():
 # Country scoping
 # ---------------------------------------------------------------------------
 
+def _valid_in(country, length, seed=1921):
+    """A number of *length* digits this country's validator accepts.
+
+    Searched at runtime. Nothing here is written down: a national person
+    number that happens to be issued to somebody does not belong in a file.
+    """
+    import random
+
+    rng = random.Random(seed)
+    for _attempt in range(200000):
+        candidate = "".join(str(rng.randrange(10)) for _ in range(length))
+        if national.find_national_ids(candidate, countries=[country]):
+            return candidate
+    raise AssertionError(f"no {length}-digit number accepted by {country}")
+
+
 @needs_stdnum
 @pytest.mark.parametrize("country", ["nl", "cz", "sk"])
-def test_the_same_number_validates_in_three_countries(country):
-    """The reason scoping is not optional."""
-    found = national.find_national_ids(AMBIGUOUS, countries=[country])
+def test_the_same_number_validates_in_more_than_one_country(country):
+    """The reason scoping is not optional.
+
+    The Czech and Slovak birth number are the SAME scheme, so a valid one is
+    valid in both registers and nothing in the number says which. The Dutch
+    BSN is nine digits against their ten, so the three no longer share a single
+    string - they used to share the nine-digit Czech legacy form, which is now
+    excluded because it carries no check digit at all.
+    """
+    shared = _valid_in("cz", 10)
+    if country == "nl":
+        found = national.find_national_ids(AMBIGUOUS, countries=[country])
+        assert [c for _s, _e, _v, c, _k in found] == ["nl"], found
+        assert national.find_national_ids(AMBIGUOUS, countries=["cz", "sk"]) == []
+        return
+    found = national.find_national_ids(shared, countries=[country])
     assert [c for _s, _e, _v, c, _k in found] == [country], found
 
 
@@ -147,19 +176,74 @@ def test_scoping_excludes_a_country_that_was_not_configured():
 # Precision, measured rather than adopted
 # ---------------------------------------------------------------------------
 
-#: Zero, with EVERY country enabled - which is the worst case, not the
-#: intended configuration.
+#: Zero on the 62 hand-written documents below, and that zero is NOT the
+#: layer's precision. It was reported as if it were, and it is the fourth
+#: reported zero in this package that an independent corpus refuted: those 62
+#: documents carry 2.2 candidate tokens each, and German business text carries
+#: far more.
 #:
-#: The OSS evaluation reported 0 false positives over 951 tokens from 119 clean
-#: documents. That did NOT reproduce here as evaluated: over 136 candidate
-#: tokens from these 62 clean documents, `de.stnr` produced 14 (it accepts
-#: invoice and order numbers), `si.ddv` 3 and `nl.bsn` 3 (stdnum accepts the
-#: eight-digit legacy form, and an eight-digit customer number passes an
-#: eleven-test about one time in eleven). The first two are dropped - si.ddv
-#: and lv.pvn are VAT schemes and contradicted this layer's own person-only
-#: rule - and BSN is held to nine digits. The other 21 validators produced
-#: none.
+#: WIDE_FP_BUDGET is the number that means something. It is measured on 200
+#: generated documents built from ordinary German business field shapes -
+#: invoice, order, meter, contract, personnel and file numbers - and it is not
+#: small.
 NATIONAL_FP_BUDGET = 0
+
+#: Every country enabled, on 200 documents of ordinary German business fields.
+#:
+#: At 0719c79 this was 75. It is lower here despite FIVE validators having been
+#: resurrected (at was importing a module that does not exist; ie.pps, es.nie,
+#: fi.hetu and the personal codice fiscale could not fire at any input), which
+#: is the honest shape of the trade: dropping the company schemes and the
+#: check-digit-free legacy forms took more away than the repairs added back.
+#:
+#:   0719c79   cz.rc 21, hr.oib 17, nl.bsn 12, dk.cpr 11, pt.nif 8, pl.pesel 2,
+#:             lt.asmens 1, it.codicefiscale 1, se.personnummer 1, be.nn 1 = 75
+#:   here      hr.oib 17, at.vnr 15, nl.bsn 13, dk.cpr 10, pl.pesel 2,
+#:             lt.asmens 1, se.personnummer 1, be.nn 1, cz.rc 1 = 61
+#:
+#: THE NUMBER IS STILL HIGH, and no minimum length will fix it: what remains is
+#: ten- and eleven-digit schemes whose mod-11 check accepts about one arbitrary
+#: string in eleven. A check digit that weak cannot carry a claim on its own
+#: against thousands of candidate tokens. Country scoping is the control that
+#: works - Germany alone measures 0, France alone 0, Italy alone 0 - and the
+#: only thing that would fix the full-scope number is corroborating evidence
+#: near the token, which is a design decision and not a constant.
+WIDE_FP_BUDGET = 61
+
+
+def _wide_clean_corpus():
+    """200 clean German business documents, generated, holding no person number.
+
+    Generated rather than written, because 62 hand-written documents is how the
+    withdrawn zero happened: a corpus a person writes carries the field shapes
+    that person thought of.
+    """
+    import random
+
+    rng = random.Random(1918)
+
+    def digits(count):
+        return "".join(str(rng.randrange(10)) for _ in range(count))
+
+    templates = [
+        "Rechnung Nr. {a} vom 14.03.2026, Kundennummer {b}, Auftragsnummer AB-{c}, Lieferschein {e}",
+        "Bestellung {a} / Position 0010 / Menge 1200 / Preis 1.349,00 EUR / Beleg {b} / Charge {c}",
+        "Sendungsverfolgung: {e}, Paket 2 von 3, Zollanmeldung {b}, Referenz {a}",
+        "Vertragsnummer {a} laufend seit 01.01.2019, Kostenstelle {c}, Buchungskreis {c}, Police {b}",
+        "Artikelnummern: {a}, {b}, {e}; Lager {c}; Palette {a}",
+        "Zaehlerstand {a} abgelesen am 30.04.2026, Vorjahr {b}, Zaehlernummer {e}, Vertrag {c}",
+        "Kundenkonto {a} im System SAP, Referenz {e}, Mandant {c}, Buchung {b}",
+        "Steuernummer {a}, Handelsregister HRB {c}, Betriebsnummer {b}, Umsatz {e}",
+        "Personalnummer {a}, Kostenstelle {c}, Abrechnung 04/2026, Sozialversicherung {b}",
+        "Aktenzeichen 4 O 1123/25, Vorgang {a}, Fristnummer {b}, Registernummer {e}",
+    ]
+    return [
+        templates[index % len(templates)].format(
+            a=digits(rng.randint(9, 11)), b=digits(rng.randint(8, 11)),
+            c=digits(rng.randint(5, 7)), e=digits(rng.randint(10, 13)),
+        )
+        for index in range(200)
+    ]
 
 
 @needs_stdnum
@@ -172,6 +256,39 @@ def test_no_national_id_is_found_in_a_document_that_has_none():
         ):
             false_positives.append((f"{country}.{scheme}", value))
     assert len(false_positives) == NATIONAL_FP_BUDGET, false_positives
+
+
+@needs_stdnum
+def test_the_full_scope_false_positive_rate_is_what_it_is():
+    """The measurement that replaced the withdrawn zero.
+
+    Asserted as a ceiling AND a floor. A ceiling so a regression shows up; a
+    floor so that nobody can make this number smaller by killing validators -
+    which is exactly how it was 0 before, with five of them dead.
+    """
+    from collections import Counter
+
+    everything = list(national.PERSON_NUMBER_MODULES)
+    documents = _wide_clean_corpus()
+    hits = Counter()
+    for document in documents:
+        for _s, _e, _v, country, scheme in national.find_national_ids(
+            document, countries=everything
+        ):
+            hits[f"{country}.{scheme}"] += 1
+    total = sum(hits.values())
+    assert total == WIDE_FP_BUDGET, (
+        f"{total} false positives on {len(documents)} clean documents with "
+        f"every country enabled, recorded as {WIDE_FP_BUDGET}: {dict(hits)}"
+    )
+
+    # Scoping is the control that works, and this is the evidence for saying so.
+    for scope in (["de"], ["fr"], ["it"]):
+        scoped = sum(
+            len(national.find_national_ids(document, countries=scope))
+            for document in documents
+        )
+        assert scoped == 0, f"{scope} measured {scoped}, not 0"
 
 
 @needs_stdnum
@@ -222,3 +339,168 @@ def test_a_checksummed_national_id_outranks_an_overlapping_pattern(monkeypatch):
     }
     assert PIIType.NATIONAL_ID in kinds, kinds
     assert PIIType.PHONE not in kinds, kinds
+
+
+# ---------------------------------------------------------------------------
+# A validator that cannot fire reports no false positives, and means nothing
+# ---------------------------------------------------------------------------
+
+def _documented_examples(path):
+    """Valid numbers from the stdnum module's OWN doctests.
+
+    Published documentation, read at runtime, never written into this file.
+    They are the only thing that can tell this package that one of its minimum
+    lengths has made a validator dead: a table entry that can never fire looks
+    exactly like a table entry that is simply very precise.
+    """
+    import importlib
+    import re as _re
+
+    module = importlib.import_module(path)
+    text = (module.__doc__ or "") + (getattr(module, "validate", None).__doc__ or "")
+    quoted = _re.findall(r">>> (?:validate|is_valid|compact)\('([^']+)'\)", text)
+    return [value for value in quoted if module.is_valid(value)]
+
+
+@needs_stdnum
+@pytest.mark.parametrize(
+    "country, path, minimum",
+    [
+        (country, path, minimum)
+        for country, entries in national.PERSON_NUMBER_MODULES.items()
+        for path, minimum in entries
+    ],
+    ids=lambda value: value if isinstance(value, str) else str(value),
+)
+def test_every_configured_validator_can_actually_fire(country, path, minimum):
+    """End to end, on the library's own documented numbers.
+
+    Four entries could not fire for any input at all, because the minimum
+    column was read as a digit COUNT while the values had been taken from the
+    scheme's total LENGTH: ie.pps, es.nie, it.codicefiscale and fi.hetu. A
+    fifth country, "at", named `stdnum.at.svnr`, which does not exist - the
+    module is `stdnum.at.vnr` - and the ImportError was swallowed at debug
+    level, so the country validated as configurable and detected nothing.
+
+    Five dead validators, each of them reporting zero false positives.
+    """
+    examples = _documented_examples(path)
+    assert examples, f"{path} documents no valid example to test with"
+
+    # The BARE form. Several modules document their number with the country
+    # code in front of it, and a minimum measured off the prefixed form is a
+    # minimum no real field can reach: hr.oib is documented as "HR" and eleven
+    # digits, so a minimum of thirteen makes a genuine eleven-digit OIB
+    # invisible while the entry still looks configured.
+    bare = []
+    for example in examples:
+        stripped = example
+        head = "".join(character for character in example if character.isalnum())[:2]
+        if head.upper() == country.upper() and head.isalpha():
+            stripped = example[example.index(head[1]) + 1:].lstrip(" ./-")
+        bare.append(stripped if len(stripped) >= 8 else example)
+
+    shortest = min(bare, key=lambda value: sum(c.isalnum() for c in value))
+    size = sum(character.isalnum() for character in shortest)
+    if size < minimum:
+        assert path in national.DELIBERATELY_ABOVE_A_DOCUMENTED_FORM, (
+            f"{path}'s shortest documented number is {size} characters and the "
+            f"minimum here is {minimum}; the validator cannot fire on the real "
+            "form, and nothing says that was on purpose"
+        )
+
+    fired = False
+    for example in bare:
+        if sum(character.isalnum() for character in example) < minimum:
+            continue
+        found = national.find_national_ids(
+            f"Angaben zur Person {example} Ende", countries=[country]
+        )
+        if any(value == example for _s, _e, value, _c, _scheme in found):
+            fired = True
+            break
+    assert fired, (
+        f"{path} fires on none of its own {len(examples)} documented examples "
+        f"at a minimum length of {minimum}; it is configured and dead"
+    )
+
+
+@needs_stdnum
+def test_a_module_that_is_not_there_is_a_loud_failure():
+    """It was a debug line, which is how "at" stayed dead."""
+    original = national.PERSON_NUMBER_MODULES["cy"]
+    national.PERSON_NUMBER_MODULES["cy"] = (("stdnum.cy.no_such_module", 8),)
+    try:
+        with pytest.raises(national.MissingValidator):
+            list(national._validators(["cy"]))
+    finally:
+        national.PERSON_NUMBER_MODULES["cy"] = original
+
+
+@needs_stdnum
+def test_no_company_identifier_is_configured_as_a_person_number():
+    """The inversion si.ddv and lv.pvn were dropped for, applied to the rest.
+
+    `es.nif` accepts the CIF and `pt.nif` shares its format and its check digit
+    with the NIPC, both company identifiers, so neither can be scoped to a
+    person. The Italian codice fiscale CAN be: its eleven-digit form is a
+    partita IVA and its sixteen-character form is the personal one, so the
+    length separates them and the personal one is what is configured.
+    """
+    configured = {
+        path for entries in national.PERSON_NUMBER_MODULES.values()
+        for path, _minimum in entries
+    }
+    for company_scheme in ("stdnum.es.nif", "stdnum.pt.nif", "stdnum.si.ddv",
+                           "stdnum.lv.pvn", "stdnum.de.stnr"):
+        assert company_scheme not in configured, (
+            f"{company_scheme} identifies an organisation, or was dropped on a "
+            "measurement; re-measure before putting it back"
+        )
+
+    company_forms = [
+        example for example in _documented_examples("stdnum.it.codicefiscale")
+        if sum(character.isalnum() for character in example) == 11
+    ]
+    assert company_forms, "the case this guards has gone from stdnum's examples"
+    for form in company_forms:
+        assert not national.find_national_ids(
+            f"Partita IVA {form}", countries=["it"]
+        ), "a company identifier was claimed as a person number"
+
+
+@needs_stdnum
+def test_candidate_tokens_is_not_superlinear():
+    """It enumerated every sub-token pair, building a slice and running a regex
+    substitution over each one BEFORE testing the length, and never stopped
+    once a candidate was past the maximum.
+
+    Extracted text is the worst case, because `pdftotext` writes long runs of
+    space-separated tokens and a space is one of the characters a national
+    number may be printed with. Measured on comma-free extracted text at
+    0719c79: 0.5 KB 0.013s, 1 KB 0.125s, 2 KB 0.724s, 4 KB 6.954s - about ten
+    times per doubling. Here: 0.001s at 4 KB, with the candidate set identical
+    at every size.
+
+    Third instance in this package of a gate too slow to run, which is a gate
+    that gets bypassed.
+    """
+    import random
+    import time
+
+    rng = random.Random(7)
+    words = ["Rechnung", "Nr", "2026-004871", "Kunde", "44 123 456 789",
+             "Betrag", "1.349", "EUR", "Mustermann", "GmbH", "Auftrag", "AB-99213"]
+    parts = []
+    while len(" ".join(parts)) < 4096:
+        parts.append(rng.choice(words))
+    document = " ".join(parts)
+
+    started = time.perf_counter()
+    tokens = national.candidate_tokens(document)
+    elapsed = time.perf_counter() - started
+    assert tokens, "the pass found nothing at all, so the timing means nothing"
+    assert elapsed < 1.0, (
+        f"4 KB of extracted text took {elapsed:.2f}s in candidate_tokens; "
+        "the pair enumeration is back"
+    )
