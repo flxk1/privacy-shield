@@ -34,6 +34,7 @@ from .anonymous_json import anonymize_for_cloud
 from .gate import PrivacyGate
 from .redactor import RedactionMode, SelectionMode
 from .scanner import Confidence, ScanResult
+from .media._tools import CHANNEL_UNAVAILABLE
 logger = logging.getLogger(__name__)
 
 from .shield import (
@@ -105,6 +106,23 @@ class DocumentScan:
     def span_count(self) -> int:
         return len(self.spans)
 
+    @property
+    def incomplete_channels(self) -> List[str]:
+        """PII channels that could not run on this document.
+
+        A media file is read through several independent channels - EXIF, OCR,
+        face detection, container tags, speech-to-text, sampled frames - each
+        needing a backend this package does not ship. A channel that could not
+        run finds nothing, which is indistinguishable from a channel that ran
+        and found nothing unless the document says so.
+        """
+        return [e for e in self.errors if str(e).startswith(CHANNEL_UNAVAILABLE)]
+
+    @property
+    def scan_complete(self) -> bool:
+        """False when some PII channel never looked at this document."""
+        return not self.incomplete_channels
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "source": self.source,
@@ -122,6 +140,8 @@ class DocumentScan:
             "placeholder_count": self.placeholder_count,
             "audit_id": self.audit_id,
             "errors": self.errors,
+            "scan_complete": self.scan_complete,
+            "incomplete_channels": self.incomplete_channels,
         }
 
 
@@ -146,9 +166,14 @@ class ScanReport:
         return sum(d.span_count for d in self.documents)
 
     @property
+    def incomplete_documents(self) -> List[DocumentScan]:
+        """Documents some PII channel never looked at."""
+        return [d for d in self.documents if not d.scan_complete]
+
+    @property
     def scan_complete(self) -> bool:
-        """False when part of the tree could not be read."""
-        return not self.walk_errors
+        """False when part of the tree, or part of a document, was not read."""
+        return not self.walk_errors and not self.incomplete_documents
 
     @property
     def all_allowed(self) -> bool:
@@ -157,10 +182,23 @@ class ScanReport:
         False when the walk was incomplete. "Every document is cleared" cannot
         be asserted about documents that were never read, and a folder scan
         that skipped an unreadable directory used to report exactly that.
+
+        False, equally, when a document was only PARTLY read. The folder walk
+        settled this question once: completeness is part of the verdict. A
+        media file has several independent PII channels and each needs a
+        backend this package does not ship, so "cleared" over a video whose
+        container nobody parsed and whose frames nobody sampled is the same
+        assertion about the same nothing - and a consumer reading this
+        aggregate shipped the geotagged file.
+
+        The per-document ``egress_allowed`` is deliberately NOT changed: it is
+        the gate's verdict on source classification and is documented as
+        exactly that. Completeness lives here, next to ``walk_errors``, and in
+        ``DocumentScan.scan_complete``.
         """
         if self.walk_errors:
             return False
-        return all(d.egress_allowed for d in self.documents)
+        return all(d.egress_allowed and d.scan_complete for d in self.documents)
 
     @property
     def blocked_documents(self) -> List[DocumentScan]:
@@ -176,6 +214,7 @@ class ScanReport:
             "all_allowed": self.all_allowed,
             "scan_complete": self.scan_complete,
             "walk_errors": self.walk_errors,
+            "incomplete_documents": [d.source for d in self.incomplete_documents],
             "documents": [d.to_dict() for d in self.documents],
         }
 

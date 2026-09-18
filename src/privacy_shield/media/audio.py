@@ -143,8 +143,17 @@ def _extract_audio_metadata(
     have_mutagen = False
     try:
         from mutagen import File as MutagenFile
-        have_mutagen = True
         audio = MutagenFile(str(file_path))
+        # Set on a successful PARSE, not on a successful import - the ffprobe
+        # branch above already worked this way and this one did not. mutagen
+        # raises HeaderNotFoundError on a container it cannot sync to, and with
+        # the flag already True the handler below left `have_mutagen` set, so a
+        # malformed or truncated mp3 - the attacker-controlled case - reported
+        # `pii_fields=[]` and NO container_tags marker while TPE1 and COMM sat
+        # in the bytes. `audio` is None when mutagen does not recognise the
+        # container at all, which is also a channel that did not run; an object
+        # with `tags is None` is a real read of a file that has no tags.
+        have_mutagen = audio is not None
         if audio:
             info = getattr(audio, "info", None)
             if info is not None:
@@ -166,6 +175,7 @@ def _extract_audio_metadata(
         logger.debug("Mutagen not installed: %s", exc)
     except Exception as exc:
         logger.debug("Mutagen audio metadata extraction failed for %s: %s", file_path, exc)
+        have_mutagen = False
 
     if file_path.suffix.lower() == ".wav":
         try:

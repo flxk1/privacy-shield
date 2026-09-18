@@ -223,6 +223,11 @@ def _extract_video_metadata(
                 "-print_format", "json",
                 "-show_format",
                 "-show_streams",
+                # Chapter titles are container metadata that ffprobe will not
+                # report unless asked. A recording chaptered by its operator
+                # names people in them - "Vernehmung Mustermann" - and they
+                # were not in `raw_tags`, let alone in `pii_fields`.
+                "-show_chapters",
                 "-i", operand(file_path),
             ],
             text=True,
@@ -256,6 +261,9 @@ def _extract_video_metadata(
             # both live here as often as at format level, and only format
             # level was read.
             _apply_container_tags(metadata, stream.get("tags", {}))
+
+        for chapter in data.get("chapters", []):
+            _apply_container_tags(metadata, chapter.get("tags", {}))
 
         _apply_container_tags(metadata, fmt.get("tags", {}))
 

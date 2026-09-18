@@ -527,23 +527,37 @@ next round starts from this rather than rediscovering it:
   extra. So with `pip install ".[dev,semantic,extract,openai]"` an image is
   scanned with no EXIF reader, no OCR engine and no face detector, an mp3 with
   no tag reader and no transcriber, and a video with nothing at all.
-- **An unavailable channel is now visible, and that is the whole of the fix.**
+- **An unavailable channel is visible, and it counts against the verdict.**
   Each missing channel records a per-document error prefixed
   `media_channel_unavailable:` — the same mechanism the folder walk uses for an
-  undecodable binary, above. It does **not** change the egress verdict: a media
-  file whose channels could not run is still `egress_allowed=True`, because the
-  gate decides on source classification. **`all_allowed` is therefore not a
-  statement that every media file was read.** A consumer that needs that must
-  check `any(e.startswith("media_channel_unavailable") for e in doc.errors)`.
-  Before this, those channels returned empty-handed in silence: a photograph of
-  a letter, an interview recording and a geotagged site video all came back
-  `pii_detected=False, errors=[], egress_allowed=True`.
-- **Face detection has no working backend at the declared floor.** `[extract]`
-  pins `opencv-python-headless>=4.8` with no ceiling; opencv 5.0, which that
-  floor resolves to today, ships **no Haar cascade XML**, so the fallback
-  detector stopped existing on a transitive upgrade. With `mediapipe` absent as
-  well, no face is ever detected. This is reported, not silent, but a face in an
-  image is not found in the shipped configuration.
+  undecodable binary, above — and surfaces as `DocumentScan.scan_complete =
+  False`, `DocumentScan.incomplete_channels`,
+  `ScanReport.incomplete_documents` and **`ScanReport.all_allowed = False`**.
+  The folder walk had already settled the question for the other kind of
+  incompleteness: completeness is part of the verdict, because "every document
+  is cleared" cannot be asserted about documents nobody read. A partly-read
+  document is the same assertion about the same nothing, and a consumer
+  reading the documented aggregate was shipping a geotagged video no channel
+  had opened.
+  The per-document `egress_allowed` is deliberately **unchanged**: it answers
+  a different question — the gate's verdict on source classification — and is
+  documented as answering it. Read `scan_complete` for the other one.
+  **Blast radius, measured:** `DEFAULT_EXTENSIONS` carries no media extension,
+  so an ordinary folder scan never reaches a media file and its verdict does
+  not move. The rule bites where media is actually scanned — a file passed
+  directly, or `--all-files` / `extensions=None`. Pinned by
+  `tests/test_media_egress_promise.py::test_the_default_text_walk_is_not_affected_by_the_completeness_rule`.
+  Note what this means in practice: no OCR or STT engine is installable from
+  any declared extra, so in the shipped configuration **every image and every
+  audio file is permanently incomplete** and a folder scanned with
+  `--all-files` will not report `all_allowed`. That is the honest answer —
+  nothing read them — and it is the cost of the rule.
+- **Face detection works at the declared floor, but only just.** `[extract]`
+  now pins `opencv-python-headless>=4.8,<5`. The cap is load-bearing: opencv
+  5.0 ships **no Haar cascade XML**, so with an uncapped floor the fallback
+  detector stopped existing on a transitive upgrade and every face went
+  undetected. With `mediapipe` absent the Haar cascade is the only detector
+  there is.
 - **`redact_image`, `redact_audio` and `redact_video` return False rather than
   report a redaction they did not perform.** Specifically: `blur_faces=True`
   with no detector, or on a processor built with `detect_faces=False`, refuses;
@@ -560,18 +574,51 @@ next round starts from this rather than rediscovering it:
   is not implemented. Asking for either returns False.
 - **`strip_metadata` verifies its own output and refuses when it cannot prove
   the metadata is gone.** It re-reads the output through the same parsers AND
-  searches the output **bytes** for each value the input carried, in UTF-8,
-  UTF-16-BE and Latin-1. Two consequences. First, the PDF path is now correct:
-  `set_metadata({})` clears only the DocInfo dictionary, the XMP packet holds
-  the same author and title, and a default PyMuPDF save keeps the superseded
-  objects in the file, so the author's name and the document subject stayed
-  recoverable from a file the function had returned True about. Second, the
-  check **deliberately over-refuses**: a metadata value that also appears in
-  the page's visible text cannot be removed by a metadata strip, and
-  `strip_metadata` will return False rather than claim it is gone. Fail-closed
+  searches the output for each value the input carried, in UTF-8, UTF-16-BE
+  and Latin-1, over the raw bytes **and over the decompressed contents** — PDF
+  object definitions, PDF streams, PDF embedded files, PNG `zTXt`/`iTXt`
+  chunks. The decompression matters: a PDF's content lives in deflated
+  streams, so a raw scan of one reads as clean over anything inside it, which
+  is not "reading the bytes" in any sense the leak gate would recognise.
+  Decompression is bounded at 64 MB and 4,096 objects, so a crafted file
+  cannot turn verification into a decompression bomb.
+  Three consequences. First, the PyMuPDF path is correct: `set_metadata({})`
+  clears only the DocInfo dictionary, the XMP packet holds the same author and
+  title, and a default save keeps the superseded objects, so the author's name
+  stayed recoverable from a file the function had returned True about.
+  Second, the check **deliberately over-refuses**: a metadata value that also
+  appears in the page's visible text cannot be removed by a metadata strip,
+  and `strip_metadata` returns False rather than claim it is gone. Fail-closed
   wins, as with the digit-run over-redaction above. Values shorter than six
-  characters are not byte-searched, because they collide with ordinary binary
-  content.
+  characters are not searched, because they collide with ordinary binary
+  content. Third, the verification skips the `File:`, `System:` and
+  `ExifTool:` namespaces, which are facts about the file's place on this
+  filesystem rather than anything stored in it — see below.
+- **exiftool is never used to strip a PDF, because it cannot.**
+  `exiftool -all=` on a PDF is an *incremental update*: it appends a revision
+  marking the tags deleted and leaves the original DocInfo object in the file,
+  so the output is LARGER than the input and exiftool itself prints
+  `Warning: [minor] ExifTool PDF edits are reversible. Deleted tags may be
+  recovered!`. Both exiftool and PyMuPDF then re-read that output as clean, so
+  every reader-based check passes while the author's name is plainly in the
+  bytes — the same shape as the PyMuPDF `garbage=0` defect, in the other
+  backend. PDF goes straight to the rewriting path. Measured and pinned by
+  `::test_a_pdf_is_never_stripped_with_exiftool_because_that_is_reversible`,
+  which first asserts that exiftool still behaves this way, so the rule
+  becomes a failing test rather than a silent no-op if that ever changes.
+- **Filesystem timestamps are not metadata, and counting them made
+  `strip_metadata` inert.** exiftool's `-G` output always carries
+  `File:FileModifyDate`, `File:FileAccessDate` and `File:FileInodeChangeDate`.
+  The substring rule in `_classify_pii_type` reads every one as a `datetime`
+  finding, and they cannot be stripped — they are not in the file, and writing
+  the output re-creates them. Verification that counted them could never
+  succeed, so **with exiftool installed `strip_metadata()` returned False for
+  every file of every type**, having correctly removed the author. It failed
+  closed, so it was never a leak; the function was simply inert in the one
+  configuration it is meant for. `MetadataExtractor.extract()` still reports
+  those fields — they are readable facts — so `MetadataResult.has_pii` is True
+  for essentially every file when exiftool is present. Only the verification
+  skips them.
 - **Only `.jpg`, `.jpeg`, `.png` and `.pdf` can be stripped without `exiftool`,
   and the PDF path additionally needs `PRIVACY_SHIELD_ENABLE_PYMUPDF=1`.**
   Everything else returns False. Note that `extractor.py` latches that
@@ -645,28 +692,132 @@ face-detection channels too**, because `shield._process_image` returns before
 constructing the processor. The flag is named for one channel and gates three.
 `shield.py` is outside the media territory; recorded here rather than fixed.
 
+### Three PII channels that do not exist yet
+
+These are places identifying data sits where **no channel looks**. Each is a
+new channel rather than a repair, so each is scoped and costed here and pinned
+by a test that fails the day it is built. Measured, not assumed.
+
+**1. A PDF's embedded attachments — the worst of the three, because it looks
+complete.** A PDF with innocuous page text and PII only in an attached
+`zeugenliste.txt` scans to `pii_detected=False, findings={}, errors=[],
+egress_allowed=True` **and `scan_complete=True`**. Nothing anywhere says the
+file was partly read. *Scope:* enumerate `doc.embfile_count()`, extract each
+payload, dispatch it back through the pipeline by type. *Cost:* recursion —
+an attachment can be a PDF containing an attachment, so it needs a depth
+limit, a total-size budget and a cycle guard, and the same decompression-bomb
+bound the verification already carries. It also changes what an overlay *is*
+for a container document: either the attachment's redacted text joins the
+parent's overlay, or the result grows a per-attachment structure. That is an
+API decision, not an implementation detail. *Interim:* the cheap half is a
+detector — flag `embedded_payload` on presence, as cover art already is —
+which costs nothing and would at least stop the file reading as complete.
+Pinned by `::test_a_pdf_embedded_attachment_is_an_undetected_channel`.
+
+**2. Image XMP and IPTC.** `image.py` reads EXIF through Pillow and nothing
+else. A JPEG whose identifying data is in `XMP:Creator`, `IPTC:By-line` and
+`XMP-exif:GPSLatitude/Longitude` — which is what Lightroom and Photoshop
+write, and increasingly what phones write alongside EXIF — has
+`pii_fields == []`. **`MetadataExtractor` reads all of those from the same
+bytes via exiftool**: two readers of one file, disagreeing about what is in
+it, and the pipeline uses the blind one. *Scope:* route `ImageProcessor`
+through `MetadataExtractor` for the non-EXIF namespaces, or add an XMP packet
+parser. *Cost:* the exiftool route makes a binary this package does not
+declare the difference between finding a photographer's name and not, so it
+needs its own `media_channel_unavailable: xmp_iptc` marker — which, under the
+completeness rule above, makes **every image incomplete until exiftool is
+installed**. That is the real price and it is the owner's call. A pure-Python
+XMP reader (the packet is XML between `<?xpacket` markers) avoids the
+dependency for XMP but not for IPTC IIM, which is binary. Pinned by
+`::test_image_xmp_and_iptc_are_an_undetected_channel`.
+
+**3. Video soft subtitle tracks.** A `mov_text` track carrying
+`Zeugin Erika Mustermann, IBAN …` gives `full_transcript=''` and
+`all_visual_text=''`. It does not leak through redaction — ffmpeg's stream
+selection drops it — but it is invisible to detection, which is the half this
+package is for. *Scope:* `ffmpeg -map 0:s -f webvtt -` per subtitle stream,
+feed the text through the scanner like a transcript. *Cost:* one more ffmpeg
+invocation per subtitle stream, bounded by the existing timeout; the text is
+attacker-controlled and goes straight to the scanner, which is already true
+of every transcript. This is the cheapest of the three and the most contained.
+Pinned by `::test_a_video_subtitle_track_is_an_undetected_channel`.
+
+**Chapter titles were the fourth and are fixed**, because they were a widening
+of the container-tag channel rather than a new one: ffprobe reports them given
+`-show_chapters`, and they flow through `tag_pii_type` like any other tag. A
+recording chaptered `Vernehmung Mustermann` now reports `title` in
+`pii_fields`; it previously did not appear even in `raw_tags`.
+
 ## Test split
 
-All numbers below are measured in **CI's environment**, which is
+### What CI's green covers for media, and what it does not
+
+**CI installs no media binary at all.** There is no `exiftool`, no `ffmpeg`,
+no `ffprobe` and no `mutagen` on a CI runner, so every `_check_exiftool()` is
+False, every `tool_available()` is False and every `mutagen` import fails.
+The suite CI certifies therefore exercises the media paths **not taken**.
+
+This is not a hypothetical. Two tests in
+`tests/test_media_egress_promise.py` were green on the runner and red the
+moment the tools they were about existed:
+
+```
+same commit, same extras, from-scratch install, only PATH differs
+
+no media binaries (CI's shape)  ->  8 failed / 1107 passed
++ exiftool                      ->  9 failed  (strip_metadata on a PDF)
++ exiftool + mutagen            -> 10 failed  (audio container tags)
+```
+
+Both were passing because the code's preferred backend was absent — a test
+that never reaches its subject, which is the same defect as a test that
+monkeypatches its subject away. Both are fixed; the suite is now **8 failed
+in every one of the five configurations** below, and the skip count is what
+moves:
+
+```
+                                  failed  passed  skipped
+no media binaries (CI's shape)         8    1165       10
++ exiftool                             8    1169        6
++ exiftool + mutagen                   8    1169        6
++ exiftool + ffmpeg                    8    1172        3
+everything                             8    1172        3
+```
+
+The two columns that matter are **failed** and **skipped**: the pass count
+moves with every other workstream, the failure count must not move with the
+tool inventory, and the skips name what is not covered.
+
+The skips are the signal: they name, one per line under `-rs`, the paths CI's
+green does not cover. To cover them:
+
+```
+brew install exiftool ffmpeg && pip install mutagen && pytest -rs
+```
+
+Measured on python 3.12 with `.[dev,semantic,extract,openai]`. The 8 failures
+are the documented `tests/test_simplifier.py` LLM-path cases in every column.
+
+All other numbers below are measured in **CI's environment**, which is
 `pip install ".[dev,semantic,extract,openai]"` and nothing else — notably
 **without `httpx`**, which is in no extra and which CI does not install:
 
 ```
 python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
-1051 passed, 8 failed, 4 skipped
+1165 passed, 8 failed, 10 skipped
 ```
 
-`--collect-only` reports 971 items; the run above reports 972 outcomes,
+`--collect-only` reports 1182 items; the run above reports 1183 outcomes,
 because two of the skips are module-level `importorskip` skips rather than
 collected items. The same numbers on python 3.14, CI's other matrix leg.
-Two of the 4 skips are the `httpx` transport assertions in
+Two of the 10 skips are the `httpx` transport assertions in
 `tests/test_proxy_transport_guard.py` and
 `tests/test_privacy_shield_embeddings.py`; they do not run in CI either, and
 a previously reported "886 passed / 8 failed" was measured in a richer
-environment than CI's and was not reproducible. The other 2 are the
-Pillow-gated EXIF assertions in `tests/test_media_egress_promise.py` — Pillow is
-declared by no extra, so they skip loudly in CI's configuration and pass where
-it is installed. The 8
+environment than CI's and was not reproducible. **The other 8 are the media
+backends CI does not install** — exiftool, ffmpeg/ffprobe, mutagen — and they
+are listed one per line by `pytest -rs`. That list is the honest statement of
+what CI's green does not cover; see the matrix at the top of this section. The 8
 failures are all in `tests/test_simplifier.py`'s LLM path, which patches
 `privacy_shield.services.llm_runtime` — an upstream gateway this package does
 not ship; they fail identically on the tip before this round's changes.
@@ -681,18 +832,27 @@ than skip.
 Measured with `coverage run --source src/privacy_shield/media -m pytest`:
 
 ```
-                 before (521fec2)          after
-media/__init__.py     0%                   100%
-media/_tools.py       -  (did not exist)   100%
-media/audio.py        0%   (308 stmts)      46%
-media/image.py        0%   (321 stmts)      45%
-media/metadata.py     0%   (256 stmts)      59%
-media/video.py        0%   (203 stmts)      79%
-media/ TOTAL          0%  (1093 stmts,      57%  (1298 stmts)
+                 before (521fec2)   after, CI's shape   after, all backends
+media/__init__.py     0%                  100%                 100%
+media/_tools.py       - (did not exist)    88%                  88%
+media/audio.py        0%  (308 stmts)      47%                  59%
+media/image.py        0%  (321 stmts)      57%                  57%
+media/metadata.py     0%  (256 stmts)      62%                  57%
+media/video.py        0%  (203 stmts)      79%                  83%
+media/ TOTAL          0%  (1093 stmts,     61%                  62%  (1384 stmts)
                            0 executed)
-helpers/documents.py 18%                    31%
-security_scanner.py  35% (import only)      57%
+helpers/documents.py 18%                                        31%
+runner.py             -                                         95%
+security_scanner.py  35% (import only)                          57%
 ```
+
+The two right-hand columns are the same commit under two PATHs — the point of
+the section above. Installing exiftool, ffmpeg and mutagen moves media
+coverage by a point or two - in different directions per module, since a
+present backend takes a different branch - and the *failures* not at all,
+which is the property
+that was missing before: the suite used to change its verdict when the tools
+appeared.
 
 **`media/` was at 0.0% — not one of 1,093 statements executed by the whole
 902-test suite.** `tests/test_privacy_shield_media_inputs.py`, the only file
@@ -708,7 +868,8 @@ and vosk branches — which cannot execute without those packages. That is the
 undeclared-dependency limit above, measured.
 
 `tests/test_media_egress_promise.py` is the media counterpart of the leak
-invariant: 69 tests, 67 of which run in CI's configuration. Its fixtures are
+invariant: 84 tests, 76 of which run in CI's configuration; the other 8
+require a media backend and skip loudly without it. Its fixtures are
 assembled from the format specifications as raw bytes (JPEG APP1/TIFF for EXIF
 including a hand-built IFD1 thumbnail, ID3v2.3 for audio tags, ISO-BMFF `udta`
 for the QuickTime location atom) rather than with Pillow's, mutagen's or

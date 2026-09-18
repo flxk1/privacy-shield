@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import os
 import logging
+import re
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Union
 
-from ._tools import operand, run_tool
+from ._tools import PROBE_TIMEOUT_SECONDS, operand, run_tool
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +158,126 @@ ID3_FRAME_FIELDS = {
 # There is no text to scan, so presence alone is the finding.
 EMBEDDED_PAYLOAD_FIELDS = {"picture", "attachment", "coverart", "metadata_block_picture"}
 
+# exiftool group prefixes that describe the file's place on THIS filesystem
+# rather than anything stored inside it. `-G` output always carries
+# `File:FileModifyDate`, `File:FileAccessDate` and `File:FileInodeChangeDate`,
+# and the substring rule in `_classify_pii_type` reads every one of them as a
+# `datetime` finding. They cannot be stripped, because they are not in the
+# file; they are re-created by the act of writing the output; and they do not
+# travel with the bytes. Verification that counts them can never succeed, which
+# is exactly what happened: with exiftool installed, `strip_metadata()` removed
+# the author correctly and then returned False for every file of every type,
+# because three filesystem timestamps were still "surviving findings".
+NON_EMBEDDED_NAMESPACES = {"file", "system", "exiftool", "sourcefile"}
+
+# What may appear in an exiftool tag-copy option built from `preserve_fields`.
+# The value is interpolated into an argument token (`-{field}<{field}`), so
+# although it can never become a separate argv entry or reach a shell, a field
+# name carrying `<`, a space or a newline changes which tag operation exiftool
+# performs.
+# Must START with an alphanumeric: a leading `-` turns `-{field}` into `--execute`
+# or `--all=`, which are exiftool operations rather than a tag to copy.
+_SAFE_FIELD_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_:-]{0,63}\Z")
+
+
+def is_non_embedded_field(field_name: object) -> bool:
+    """Is this tag a fact about the filesystem rather than about the file?"""
+    head = str(field_name).partition(":")[0].strip().lower()
+    return head in NON_EMBEDDED_NAMESPACES
+
+
+# A value hidden inside a deflated stream is not in the raw bytes. Bounded so a
+# crafted file cannot turn verification into a decompression bomb: a PDF that
+# expands to gigabytes stops at the cap and is reported as unverifiable rather
+# than swallowing the machine.
+_MAX_DECOMPRESSED_BYTES = 64 << 20
+_MAX_DECOMPRESSED_OBJECTS = 4096
+
+
+def _decompressed_views(path: Path) -> Iterator[tuple[str, bytes]]:
+    """Yield ``(label, bytes)`` for content a raw byte scan cannot see.
+
+    A raw scan of a PDF is a scan of deflated streams, so it reads as clean
+    over content that any PDF reader recovers immediately. Covers the two
+    container formats this package writes: PDF object streams and embedded
+    files, and PNG compressed text chunks.
+    """
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".pdf":
+            yield from _pdf_decompressed_views(path)
+        elif suffix == ".png":
+            yield from _png_decompressed_views(path)
+    except Exception as exc:
+        logger.debug("cannot decompress %s for verification: %s", path, exc)
+
+
+def _pdf_decompressed_views(path: Path) -> Iterator[tuple[str, bytes]]:
+    try:
+        import pymupdf
+    except ImportError:  # pragma: no cover - PyMuPDF is in [extract]
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            logger.debug("no PyMuPDF: PDF streams cannot be verified decompressed")
+            return
+
+    budget = _MAX_DECOMPRESSED_BYTES
+    with pymupdf.open(str(path)) as doc:
+        for index in range(doc.embfile_count()):
+            blob = doc.embfile_get(index)
+            if blob:
+                budget -= len(blob)
+                yield (f"embedded file {index}", bytes(blob))
+                if budget <= 0:
+                    return
+        for xref in range(1, min(doc.xref_length(), _MAX_DECOMPRESSED_OBJECTS)):
+            try:
+                if not doc.xref_is_stream(xref):
+                    # Object definitions hold /Author and friends as plain
+                    # strings outside any stream.
+                    definition = doc.xref_object(xref, compressed=False)
+                    if definition:
+                        yield (f"object {xref}", definition.encode("utf-8", "replace"))
+                    continue
+                blob = doc.xref_stream(xref)
+            except Exception as exc:
+                logger.debug("xref %s of %s is unreadable: %s", xref, path, exc)
+                continue
+            if not blob:
+                continue
+            budget -= len(blob)
+            yield (f"stream {xref}", bytes(blob))
+            if budget <= 0:
+                logger.debug("decompression budget exhausted verifying %s", path)
+                return
+
+
+def _png_decompressed_views(path: Path) -> Iterator[tuple[str, bytes]]:
+    import struct
+
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return
+    offset, budget = 8, _MAX_DECOMPRESSED_BYTES
+    while offset + 8 <= len(data) and budget > 0:
+        (length,) = struct.unpack(">I", data[offset:offset + 4])
+        chunk_type = data[offset + 4:offset + 8]
+        payload = data[offset + 8:offset + 8 + length]
+        offset += 12 + length
+        if chunk_type not in (b"zTXt", b"iTXt"):
+            continue
+        try:
+            # zTXt: keyword \0 method deflate-data. iTXt carries two more
+            # NUL-separated fields before the (optionally deflated) text.
+            body = payload.split(b"\x00", 1)[1] if b"\x00" in payload else payload
+            blob = zlib.decompressobj().decompress(body[1:], budget)
+        except Exception as exc:
+            logger.debug("PNG %s chunk is not readable: %s", chunk_type, exc)
+            continue
+        budget -= len(blob)
+        yield (chunk_type.decode("ascii"), blob)
+
 
 def normalise_tag_key(key: object) -> str:
     """A container tag key reduced to the word form the field tables use.
@@ -244,7 +366,10 @@ def _classify_pii_type(field_name: str) -> Optional[str]:
 def _check_exiftool() -> bool:
     """Check if exiftool is available."""
     try:
-        run_tool(["exiftool", "-ver"])
+        # A presence probe, so the probe budget - not the five minutes a
+        # transcode is allowed. An exiftool that hangs on `-ver` should cost a
+        # scan fifteen seconds, not five minutes per file.
+        run_tool(["exiftool", "-ver"], timeout=PROBE_TIMEOUT_SECONDS)
         return True
     except Exception as exc:
         logger.debug("exiftool unavailable: %s", exc)
@@ -555,10 +680,33 @@ class MetadataExtractor:
         input_p = Path(input_path)
         output_p = Path(output_path)
 
+        if preserve_fields:
+            rejected = sorted(
+                str(f) for f in preserve_fields if not _SAFE_FIELD_NAME.match(str(f))
+            )
+            if rejected:
+                # Refuse rather than sanitise: a caller who asked to preserve a
+                # field this cannot express has not had their request honoured,
+                # and a silently dropped preserve is a silently stripped field.
+                logger.debug("refusing unsafe preserve_fields: %s", rejected)
+                return False
+
         before = self.extract(input_p)
 
-        # Use exiftool if available (most comprehensive)
-        if _check_exiftool():
+        # Use exiftool if available (most comprehensive) - except on PDF, where
+        # it cannot do the job. `exiftool -all=` on a PDF is an INCREMENTAL
+        # UPDATE: it appends a revision marking the tags deleted and leaves the
+        # original DocInfo object in the file, which is why the output is
+        # LARGER than the input and why exiftool prints
+        #
+        #     Warning: [minor] ExifTool PDF edits are reversible.
+        #                      Deleted tags may be recovered!
+        #
+        # Both exiftool and PyMuPDF then re-read that output as clean, so every
+        # reader-based check passes while the author's name is still plainly in
+        # the bytes. Measured; the byte check refuses it. Rewriting the file is
+        # the only strip that holds for PDF, so go straight to PyMuPDF.
+        if input_p.suffix.lower() != ".pdf" and _check_exiftool():
             try:
                 cmd = ["exiftool", "-all="]
 
@@ -607,8 +755,16 @@ class MetadataExtractor:
         said "clean" while the author's name and the patient file number were
         still sitting in the file as superseded objects - PyMuPDF's default
         save keeps them, so anything that walks the xref recovers them. So the
-        second check reads the BYTES, the way the leak gate does on the text
-        side.
+        second check reads the BYTES.
+
+        Both checks skip `NON_EMBEDDED_NAMESPACES`: a filesystem timestamp is
+        not in the file, is re-created by writing the output, and so is a
+        "surviving finding" for every file that has ever been written.
+
+        The byte check looks inside compressed containers as well as at the
+        raw bytes, because a raw scan of a deflated PDF stream sees nothing -
+        which made this check pass over values that were demonstrably still
+        recoverable from the output.
         """
         if not output_path.exists():
             return False
@@ -617,12 +773,16 @@ class MetadataExtractor:
 
         after = self.extract(output_path)
         for finding in after.pii_findings:
+            if is_non_embedded_field(finding.field_name):
+                continue
             if normalise_tag_key(finding.field_name) not in keep:
                 logger.debug("metadata survived the strip: %s", finding.field_name)
                 return False
 
         needles: List[tuple[str, bytes]] = []
         for finding in before.pii_findings:
+            if is_non_embedded_field(finding.field_name):
+                continue
             if normalise_tag_key(finding.field_name) in keep:
                 continue
             value = finding.value.strip()
@@ -646,6 +806,15 @@ class MetadataExtractor:
         if found:
             logger.debug("value of %s is still present in %s", found, output_path)
             return False
+
+        for label, blob in _decompressed_views(output_path):
+            for field_name, needle in needles:
+                if needle in blob:
+                    logger.debug(
+                        "value of %s survives inside %s of %s",
+                        field_name, label, output_path,
+                    )
+                    return False
 
         return True
 

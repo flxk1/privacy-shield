@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import struct
 import subprocess
 import sys
@@ -1000,13 +1001,33 @@ def test_strip_metadata_on_an_unsupported_type_fails_closed(tmp_path):
     assert MetadataExtractor().strip_metadata(source, tmp_path / "out.mp4") is False
 
 
-def test_strip_metadata_never_reports_success_without_an_output(tmp_path):
+def test_strip_metadata_success_always_means_a_verified_output(tmp_path):
+    """The invariant, stated so it holds in EVERY backend configuration.
+
+    This test used to assert `is False` for an output under a directory that
+    does not exist - and passed only because exiftool was absent. exiftool's
+    `-o` creates the directory and writes a correctly stripped file, so True is
+    the right answer there, and the old assertion was measuring the tool
+    inventory rather than the code. What must be true whichever backend runs:
+    a True return means an output exists and no longer carries the value.
+    """
     from privacy_shield.media.metadata import MetadataExtractor
 
+    name = "Katharina Vogelsang"
     source = tmp_path / "a.jpg"
-    source.write_bytes(_exif_jpeg([(0x013B, "Katharina Vogelsang")]))
+    source.write_bytes(_exif_jpeg([(0x013B, name)]))
     out = tmp_path / "missing-directory" / "b.jpg"
-    assert MetadataExtractor().strip_metadata(source, out) is False
+
+    ok = MetadataExtractor().strip_metadata(source, out)
+
+    if ok:
+        assert out.exists(), "reported success with no output file"
+        assert name.encode() not in out.read_bytes(), (
+            "reported success over an output that still carries the Artist"
+        )
+    else:
+        # A refusal must not leave a half-written artefact a caller might ship.
+        assert not out.exists() or name.encode() not in out.read_bytes()
 
 
 def test_strip_metadata_on_a_pdf_removes_the_author_from_the_bytes(tmp_path, monkeypatch):
@@ -1375,3 +1396,512 @@ def test_security_scanner_is_not_on_the_egress_path():
             f"'not on the egress path' statement in this file and in "
             f"docs/limits.md needs updating"
         )
+
+
+# ===========================================================================
+# 9. The configurations CI's green does NOT cover
+# ===========================================================================
+#
+# CI installs none of exiftool, ffmpeg/ffprobe or mutagen, so the suite it
+# certifies exercises the paths NOT taken: every `_check_exiftool()` is False,
+# every `tool_available()` is False, and every mutagen import fails. Two of
+# this file's own tests were red the moment those tools existed - a test that
+# passes because it never reaches its subject, which is the defect this file
+# was written to attack.
+#
+# The tests below REQUIRE a backend and skip loudly without it, so the gap is
+# visible in the skip list rather than hidden in the pass count. Run them with:
+#
+#     brew install exiftool ffmpeg && pip install mutagen && pytest
+#
+# `docs/limits.md` states which configuration each measured number came from.
+
+_HAVE_EXIFTOOL = shutil.which("exiftool") is not None
+_HAVE_FFPROBE = shutil.which("ffprobe") is not None
+
+needs_exiftool = pytest.mark.skipif(
+    not _HAVE_EXIFTOOL,
+    reason="needs exiftool on PATH; CI does not install it, so CI's green "
+           "does not cover the exiftool branch of strip_metadata/extract",
+)
+
+
+@needs_exiftool
+def test_a_filesystem_timestamp_is_not_a_surviving_finding(tmp_path):
+    """With exiftool present, `strip_metadata` could never return True.
+
+    exiftool's `-G` output always carries `File:FileModifyDate`,
+    `File:FileAccessDate` and `File:FileInodeChangeDate`. The substring rule in
+    `_classify_pii_type` reads every one as a `datetime` finding, and
+    `_verify_stripped` counted them as metadata that had survived - so the
+    author really was removed and the API reported failure, for every file of
+    every type. It fails closed, so it was not a leak; it made the function
+    inert in the one configuration it is meant for.
+    """
+    from privacy_shield.media.metadata import MetadataExtractor, is_non_embedded_field
+
+    assert is_non_embedded_field("File:FileModifyDate")
+    assert is_non_embedded_field("System:FileID")
+    assert not is_non_embedded_field("PDF:Author")
+    assert not is_non_embedded_field("EXIF:Artist")
+
+    artist = "Dr. Katharina Vogelsang"
+    source = tmp_path / "geo.jpg"
+    source.write_bytes(_exif_jpeg([(0x013B, artist), (0x010F, "Apple")]))
+
+    extractor = MetadataExtractor()
+    before = extractor.extract(source)
+    # The premise: exiftool really does report these, so the test is about the
+    # configuration it claims to be about.
+    assert any(f.field_name.startswith("File:") for f in before.pii_findings), (
+        "exiftool reported no File: fields - this test is not exercising the "
+        "configuration it is named for"
+    )
+    assert any(f.value == artist for f in before.pii_findings)
+
+    out = tmp_path / "clean.jpg"
+    assert extractor.strip_metadata(source, out) is True, (
+        "a strip that removed the Artist reported failure because three "
+        "filesystem timestamps were still there"
+    )
+    assert artist.encode() not in out.read_bytes()
+
+
+@needs_exiftool
+def test_a_pdf_is_never_stripped_with_exiftool_because_that_is_reversible(tmp_path, monkeypatch):
+    """exiftool's own warning, turned into a rule.
+
+    `exiftool -all=` on a PDF is an incremental update: it appends a revision
+    marking the tags deleted and leaves the original DocInfo object in place,
+    so the output is LARGER than the input and exiftool prints "ExifTool PDF
+    edits are reversible. Deleted tags may be recovered!". Both exiftool and
+    PyMuPDF re-read that output as clean, so every reader-based check passes
+    while the author's name is still in the bytes - the same shape as the
+    PyMuPDF `garbage=0` defect, in the other backend.
+    """
+    pymupdf = pytest.importorskip("pymupdf", reason="[extract] provides PyMuPDF")
+    monkeypatch.setenv("PRIVACY_SHIELD_ENABLE_PYMUPDF", "1")
+    from privacy_shield.media.metadata import MetadataExtractor
+
+    author = "Dr. Katharina Vogelsang"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 700), "Rechnung ueber Wartungsleistungen.")
+    doc.set_metadata({"author": author, "subject": "Patientenakte 4711"})
+    source = tmp_path / "akte.pdf"
+    doc.save(source)
+    doc.close()
+
+    # First establish that exiftool really would leave it recoverable, so this
+    # test fails if a future exiftool stops doing that and the rule becomes
+    # unnecessary rather than silently pointless.
+    direct = tmp_path / "exiftool-direct.pdf"
+    subprocess.run(
+        ["exiftool", "-all=", "-o", str(direct), str(source)],
+        capture_output=True, check=True, timeout=120,
+    )
+    assert author.encode() in direct.read_bytes(), (
+        "exiftool no longer leaves PDF metadata recoverable; re-check whether "
+        "the PDF exclusion in strip_metadata is still needed"
+    )
+    assert not pymupdf.open(direct).metadata.get("author"), (
+        "every reader says this file is clean while the name is in the bytes"
+    )
+
+    out = tmp_path / "clean.pdf"
+    assert MetadataExtractor().strip_metadata(source, out) is True
+    assert author.encode() not in out.read_bytes(), (
+        "the PDF strip went through exiftool and left the author recoverable"
+    )
+    assert len(out.read_bytes()) <= len(source.read_bytes()) * 2
+
+
+@needs_exiftool
+def test_preserve_fields_cannot_rewrite_the_exiftool_argument(tmp_path):
+    """`preserve_fields` is interpolated into `-{field}<{field}`.
+
+    It can never become a separate argv entry and never reaches a shell, but a
+    field name carrying `<`, a space or a newline changes which tag operation
+    exiftool performs. Refused rather than sanitised: a silently dropped
+    preserve is a silently stripped field.
+    """
+    from privacy_shield.media.metadata import MetadataExtractor
+
+    source = tmp_path / "a.jpg"
+    source.write_bytes(_exif_jpeg([(0x013B, "Katharina Vogelsang")]))
+
+    for hostile in ("Artist<ImageDescription", "Artist -all=", "Artist\nAll",
+                    "Artist;rm -rf /", "-execute", "@argfile", "A" * 200):
+        out = tmp_path / f"out-{abs(hash(hostile))}.jpg"
+        assert MetadataExtractor().strip_metadata(
+            source, out, preserve_fields={hostile}
+        ) is False, f"accepted preserve_fields={hostile!r}"
+        assert not out.exists()
+
+    # The ordinary case still works.
+    out = tmp_path / "kept.jpg"
+    MetadataExtractor().strip_metadata(source, out, preserve_fields={"Orientation"})
+
+
+def test_the_exiftool_presence_probe_uses_the_probe_budget(monkeypatch):
+    """A `-ver` probe must not be allowed the five minutes a transcode gets."""
+    from privacy_shield.media import metadata as metadata_mod
+    from privacy_shield.media._tools import (
+        PROBE_TIMEOUT_SECONDS,
+        TOOL_TIMEOUT_SECONDS,
+    )
+
+    seen: list[float] = []
+
+    def _capture(argv, **kwargs):
+        seen.append(kwargs.get("timeout"))
+        raise RuntimeError("not installed")
+
+    monkeypatch.setattr(metadata_mod, "run_tool", _capture)
+    metadata_mod._check_exiftool()
+
+    assert seen == [PROBE_TIMEOUT_SECONDS]
+    assert PROBE_TIMEOUT_SECONDS < TOOL_TIMEOUT_SECONDS
+
+
+def test_a_container_no_reader_can_parse_still_says_so(tmp_path):
+    """mutagen imports, then fails to parse. The channel did not run.
+
+    `have_mutagen` was set on a successful IMPORT, before the parse, and the
+    handler never cleared it - unlike the ffprobe branch, which does. So an
+    mp3 neither reader can sync to, which is the attacker-controlled case,
+    returned `pii_fields=[]` with no `container_tags` marker while TPE1 and
+    COMM sat in the bytes. This runs in every configuration: without mutagen
+    the marker comes from the import, with mutagen it comes from the parse.
+    """
+    from privacy_shield.media.audio import AudioProcessor
+
+    path = tmp_path / "truncated.mp3"
+    path.write_bytes(_id3_mp3([
+        (b"TPE1", "Sabine Reinhardt"),
+        (b"COMM", "Zeugin, Tel +49 151 1234567"),
+    ]))
+    assert b"Sabine Reinhardt" in path.read_bytes()
+
+    result = AudioProcessor().process(path)
+
+    if not result.metadata.pii_fields:
+        assert any("container_tags" in e for e in _channel_errors(result.errors)), (
+            "no reader parsed this container and nothing said so"
+        )
+
+
+@pytest.mark.skipif(not _HAVE_FFPROBE, reason="needs ffprobe on PATH; CI does "
+                                              "not install it")
+def test_ffprobe_really_reads_the_geotag_when_it_is_installed(tmp_path):
+    """The GPS spellings are tested against ffprobe stubs elsewhere.
+
+    This one drives the real binary over a real container, so the stub and the
+    tool cannot disagree unnoticed.
+    """
+    from privacy_shield.media.video import _extract_video_metadata
+
+    path = tmp_path / "site-visit.mp4"
+    path.write_bytes(_geotagged_mp4())
+
+    errors: list[str] = []
+    metadata = _extract_video_metadata(path, errors)
+
+    assert not any("container_metadata" in e for e in errors), errors
+    assert "gps" in metadata.pii_fields, (
+        f"real ffprobe read this container and the GPS was not claimed: "
+        f"pii_fields={metadata.pii_fields} raw_tags={metadata.raw_tags}"
+    )
+
+
+def test_strip_metadata_verification_looks_inside_compressed_streams(tmp_path, monkeypatch):
+    """A raw byte scan of a deflated container reads as clean over anything.
+
+    The verification promised to read the bytes "the way the leak gate does on
+    the text side". A PDF's content lives in deflated streams, so a raw scan
+    saw nothing and passed over values any PDF reader recovers at once.
+    """
+    pymupdf = pytest.importorskip("pymupdf", reason="[extract] provides PyMuPDF")
+    # Without exiftool, reading a PDF's metadata at all needs this flag; the
+    # precondition below fails loudly rather than the test passing vacuously.
+    monkeypatch.setenv("PRIVACY_SHIELD_ENABLE_PYMUPDF", "1")
+    from privacy_shield.media.metadata import MetadataExtractor, _decompressed_views
+
+    author = "Dr. Katharina Vogelsang"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 700), "Rechnung.")
+    doc.set_metadata({"author": author})
+    source = tmp_path / "in.pdf"
+    doc.save(source)
+    doc.close()
+
+    extractor = MetadataExtractor()
+    before = extractor.extract(source)
+    assert any(f.value == author for f in before.pii_findings), (
+        "the author was not even read, so this test would prove nothing"
+    )
+
+    # An output a broken strip could plausibly produce: DocInfo cleared, the
+    # value still present but only inside a compressed object.
+    doc = pymupdf.open(source)
+    doc.set_metadata({})
+    doc.embfile_add("leftover.txt", author.encode())
+    bad = tmp_path / "bad-strip.pdf"
+    doc.save(bad, deflate=True, garbage=4)
+    doc.close()
+
+    assert author.encode() not in bad.read_bytes(), (
+        "the fixture is not exercising the compressed case"
+    )
+    assert any(author.encode() in blob for _, blob in _decompressed_views(bad))
+    assert extractor._verify_stripped(before, bad) is False, (
+        "verification passed over a value that is plainly still in the file"
+    )
+
+
+# ===========================================================================
+# 10. Completeness is part of the verdict
+# ===========================================================================
+#
+# The marker alone was not enough. `egress_allowed` comes from the gate's
+# source classification and `all_allowed` ignored `errors` entirely, so a
+# geotagged video nobody had opened was still reported cleared by the
+# documented aggregate - a consumer reading `report.all_allowed` shipped it.
+#
+# The folder walk had already settled this question for the other kind of
+# incompleteness: `walk_errors` makes `all_allowed` False because "every
+# document is cleared" cannot be asserted about documents nobody read. A
+# partly-read document is the same assertion about the same nothing.
+
+def test_a_media_file_nobody_read_is_not_covered_by_all_allowed(tmp_path):
+    from privacy_shield.runner import scan
+
+    folder = tmp_path / "evidence"
+    folder.mkdir()
+    (folder / "notes.txt").write_text(
+        "Angebot ueber Wartungsleistungen.", encoding="utf-8"
+    )
+    (folder / "walkthrough.mp4").write_bytes(_geotagged_mp4())
+
+    report = scan(folder, extensions=None)
+
+    video = next(d for d in report.documents if d.source.endswith(".mp4"))
+    text = next(d for d in report.documents if d.source.endswith(".txt"))
+
+    if video.incomplete_channels:
+        assert video.scan_complete is False
+        assert report.scan_complete is False
+        assert report.all_allowed is False, (
+            "the documented aggregate still certifies a video no channel read"
+        )
+        assert video in report.incomplete_documents
+        # The per-document gate verdict is deliberately unchanged: it answers a
+        # different question (source classification), and is documented as
+        # answering it.
+        assert video.egress_allowed is True
+
+    # A document that WAS fully read is not tainted by its neighbour.
+    assert text.scan_complete is True
+    assert text not in report.incomplete_documents
+
+
+def test_completeness_is_visible_in_the_serialised_report(tmp_path):
+    """A consumer reads `to_dict()`, so the signal has to survive into it."""
+    from privacy_shield.runner import scan
+
+    path = tmp_path / "site-visit.mp4"
+    path.write_bytes(_geotagged_mp4())
+
+    payload = scan(path).to_dict()
+    document = payload["documents"][0]
+
+    assert "scan_complete" in document
+    assert "incomplete_channels" in document
+    assert "incomplete_documents" in payload
+    assert payload["all_allowed"] is (document["scan_complete"] and document["egress_allowed"])
+
+
+def test_the_default_text_walk_is_not_affected_by_the_completeness_rule(tmp_path):
+    """The blast radius, measured rather than asserted.
+
+    `DEFAULT_EXTENSIONS` carries no media extension, so an ordinary folder scan
+    never reaches a media file and its verdict is unchanged. The rule bites
+    exactly where media is actually scanned - a direct file, or `--all-files`.
+    """
+    from privacy_shield.runner import DEFAULT_EXTENSIONS, scan
+
+    assert not ({".jpg", ".mp3", ".mp4", ".wav", ".mov"} & set(DEFAULT_EXTENSIONS))
+
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "offer.txt").write_text("Angebot ueber Wartung.", encoding="utf-8")
+    (folder / "photo.jpg").write_bytes(_exif_jpeg([(0x013B, "Katharina Vogelsang")]))
+
+    report = scan(folder)
+    assert [Path(d.source).name for d in report.documents] == ["offer.txt"]
+    assert report.all_allowed is True
+    assert report.scan_complete is True
+
+    assert scan("Kontakt max@example.com", force_text=True).scan_complete is True
+
+
+# ===========================================================================
+# 11. Channels that do not exist yet
+# ===========================================================================
+#
+# Three artefacts carry identifying data in a place NO channel looks. They are
+# new channels rather than repairs, so they are scoped and costed in
+# docs/limits.md and pinned here: each test states the current behaviour and
+# fails the day a channel is built, which is when the limits entry must go.
+#
+# Chapter titles were the exception and ARE fixed: ffprobe reports them with
+# one more flag and they flow through the container-tag channel that already
+# exists, so that was a widening rather than a new channel.
+
+@pytest.mark.skipif(not _HAVE_FFPROBE, reason="needs ffprobe on PATH")
+def test_a_chapter_title_naming_a_person_is_found(tmp_path):
+    """`-show_chapters` was not requested, so chapters were not even in raw_tags."""
+    from privacy_shield.media.video import _extract_video_metadata
+
+    class _Completed:
+        stdout = json.dumps({
+            "format": {"duration": "2.0"},
+            "streams": [],
+            "chapters": [{"id": 0, "tags": {"title": "Vernehmung Mustermann"}}],
+        })
+
+    import privacy_shield.media.video as video_mod
+
+    # Stubbed for determinism; the real-binary path is covered by
+    # test_ffprobe_really_reads_the_geotag_when_it_is_installed.
+    saved = video_mod.run_tool
+    video_mod.run_tool = lambda *a, **k: _Completed()
+    try:
+        metadata = _extract_video_metadata(Path("x.mp4"), [])
+    finally:
+        video_mod.run_tool = saved
+
+    assert "title" in metadata.pii_fields
+    assert metadata.raw_tags.get("title") == "Vernehmung Mustermann"
+
+
+def test_the_ffprobe_argv_asks_for_chapters(monkeypatch):
+    from privacy_shield.media import video as video_mod
+
+    calls: list[list[str]] = []
+
+    class _Completed:
+        stdout = json.dumps({"format": {}, "streams": []})
+
+    monkeypatch.setattr(video_mod, "_check_ffprobe", lambda: True)
+    monkeypatch.setattr(
+        video_mod, "run_tool",
+        lambda argv, **k: (calls.append(list(argv)), _Completed())[1],
+    )
+    video_mod._extract_video_metadata(Path("x.mp4"), [])
+
+    assert "-show_chapters" in calls[0]
+
+
+def test_a_pdf_embedded_attachment_is_an_undetected_channel(tmp_path, monkeypatch):
+    """KNOWN GAP, pinned. PII in an attached file is invisible AND unmarked.
+
+    Worse than the other two: `scan_complete` is True, so nothing - not the
+    findings, not the errors, not the aggregate - says the file was only
+    partly read. Scoped and costed in docs/limits.md under Known gaps.
+    """
+    pymupdf = pytest.importorskip("pymupdf", reason="[extract] provides PyMuPDF")
+    monkeypatch.setenv("PRIVACY_SHIELD_ENABLE_PYMUPDF", "1")
+    from privacy_shield.runner import scan
+
+    secret = b"Zeugin Erika Mustermann, IBAN DE02120300000000202051"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 700), "Angebot ueber Wartungsleistungen.")
+    doc.embfile_add("zeugenliste.txt", secret)
+    path = tmp_path / "mit-anhang.pdf"
+    doc.save(path, deflate=True)
+    doc.close()
+
+    assert pymupdf.open(path).embfile_get("zeugenliste.txt") == secret
+
+    document = scan(path).documents[0]
+    assert document.pii_detected is False, (
+        "an embedded attachment is now detected - build the channel properly "
+        "and delete the Known gap entry in docs/limits.md"
+    )
+    assert "Mustermann" not in document.overlay
+
+
+@needs_exiftool
+def test_image_xmp_and_iptc_are_an_undetected_channel(tmp_path):
+    """KNOWN GAP, pinned. Two readers of one file disagree about its contents.
+
+    `image.py` reads EXIF through Pillow and nothing else, so a JPEG whose
+    identifying data is in XMP and IPTC - which is what Lightroom and
+    Photoshop write - has `pii_fields == []`, while `MetadataExtractor`
+    reads XMP:Creator, IPTC:By-line and XMP-exif GPS out of the same bytes.
+    Scoped and costed in docs/limits.md under Known gaps.
+    """
+    from privacy_shield.media.image import ImageProcessor
+    from privacy_shield.media.metadata import MetadataExtractor
+
+    path = tmp_path / "lightroom.jpg"
+    path.write_bytes(_TINY_JPEG)
+    subprocess.run(
+        ["exiftool", "-overwrite_original",
+         "-XMP:Creator=Dr. Katharina Vogelsang",
+         "-IPTC:By-line=Katharina Vogelsang",
+         "-XMP-exif:GPSLatitude=48.1372",
+         "-XMP-exif:GPSLongitude=11.5756",
+         str(path)],
+        capture_output=True, check=True, timeout=120,
+    )
+
+    read_by_the_metadata_extractor = {
+        f.field_name for f in MetadataExtractor().extract(path).pii_findings
+    }
+    assert any(f.startswith(("XMP:", "IPTC:")) for f in read_by_the_metadata_extractor), (
+        "the fixture carries no XMP/IPTC, so this test is not about its subject"
+    )
+
+    seen_by_the_pipeline = ImageProcessor(detect_faces=False).process(path).metadata.pii_fields
+    assert seen_by_the_pipeline == [], (
+        "image.py now reads XMP/IPTC - delete the Known gap entry in "
+        "docs/limits.md and give the channel its own unavailability marker"
+    )
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg on PATH")
+def test_a_video_subtitle_track_is_an_undetected_channel(tmp_path):
+    """KNOWN GAP, pinned. A soft subtitle track carries text nobody reads.
+
+    Neither leaks through redaction - ffmpeg's `-map 0:a`/stream selection
+    drops both - but both are invisible to DETECTION, which is the half this
+    package is for. Scoped and costed in docs/limits.md under Known gaps.
+    """
+    from privacy_shield.media.video import VideoProcessor
+
+    srt = tmp_path / "s.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n"
+        "Zeugin Erika Mustermann, IBAN DE02120300000000202051\n",
+        encoding="utf-8",
+    )
+    video = tmp_path / "vernehmung.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-nostdin",
+         "-f", "lavfi", "-i", "color=c=black:s=64x64:d=2",
+         "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+         "-i", str(srt),
+         "-map", "0:v", "-map", "1:a", "-map", "2:s",
+         "-c:v", "libx264", "-c:a", "aac", "-c:s", "mov_text",
+         "-t", "2", str(video)],
+        capture_output=True, check=True, timeout=180,
+    )
+    assert b"Mustermann" in video.read_bytes()
+
+    result = VideoProcessor(process_frames=False).process(video)
+    assert "Mustermann" not in result.full_transcript
+    assert "Mustermann" not in result.all_visual_text, (
+        "the subtitle channel now exists - delete the Known gap entry in "
+        "docs/limits.md"
+    )
