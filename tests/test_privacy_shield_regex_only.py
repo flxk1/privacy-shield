@@ -322,3 +322,41 @@ def test_a_card_shape_cannot_outrank_a_checksum():
         assert shape.confidence is not Confidence.HIGH or shape.pii_type not in {
             PIIType.IBAN, PIIType.CREDIT_CARD, PIIType.EMAIL
         }
+
+
+@pytest.mark.parametrize(
+    "minimum, expected",
+    [(Confidence.LOW, True), (Confidence.MEDIUM, True), (Confidence.HIGH, False)],
+    ids=["low", "medium", "high"],
+)
+def test_min_confidence_reads_the_confidence_a_finding_ends_up_with(minimum, expected):
+    """It read the PATTERN's declared confidence, before anything changed it.
+
+    Round 19's release note said a demoted card shape is absent at
+    `min_confidence=HIGH`. It was not: `_match_patterns` filters on the
+    pattern's own confidence, the demotion to MEDIUM happens later in the
+    validation pass, and nothing re-filtered afterwards - so a scan at HIGH
+    returned the finding at `medium`. The claim reached public main and was
+    corrected there rather than quietly dropped.
+
+    Both tests cited beside that claim ran at LOW, which is why neither caught
+    it. This one runs at all three, and it is the behaviour that changed to
+    match the sentence rather than the sentence trimmed to match the behaviour:
+    a caller who asks for checksum-backed findings only has a way to get them.
+    """
+    from privacy_shield.scanner import PIIType, PrivacyScanner
+
+    mistyped = _card_with_a_typo_and_no_valid_window(seed=2011)
+    grouped = " ".join(mistyped[i:i + 4] for i in range(0, 16, 4))
+    text = f"Kreditkarte: {grouped}\nBetrag 1.349,00 EUR"
+
+    findings = [
+        finding for finding in PrivacyScanner(min_confidence=minimum).scan(text).findings
+        if finding.pii_type is PIIType.CREDIT_CARD
+    ]
+    assert bool(findings) is expected, [
+        (f.pii_type.value, f.confidence.value) for f in findings
+    ]
+    for finding in findings:
+        assert finding.confidence is Confidence.MEDIUM
+        assert not finding.checksum_validated

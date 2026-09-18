@@ -1259,6 +1259,24 @@ class PrivacyScanner:
         findings = self._merge_names(text, findings, zone=zone, page=page)
         findings = self._yield_to_validated(findings, text)
 
+        # min_confidence, applied to the confidence a finding ENDS UP WITH.
+        #
+        # It was applied once, to the PATTERN's declared confidence, before any
+        # pass that can change it. So a card shape demoted to MEDIUM in the
+        # validation pass came back from a scan at min_confidence=HIGH, at
+        # `medium`, and the release note said it did not - a claim that went
+        # onto public main and had to be corrected there. The filter reads what
+        # the caller will actually be handed.
+        #
+        # Every pass that adds findings still gates itself on min_confidence
+        # before doing the work, so this is the last word rather than the only
+        # one.
+        floor = self._confidence_value(self.min_confidence)
+        findings = [
+            finding for finding in findings
+            if self._confidence_value(finding.confidence) >= floor
+        ]
+
         # Sort by position
         findings.sort(key=lambda f: f.start)
 
