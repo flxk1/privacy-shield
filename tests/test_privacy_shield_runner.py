@@ -277,3 +277,155 @@ def test_a_complete_folder_scan_is_still_certifiable(tmp_path):
     report = scan(str(tmp_path))
     assert report.walk_errors == []
     assert report.scan_complete is True
+
+
+# ---------------------------------------------------------------------------
+# A file the walk saw and did not open because of `extensions` is a third way
+# a document goes unread - it must be recorded and it must not certify clean,
+# the same way an unreadable directory already does not.
+#
+# These extensions are chosen independently of `runner.DEFAULT_EXTENSIONS` and
+# hardcoded: the point is observable behaviour (exit code, `all_allowed`,
+# `scan_complete`, the report entry), not agreement with the table the code
+# under test consults.
+# ---------------------------------------------------------------------------
+def test_extension_filtered_documents_are_recorded_and_break_completeness(tmp_path):
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+    (root / "contact.eml").write_text(f"From: {FAKE_EMAIL}\n", encoding="utf-8")
+
+    report = scan(root, extensions=frozenset({".txt"}))
+
+    # Neither file was opened - a scan that never read them cannot report on
+    # what they contain.
+    assert report.document_count == 0
+
+    # The skip is RECORDED, distinguishably from an unreadable directory.
+    assert report.walk_errors, "a filtered-out file was not reported at all"
+    assert report.filtered_files, "filtered_files did not surface the skip"
+    assert any("bank.xlsx" in e for e in report.filtered_files)
+    assert any("contact.eml" in e for e in report.filtered_files)
+    # And distinguishably TAGGED, so a caller can tell "skipped by filter"
+    # apart from "could not be read" within the same list.
+    from privacy_shield.runner import EXTENSION_FILTERED
+
+    assert all(e.startswith(EXTENSION_FILTERED) for e in report.filtered_files)
+
+    # A scan that skipped files never reports itself complete - unconditionally,
+    # regardless of which way `all_allowed` decides below.
+    assert report.scan_complete is False
+    # `all_allowed` takes the MILDER of the two variants this defect leaves
+    # open: `extensions` is a parameter, and a file skipped by it is not
+    # folded into "cleared for egress" the way an unreadable directory is.
+    # `unreadable_errors` (the OSError family) is empty here, so `all_allowed`
+    # is unaffected by the filter alone.
+    assert report.unreadable_errors == []
+    assert report.all_allowed is True
+
+    payload = report.to_dict()
+    assert payload["walk_errors"]
+    assert payload["filtered_files"]
+    assert payload["scan_complete"] is False
+    assert payload["all_allowed"] is True
+
+
+def test_extension_filtered_folder_is_reported_by_the_cli(tmp_path, temp_audit):
+    """The exact defect this closes: `scan --json` on such a folder used to
+    print `all_allowed = True | scan_complete = True | documents = 0` and
+    exit 0, with nothing anywhere in the report distinguishing it from an
+    empty, fully-read folder.
+
+    Under the milder `all_allowed` variant (see `ScanReport.all_allowed`) the
+    CLI exit code does not change here - it folds only `all_allowed`, not
+    `scan_complete`, and that fold is outside this fix's territory. What
+    closes the case is that the report is no longer silent: `scan_complete`
+    and `filtered_files` now say exactly what did not happen, where before
+    both were absent and `scan_complete` read True.
+    """
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+    (root / "contact.eml").write_text(f"From: {FAKE_EMAIL}\n", encoding="utf-8")
+
+    import io
+    import contextlib
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["scan", str(root), "--json"])
+
+    assert code == 0  # unchanged by this fix - see docstring
+    payload = json.loads(out.getvalue())
+    assert payload["document_count"] == 0
+    assert payload["all_allowed"] is True
+    assert payload["scan_complete"] is False, (
+        "the folder was reported complete though two files were never read"
+    )
+    assert payload["filtered_files"], "the skip left no trace in the report"
+
+
+def test_default_extensions_also_record_what_they_skip(tmp_path):
+    """The everyday case, not just an explicit `--extensions`: the default
+    filter (whatever it currently names) still leaves a record when it skips
+    a file, rather than a scan going quiet about it."""
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+
+    report = scan(root)  # extensions defaults to DEFAULT_EXTENSIONS
+
+    assert report.document_count == 0
+    assert report.filtered_files
+    assert report.scan_complete is False
+
+
+# ---------------------------------------------------------------------------
+# The two entry points into `extensions` filtering do not behave the same way
+# - a directory walk filters, a directly-passed single file never does. That
+# is documented (`"A single file passed directly — no extension filter."`),
+# but it means the SAME file produces two different verdicts depending only
+# on how it is named to `scan()`. Recorded here as observed behaviour, not
+# smoothed into one or the other; that divergence is a finding, not a defect
+# this repair closes.
+# ---------------------------------------------------------------------------
+def test_folder_walk_and_direct_single_file_disagree_on_the_same_extension(tmp_path):
+    root = tmp_path / "governed"
+    root.mkdir()
+    target = root / "bank.xlsx"
+    target.write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+
+    walked = scan(root, extensions=frozenset({".txt"}))
+    assert walked.document_count == 0
+    assert walked.filtered_files
+
+    direct = scan(target, extensions=frozenset({".txt"}))
+    assert direct.document_count == 1
+    assert direct.walk_errors == []
+    assert direct.filtered_files == []
+
+
+def test_an_unreadable_directory_still_breaks_all_allowed_alongside_a_filtered_file(tmp_path):
+    """The two `walk_errors` reasons stay independently effective when they
+    co-occur: the involuntary one (`unreadable_errors`) still kills
+    `all_allowed`; the voluntary one (`filtered_files`) still does not, on its
+    own."""
+    import os
+
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+    locked = root / "locked"
+    locked.mkdir()
+    (locked / "hidden.xlsx").write_text("nichts", encoding="utf-8")
+    os.chmod(locked, 0o000)
+    try:
+        report = scan(root, extensions=frozenset({".txt"}))
+        assert report.filtered_files, "the extension skip was not recorded"
+        assert report.unreadable_errors, "the locked directory was not recorded"
+        assert report.scan_complete is False
+        assert report.all_allowed is False, (
+            "an unreadable directory stopped flipping all_allowed"
+        )
+    finally:
+        os.chmod(locked, 0o755)

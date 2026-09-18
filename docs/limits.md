@@ -1008,3 +1008,50 @@ document records — because the matcher is substring containment against
 `egress original unredacted text`. A compiled norm that cannot recognise its
 own flagship violation is not a gate. What the compiling was good for was
 forcing each norm to be checked for a binding, which found three that had none.
+
+## A third way a document went unread, and where it stopped
+
+`_iter_files` filtered `extensions` with a bare `continue`: a file the walk
+saw and did not open because its suffix was not in `extensions` left no trace
+anywhere — not in `walk_errors`, not in `scan_complete`, not in `all_allowed`.
+A folder of only unsupported extensions reported `document_count=0`,
+`all_allowed=True`, `scan_complete=True`, CLI exit 0. The other two ways a
+document goes unread — an unreadable directory (`walk_errors`) and an
+unavailable media channel (`incomplete_documents`) — already broke both
+flags; this one broke neither.
+
+The skip is now recorded in `walk_errors`, tagged `EXTENSION_FILTERED`
+(`ScanReport.filtered_files`) so it reads apart from an `OSError` entry
+(`ScanReport.unreadable_errors`). `scan_complete` is False whenever
+`walk_errors` is non-empty for either reason, unconditionally — including a
+filter the caller chose on purpose (`--extensions .txt`): a scope decision is
+still a decision about what got looked at, not a claim that the rest was
+read. `all_allowed` took the milder of the two variants this left open: it is
+False for an entry in `unreadable_errors` (the walk could not read something)
+and unaffected by a `filtered_files` entry alone (the caller chose the
+scope). Tested:
+`tests/test_privacy_shield_runner.py::test_extension_filtered_documents_are_recorded_and_break_completeness`,
+`::test_extension_filtered_folder_is_reported_by_the_cli`,
+`::test_default_extensions_also_record_what_they_skip`.
+
+That milder choice was not free: `tests/test_media_egress_promise.py::test_the_default_text_walk_is_not_affected_by_the_completeness_rule`
+already asserted `all_allowed is True` **and** `scan_complete is True` for a
+default folder scan that silently skipped a `.jpg` — the exact blind spot
+above, pinned as a passing test one file over. Its `all_allowed` assertion
+still holds under the milder variant; its `scan_complete` assertion does not,
+because `scan_complete` has no milder variant here — and that file is outside
+this fix's territory, so the conflict is recorded, not resolved in place.
+
+Two entry points disagree on `extensions` by design, and now visibly so: a
+folder walk filters, a directly-passed single file never does (`"A single
+file passed directly — no extension filter."`, `runner.py`). The same
+`.xlsx` file is silently read when named directly and recorded-and-skipped
+when reached by walking its parent — tested,
+`tests/test_privacy_shield_runner.py::test_folder_walk_and_direct_single_file_disagree_on_the_same_extension`.
+
+Not fixed, same shape, found while reading `_iter_files`: hidden
+files/directories and `__pycache__` are pruned from the walk with a bare
+`continue` (no `walk_errors` entry), and `if not path.is_file(): continue`
+silently drops any non-regular path — a broken symlink, a FIFO, a socket —
+with no record either. Both are a document going unaccounted for exactly the
+way the extension filter was; neither is exercised by the fix above.
