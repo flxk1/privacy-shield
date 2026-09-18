@@ -31,6 +31,13 @@ openai = ["openai>=1"]
 # limits document. The base package keeps dependencies = [] and the
 # regex/lexicon floor is correct without this.
 national = ["python-stdnum>=1.19"]
+# Freshness verdict for the hand-maintained national-number table
+# (privacy_shield/freshness.py). The pin and the observation are this package's
+# own and need nothing; norm-freshness turns them into a verdict. OFF unless
+# installed - `freshness.available()` is then False and the verdict is simply
+# not offered, while the staleness check itself still runs off `national`.
+# The base package keeps dependencies = [].
+freshness = ["norm-freshness"]
 # Config layer + tests. hypothesis drives the property-based half of the
 # leak invariant (tests/test_leak_invariant.py); the deterministic battery
 # in the same file runs without it. schwifty is the external IBAN registry
