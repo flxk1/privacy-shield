@@ -476,7 +476,7 @@ All numbers below are measured in **CI's environment**, which is
 
 ```
 python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
-969 passed, 8 failed, 4 skipped
+1051 passed, 8 failed, 4 skipped
 ```
 
 `--collect-only` reports 971 items; the run above reports 972 outcomes,
@@ -497,7 +497,7 @@ not ship; they fail identically on the tip before this round's changes.
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
 `.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 969 passed, 8 deselected.
+`tests` job runs 1051 passed, 8 deselected.
 
 ### The media paths' coverage, before and after
 
