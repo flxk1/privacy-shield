@@ -46,6 +46,12 @@ doc.egress_allowed     # the guard's verdict
 it exits `0` when every overlay clears, `2` when a document is blocked. Full
 signature, flags and stdin handling: [docs/cli.md](docs/cli.md).
 
+`egress_allowed` is a verdict on the source CLASS — privacy mode plus the
+confidential / professional-secrecy / special-category tiers — and not a
+certificate of zero residual. Gating on what survives in the overlay would clear
+an over-redacted privileged document, so the gate does not look there. What
+"cleared" does and does not cover: [docs/limits.md](docs/limits.md).
+
 ## Example
 
 ```

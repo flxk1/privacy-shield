@@ -25,14 +25,16 @@ governance:
     - { kind: allow_egress_of_a_blocked_source, by: workspace_owner }
   prohibited:
     - egress_original_unredacted_text
-    - present_cleared_as_a_zero_residual_guarantee
+    - claim_zero_residual_in_any_shipped_document
     - leak_the_value_placeholder_map
     - require_external_enforcement_on_default_path
   obligations:
     - only_the_overlay_egresses
     - value_placeholder_map_stays_local
     - every_decision_written_to_the_audit_trail
-    - gate_on_source_classification_not_overlay_residual
+    - disclaim_cleared_as_source_class_in_skill_readme_and_limits
+    - block_a_blocked_source_class_however_redacted
+    - clear_a_cleared_source_class_whatever_the_overlay_residual
     - degrade_gracefully_without_optional_extras
   redress:
     - { kind: recorded_override, by: workspace_owner, overturn: true }
@@ -70,5 +72,15 @@ path above — see `degrade_gracefully_without_optional_extras` below.
   redaction has already removed original values, and gating the overlay could let
   an over-redacted privileged document pass. "Cleared" = the source class may
   egress, not a certificate of zero residual.
+- Three of the norms above were reworded to be falsifiable, because a norm no
+  test can fail on is a promise in machine form and nothing else.
+  `gate_on_source_classification_not_overlay_residual` asked for proof that a
+  function never reads something, which cannot be tested; it is now the two
+  observable consequences — `block_a_blocked_source_class_however_redacted` and
+  `clear_a_cleared_source_class_whatever_the_overlay_residual`.
+  `present_cleared_as_a_zero_residual_guarantee` named a claim with no artefact;
+  it is now `claim_zero_residual_in_any_shipped_document` plus the positive
+  `disclaim_cleared_as_source_class_in_skill_readme_and_limits`. Each is held by
+  a test in `tests/test_governance_block_norms.py`.
 - The optional semantic (embeddings / local model) and document/media extraction
   layers require extras and degrade gracefully when absent.
