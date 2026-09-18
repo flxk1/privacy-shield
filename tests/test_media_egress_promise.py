@@ -1721,11 +1721,27 @@ def test_completeness_is_visible_in_the_serialised_report(tmp_path):
 
 
 def test_the_default_text_walk_is_not_affected_by_the_completeness_rule(tmp_path):
-    """The blast radius, measured rather than asserted.
+    """The blast radius, measured rather than asserted - and corrected.
 
     `DEFAULT_EXTENSIONS` carries no media extension, so an ordinary folder scan
-    never reaches a media file and its verdict is unchanged. The rule bites
-    exactly where media is actually scanned - a direct file, or `--all-files`.
+    never OPENS a media file - `photo.jpg` below is never passed to a PII
+    channel. That is not the same claim as "the verdict is unchanged": a
+    folder scan that skips a file because `extensions` was never passed by
+    the caller is an IMPOSED filter (`runner.scan`'s docstring,
+    `ScanReport.imposed_filtered_files`), and imposing a scope the caller did
+    not choose and cannot see into is not a clean result - the same shape as
+    an unreadable directory. This test used to assert the opposite
+    (`all_allowed is True`, `scan_complete is True`) and that assertion WAS
+    the defect this file's own "Completeness is part of the verdict" section
+    (above) exists to close for every other silent skip; a default folder
+    scan over a media file is not exempt from its own rule just because the
+    skip happens one layer up, in `_iter_files`'s extension filter rather than
+    a media channel.
+
+    The rule still bites harder where media is actually scanned - a direct
+    file, or `--all-files` / an explicit `extensions` - because a media file
+    reached that way is opened and can still have an INCOMPLETE channel
+    (`incomplete_documents`); here it is not opened at all.
     """
     from privacy_shield.runner import DEFAULT_EXTENSIONS, scan
 
@@ -1738,8 +1754,12 @@ def test_the_default_text_walk_is_not_affected_by_the_completeness_rule(tmp_path
 
     report = scan(folder)
     assert [Path(d.source).name for d in report.documents] == ["offer.txt"]
-    assert report.all_allowed is True
-    assert report.scan_complete is True
+    assert report.imposed_filtered_files, "photo.jpg was skipped without a trace"
+    assert report.all_allowed is False, (
+        "a folder scan that silently dropped a media file via the imposed "
+        "default extension filter was certified cleared for egress"
+    )
+    assert report.scan_complete is False
 
     assert scan("Kontakt max@example.com", force_text=True).scan_complete is True
 

@@ -9,10 +9,17 @@ document is blocked — so an agent or a human can gate on the result.
                                       [--redaction-mode redact|pseudonymize|hash|detect_only|block]
                                       [--min-confidence low|medium|high]
                                       [--out DIR] [--json] [--audit-log PATH]
-                                      [--no-recursive] [--all-files] [--text]
+                                      [--no-recursive] [--all-files]
+                                      [--extensions .txt,.csv] [--text]
 
 Exit codes: 0 = every overlay cleared for egress; 2 = at least one blocked;
 1 = usage / runtime error.
+
+``--all-files`` and ``--extensions`` are both a caller CHOICE at this
+boundary, the same as in :func:`~privacy_shield.runner.scan`: naming neither
+imposes ``DEFAULT_EXTENSIONS`` (a skip then counts against exit code 0, via
+``all_allowed``); naming either is a chosen scope (a skip is recorded but
+does not move the exit code). See ``ScanReport.all_allowed``.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from typing import List, Optional
 from ._legacy_env import reject_legacy_env
 from .redactor import RedactionMode
 from .utils.file_io import path_exists
-from .runner import DEFAULT_EXTENSIONS, ScanReport, scan
+from .runner import ScanReport, scan
 from .scanner import Confidence
 from .shield import PrivacyMode
 
@@ -45,6 +52,22 @@ def _safe_name(source: str) -> str:
     if source == "text_input":
         return "text_input"
     return source.strip("/").replace("/", "__").replace("\\", "__").lstrip(".") or "document"
+
+
+def _parse_extensions(value: str) -> frozenset:
+    """Turn a comma-separated ``--extensions`` value into a suffix frozenset.
+
+    A caller of the CLI who reaches this parses `.txt,csv` or `.TXT, .Csv`
+    into ``{".txt", ".csv"}`` - the leading dot is optional per entry, case
+    is folded to match ``path.suffix.lower()`` in the runner.
+    """
+    result = set()
+    for raw in value.split(","):
+        raw = raw.strip().lower()
+        if not raw:
+            continue
+        result.add(raw if raw.startswith(".") else f".{raw}")
+    return frozenset(result)
 
 
 def _write_overlays(report: ScanReport, out_dir: Path) -> List[Path]:
@@ -98,7 +121,19 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     mode = _MODES[args.mode]
     redaction_mode = _REDACTION_MODES[args.redaction_mode]
     min_confidence = _CONFIDENCE[args.min_confidence]
-    extensions = None if args.all_files else DEFAULT_EXTENSIONS
+
+    # `extensions` is only passed to `scan()` when the caller named a scope
+    # (`--all-files` or `--extensions`) - a CHOICE, at this boundary exactly
+    # as at the API's. Passing nothing at all leaves `scan()`'s own default
+    # unresolved, which is what makes it an IMPOSED filter, not a chosen one
+    # (see `runner.scan`'s docstring and `ScanReport.all_allowed`). Hardcoding
+    # `DEFAULT_EXTENSIONS` here for the no-flags case, as this used to, would
+    # forward it as an explicit choice and silently defeat that distinction.
+    scan_kwargs: dict = {}
+    if args.all_files:
+        scan_kwargs["extensions"] = None
+    elif args.extensions:
+        scan_kwargs["extensions"] = _parse_extensions(args.extensions)
 
     target = args.target
     force_text = args.text
@@ -119,11 +154,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         redaction_mode=redaction_mode,
         min_confidence=min_confidence,
         recursive=not args.no_recursive,
-        extensions=extensions,
         audit_log_path=args.audit_log,
         tenant_id=args.tenant_id,
         user_id=args.user_id,
         force_text=force_text,
+        **scan_kwargs,
     )
 
     written = _write_overlays(report, Path(args.out)) if args.out else None
@@ -193,6 +228,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--all-files",
         action="store_true",
         help="Consider every file, not just known text/document extensions.",
+    )
+    scan_p.add_argument(
+        "--extensions",
+        help=(
+            "Comma-separated file extensions to consider when walking a folder "
+            "(e.g. '.txt,.csv'), instead of the default text/document list. A "
+            "CHOSEN scope: a skipped file is recorded but does not affect the "
+            "exit code, unlike the imposed default. Mutually exclusive in "
+            "effect with --all-files (which wins if both are given)."
+        ),
     )
     scan_p.add_argument(
         "--text",

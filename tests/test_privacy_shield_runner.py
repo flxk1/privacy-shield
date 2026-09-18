@@ -284,64 +284,66 @@ def test_a_complete_folder_scan_is_still_certifiable(tmp_path):
 # a document goes unread - it must be recorded and it must not certify clean,
 # the same way an unreadable directory already does not.
 #
+# The line that decides `all_allowed` is not "was a filter applied" but "did
+# the caller choose it": a default the caller never named (`extensions` not
+# passed at all -> `DEFAULT_EXTENSIONS` IMPOSED) hides a file from someone
+# with no way to know it fell out, and that is not different in kind from an
+# unreadable directory. A filter the caller passed explicitly - including
+# `DEFAULT_EXTENSIONS` by hand - is CHOSEN: recorded, and it still clears
+# `scan_complete`, but it does not move `all_allowed`.
+#
 # These extensions are chosen independently of `runner.DEFAULT_EXTENSIONS` and
 # hardcoded: the point is observable behaviour (exit code, `all_allowed`,
 # `scan_complete`, the report entry), not agreement with the table the code
 # under test consults.
 # ---------------------------------------------------------------------------
-def test_extension_filtered_documents_are_recorded_and_break_completeness(tmp_path):
+def test_imposed_default_extension_filter_breaks_all_allowed(tmp_path):
+    """The reproduced case: no `extensions` argument at all."""
     root = tmp_path / "governed"
     root.mkdir()
     (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
     (root / "contact.eml").write_text(f"From: {FAKE_EMAIL}\n", encoding="utf-8")
 
-    report = scan(root, extensions=frozenset({".txt"}))
+    report = scan(root)  # extensions not passed - DEFAULT_EXTENSIONS imposed
 
     # Neither file was opened - a scan that never read them cannot report on
     # what they contain.
     assert report.document_count == 0
 
-    # The skip is RECORDED, distinguishably from an unreadable directory.
+    # The skip is RECORDED, distinguishably from an unreadable directory and
+    # from a CHOSEN filter.
     assert report.walk_errors, "a filtered-out file was not reported at all"
     assert report.filtered_files, "filtered_files did not surface the skip"
-    assert any("bank.xlsx" in e for e in report.filtered_files)
-    assert any("contact.eml" in e for e in report.filtered_files)
-    # And distinguishably TAGGED, so a caller can tell "skipped by filter"
-    # apart from "could not be read" within the same list.
-    from privacy_shield.runner import EXTENSION_FILTERED
+    assert report.imposed_filtered_files, "the imposed skip was not tagged as imposed"
+    assert report.chosen_filtered_files == []
+    assert any("bank.xlsx" in e for e in report.imposed_filtered_files)
+    assert any("contact.eml" in e for e in report.imposed_filtered_files)
+    from privacy_shield.runner import EXTENSION_FILTERED_DEFAULT
 
-    assert all(e.startswith(EXTENSION_FILTERED) for e in report.filtered_files)
+    assert all(e.startswith(EXTENSION_FILTERED_DEFAULT) for e in report.imposed_filtered_files)
 
-    # A scan that skipped files never reports itself complete - unconditionally,
-    # regardless of which way `all_allowed` decides below.
+    # A scan that skipped files never reports itself complete.
     assert report.scan_complete is False
-    # `all_allowed` takes the MILDER of the two variants this defect leaves
-    # open: `extensions` is a parameter, and a file skipped by it is not
-    # folded into "cleared for egress" the way an unreadable directory is.
-    # `unreadable_errors` (the OSError family) is empty here, so `all_allowed`
-    # is unaffected by the filter alone.
+    # An imposed filter the caller had no way to know about DOES break
+    # `all_allowed` - the caller asked for "the folder" and got less back,
+    # silently, the same shape as an unreadable directory.
     assert report.unreadable_errors == []
-    assert report.all_allowed is True
+    assert report.all_allowed is False
 
     payload = report.to_dict()
     assert payload["walk_errors"]
-    assert payload["filtered_files"]
+    assert payload["imposed_filtered_files"]
+    assert payload["chosen_filtered_files"] == []
     assert payload["scan_complete"] is False
-    assert payload["all_allowed"] is True
+    assert payload["all_allowed"] is False
 
 
-def test_extension_filtered_folder_is_reported_by_the_cli(tmp_path, temp_audit):
-    """The exact defect this closes: `scan --json` on such a folder used to
-    print `all_allowed = True | scan_complete = True | documents = 0` and
-    exit 0, with nothing anywhere in the report distinguishing it from an
-    empty, fully-read folder.
-
-    Under the milder `all_allowed` variant (see `ScanReport.all_allowed`) the
-    CLI exit code does not change here - it folds only `all_allowed`, not
-    `scan_complete`, and that fold is outside this fix's territory. What
-    closes the case is that the report is no longer silent: `scan_complete`
-    and `filtered_files` now say exactly what did not happen, where before
-    both were absent and `scan_complete` read True.
+def test_imposed_default_extension_filter_is_reported_by_the_cli_with_exit_2(tmp_path, temp_audit):
+    """The exact defect this closes, run through the real entry point:
+    `privacy-shield scan <folder> --json` on such a folder used to print
+    `all_allowed = True | scan_complete = True | documents = 0` and exit 0,
+    with nothing anywhere in the report distinguishing it from an empty,
+    fully-read folder. Reproduced and verified by the coordinator directly.
     """
     root = tmp_path / "governed"
     root.mkdir()
@@ -355,29 +357,95 @@ def test_extension_filtered_folder_is_reported_by_the_cli(tmp_path, temp_audit):
     with contextlib.redirect_stdout(out):
         code = cli.main(["scan", str(root), "--json"])
 
-    assert code == 0  # unchanged by this fix - see docstring
+    assert code == 2, "an imposed filter that skipped files exited 0"
     payload = json.loads(out.getvalue())
     assert payload["document_count"] == 0
-    assert payload["all_allowed"] is True
+    assert payload["all_allowed"] is False
     assert payload["scan_complete"] is False, (
         "the folder was reported complete though two files were never read"
     )
-    assert payload["filtered_files"], "the skip left no trace in the report"
+    assert payload["imposed_filtered_files"], "the skip left no trace in the report"
 
 
-def test_default_extensions_also_record_what_they_skip(tmp_path):
-    """The everyday case, not just an explicit `--extensions`: the default
-    filter (whatever it currently names) still leaves a record when it skips
-    a file, rather than a scan going quiet about it."""
+def test_chosen_extension_filter_is_recorded_but_does_not_break_all_allowed(tmp_path):
+    """The counterpart: the caller names a scope on purpose."""
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+    (root / "contact.eml").write_text(f"From: {FAKE_EMAIL}\n", encoding="utf-8")
+
+    report = scan(root, extensions=frozenset({".txt"}))
+
+    assert report.document_count == 0
+    assert report.chosen_filtered_files, "the chosen skip was not recorded"
+    assert report.imposed_filtered_files == []
+    from privacy_shield.runner import EXTENSION_FILTERED_CHOSEN
+
+    assert all(e.startswith(EXTENSION_FILTERED_CHOSEN) for e in report.chosen_filtered_files)
+
+    # Still incomplete - a scope decision is still a decision about what got
+    # looked at, not a claim the rest was read.
+    assert report.scan_complete is False
+    # But NOT less trustworthy about what it DID read: the caller knew the
+    # scope and excluded these files on purpose.
+    assert report.unreadable_errors == []
+    assert report.all_allowed is True
+
+
+def test_chosen_extension_filter_via_the_cli_exits_0(tmp_path, temp_audit):
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+    (root / "contact.eml").write_text(f"From: {FAKE_EMAIL}\n", encoding="utf-8")
+    (root / "notes.txt").write_text("kein Fund", encoding="utf-8")
+
+    import io
+    import contextlib
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["scan", str(root), "--extensions", ".txt", "--json"])
+
+    assert code == 0
+    payload = json.loads(out.getvalue())
+    assert payload["document_count"] == 1
+    assert payload["all_allowed"] is True
+    assert payload["scan_complete"] is False
+    assert payload["chosen_filtered_files"]
+    assert payload["imposed_filtered_files"] == []
+
+
+def test_naming_default_extensions_explicitly_is_still_a_choice(tmp_path):
+    """The trap: an identity check (`extensions is DEFAULT_EXTENSIONS`) would
+    misclassify a caller who names the default set by hand as "did not
+    choose". A caller who writes the words `extensions=DEFAULT_EXTENSIONS`
+    knows exactly what that excludes."""
+    from privacy_shield.runner import DEFAULT_EXTENSIONS
+
     root = tmp_path / "governed"
     root.mkdir()
     (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
 
-    report = scan(root)  # extensions defaults to DEFAULT_EXTENSIONS
+    report = scan(root, extensions=DEFAULT_EXTENSIONS)  # same value, explicit
 
-    assert report.document_count == 0
-    assert report.filtered_files
-    assert report.scan_complete is False
+    assert report.chosen_filtered_files, "an explicit DEFAULT_EXTENSIONS was treated as imposed"
+    assert report.imposed_filtered_files == []
+    assert report.all_allowed is True
+
+
+def test_all_files_disables_filtering_entirely(tmp_path):
+    """`extensions=None` (`--all-files`) is also a caller CHOICE - it just
+    happens to choose "everything", so nothing is ever skipped by it."""
+    root = tmp_path / "governed"
+    root.mkdir()
+    (root / "bank.xlsx").write_text(f"IBAN: {FAKE_IBAN}\n", encoding="utf-8")
+
+    report = scan(root, extensions=None)
+
+    assert report.document_count == 1
+    assert report.filtered_files == []
+    assert report.walk_errors == []
+    assert report.all_allowed is True
 
 
 # ---------------------------------------------------------------------------
@@ -406,10 +474,10 @@ def test_folder_walk_and_direct_single_file_disagree_on_the_same_extension(tmp_p
 
 
 def test_an_unreadable_directory_still_breaks_all_allowed_alongside_a_filtered_file(tmp_path):
-    """The two `walk_errors` reasons stay independently effective when they
-    co-occur: the involuntary one (`unreadable_errors`) still kills
-    `all_allowed`; the voluntary one (`filtered_files`) still does not, on its
-    own."""
+    """The three `walk_errors` reasons stay independently effective when they
+    co-occur: the involuntary one (`unreadable_errors`) and the imposed one
+    (`imposed_filtered_files`) both kill `all_allowed`; a chosen filter still
+    does not, on its own."""
     import os
 
     root = tmp_path / "governed"
@@ -421,7 +489,7 @@ def test_an_unreadable_directory_still_breaks_all_allowed_alongside_a_filtered_f
     os.chmod(locked, 0o000)
     try:
         report = scan(root, extensions=frozenset({".txt"}))
-        assert report.filtered_files, "the extension skip was not recorded"
+        assert report.chosen_filtered_files, "the extension skip was not recorded"
         assert report.unreadable_errors, "the locked directory was not recorded"
         assert report.scan_complete is False
         assert report.all_allowed is False, (

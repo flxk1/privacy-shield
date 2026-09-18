@@ -54,20 +54,40 @@ DEFAULT_EXTENSIONS = frozenset({
     ".pdf", ".docx", ".doc", ".rtf",
 })
 
-# Tag for a file the walk saw and chose not to read because its suffix is not
-# in `extensions` - as opposed to a directory/file `os.walk` could not read at
-# all (an OSError entry, the rest of `walk_errors`). Both leave a document
-# unread, but they are different facts and a caller must be able to tell them
-# apart. One string, so a caller can grep for it, same mechanism as
+# Sentinel for "the caller did not pass `extensions` at all", distinct from
+# every value a caller COULD pass - including `None` (no filter) and
+# `DEFAULT_EXTENSIONS` itself, passed explicitly. `extensions: ... =
+# DEFAULT_EXTENSIONS` could not tell those apart: a caller who names
+# `DEFAULT_EXTENSIONS` on purpose has chosen a scope and knows what it
+# excludes; a caller who passes nothing gets that scope IMPOSED and does not
+# know a `.xlsx` fell out of it. `scan()` resolves this sentinel to
+# `DEFAULT_EXTENSIONS` internally; the distinction it carries lives on in
+# `ScanReport.imposed_filtered_files` vs. `chosen_filtered_files`.
+_UNSET_EXTENSIONS = object()
+
+# Tag prefix for a file the walk saw and chose not to read because its suffix
+# is not in `extensions` - as opposed to a directory/file `os.walk` could not
+# read at all (an OSError entry, the rest of `walk_errors`). Both leave a
+# document unread, but they are different facts and a caller must be able to
+# tell them apart. One string, so a caller can grep for it, same mechanism as
 # `media._tools.CHANNEL_UNAVAILABLE`:
 # `any(e.startswith(EXTENSION_FILTERED) for e in walk_errors)`.
+#
+# Two further-tagged variants distinguish WHY the filter applied - an
+# `extensions` the caller never passed (`DEFAULT_EXTENSIONS`, imposed) from
+# one the caller passed explicitly (chosen, including passing
+# `DEFAULT_EXTENSIONS` by name). See `ScanReport.all_allowed`: only the
+# imposed case affects it.
 EXTENSION_FILTERED = "extension_filtered"
+EXTENSION_FILTERED_DEFAULT = f"{EXTENSION_FILTERED}_default"
+EXTENSION_FILTERED_CHOSEN = f"{EXTENSION_FILTERED}_chosen"
 
 
-def _filtered_entry(path: Path) -> str:
+def _filtered_entry(path: Path, *, chosen: bool) -> str:
     """The `walk_errors` string for a file skipped by the extension filter."""
+    tag = EXTENSION_FILTERED_CHOSEN if chosen else EXTENSION_FILTERED_DEFAULT
     suffix = path.suffix.lower() or "<none>"
-    return f"{EXTENSION_FILTERED}: {path}: suffix {suffix} not in extensions"
+    return f"{tag}: {path}: suffix {suffix} not in extensions"
 
 
 @dataclass
@@ -169,12 +189,13 @@ class ScanReport:
     root: str
     documents: List[DocumentScan] = field(default_factory=list)
     #: Directories/files the walk could not read, AND files the walk read but
-    #: chose not to open because `extensions` did not name their suffix. Both
-    #: leave a document unaccounted for, so both live in the same list and
-    #: both make the document list INCOMPLETE. They are still distinguishable:
-    #: an extension-skip is tagged `EXTENSION_FILTERED` (see `filtered_files`);
-    #: everything else in this list is a directory/file the walk could not
-    #: read at all.
+    #: chose not to open because `extensions` did not name their suffix. All
+    #: three leave a document unaccounted for, so all three live in the same
+    #: list and all three make the document list INCOMPLETE. They are still
+    #: distinguishable: an extension-skip is tagged `EXTENSION_FILTERED_
+    #: DEFAULT` or `EXTENSION_FILTERED_CHOSEN` (see `imposed_filtered_files` /
+    #: `chosen_filtered_files`); everything else in this list is a
+    #: directory/file the walk could not read at all (`unreadable_errors`).
     walk_errors: List[str] = field(default_factory=list)
 
     @property
@@ -185,21 +206,43 @@ class ScanReport:
     def filtered_files(self) -> List[str]:
         """`walk_errors` entries for files skipped by the extension filter.
 
-        Distinct from the rest of `walk_errors`: those are a file/directory
-        the walk could not read; these were readable and the walk chose not
-        to read them because of `extensions`. A caller that wants to tell
-        "skipped by filter" apart from "unreadable" reads this and
-        `unreadable_errors` against it.
+        The union of `imposed_filtered_files` and `chosen_filtered_files` -
+        every extension-skip regardless of why. Distinct from the rest of
+        `walk_errors` (`unreadable_errors`): those are a file/directory the
+        walk could not read; these were readable and the walk chose not to
+        read them because of `extensions`.
         """
         return [e for e in self.walk_errors if str(e).startswith(EXTENSION_FILTERED)]
+
+    @property
+    def imposed_filtered_files(self) -> List[str]:
+        """Files skipped by `DEFAULT_EXTENSIONS` because the caller passed
+        no `extensions` at all.
+
+        The caller did not choose this scope and does not know what fell out
+        of it - the case that hits an ordinary user. This is what makes
+        `all_allowed` False alongside `unreadable_errors`; see its docstring.
+        """
+        return [e for e in self.walk_errors if str(e).startswith(EXTENSION_FILTERED_DEFAULT)]
+
+    @property
+    def chosen_filtered_files(self) -> List[str]:
+        """Files skipped by an `extensions` the caller passed explicitly.
+
+        Includes a caller who names `DEFAULT_EXTENSIONS` by hand - that is
+        still a choice, not an imposition. Recorded, and makes
+        `scan_complete` False like everything else in `walk_errors`, but
+        does NOT affect `all_allowed` on its own.
+        """
+        return [e for e in self.walk_errors if str(e).startswith(EXTENSION_FILTERED_CHOSEN)]
 
     @property
     def unreadable_errors(self) -> List[str]:
         """`walk_errors` entries the walk could not read at all.
 
         The complement of `filtered_files` within `walk_errors`: a
-        directory/file `os.walk` raised on, not one the caller's own
-        `extensions` chose to skip.
+        directory/file `os.walk` raised on, not one `extensions` (imposed or
+        chosen) skipped.
         """
         return [e for e in self.walk_errors if not str(e).startswith(EXTENSION_FILTERED)]
 
@@ -239,24 +282,29 @@ class ScanReport:
         exactly that. Completeness lives here, next to ``walk_errors``, and in
         ``DocumentScan.scan_complete``.
 
-        NOT False, on its own, when a file was skipped by the `extensions`
-        filter - that only clears `scan_complete`, unconditionally (see its
-        docstring). `extensions` is a parameter, not a failure: a caller who
-        passes `--extensions .txt` (or leaves the STANDARD-mode default)
-        chose a scope, and choosing a scope is not the same fact as a
-        directory the walk could not enter. Folding the two into one bool
-        would make `all_allowed=True` mean "the scope I asked for is clear"
-        for a chosen filter and "everything is clear" for an unreadable
-        directory, under the same name - two different promises a caller
-        cannot tell apart from the bool alone. `filtered_files` is where the
-        scope narrowing surfaces; `scan_complete` is where a caller who wants
-        "did this touch everything, chosen scope or not" reads it, and it
-        never says yes when a file was skipped. A caller that wants "cleared
-        AND I looked at everything, no exceptions" checks both properties, not
-        one folded bool - the same way `blocked_documents` and
-        `incomplete_documents` are already two separate reads today.
+        False, equally, when `extensions` skipped a file and the caller did
+        not choose that scope - `imposed_filtered_files` non-empty. The line
+        is not "was a filter applied" but "did the caller know". A default
+        the caller never named (`DEFAULT_EXTENSIONS`, applied because
+        `extensions` was not passed) hides a `.xlsx` from someone who has no
+        way to know it fell out - the ordinary, no-flags scan. That is not
+        different in kind from an unreadable directory: the caller asked for
+        "the folder" in both cases and got less than that back, silently.
+
+        NOT False, on its own, when the caller passed `extensions` explicitly
+        - `chosen_filtered_files` non-empty, `imposed_filtered_files` empty.
+        That still clears `scan_complete`, unconditionally (see its
+        docstring): a scope decision is still a decision about what got
+        looked at, not a claim that the rest was read. But it does not clear
+        `all_allowed`, because a caller who names a scope - `--extensions
+        .txt`, or `DEFAULT_EXTENSIONS` by hand - knows what it excludes, the
+        same way a caller reading `blocked_documents` already knows a
+        specific document was excluded from the aggregate without that
+        exclusion being folded into `scan_complete`. A caller that wants
+        "cleared AND every file in the scope I chose was read" checks
+        `chosen_filtered_files` and `all_allowed` together, not one bool.
         """
-        if self.unreadable_errors:
+        if self.unreadable_errors or self.imposed_filtered_files:
             return False
         return all(d.egress_allowed and d.scan_complete for d in self.documents)
 
@@ -275,6 +323,8 @@ class ScanReport:
             "scan_complete": self.scan_complete,
             "walk_errors": self.walk_errors,
             "filtered_files": self.filtered_files,
+            "imposed_filtered_files": self.imposed_filtered_files,
+            "chosen_filtered_files": self.chosen_filtered_files,
             "incomplete_documents": [d.source for d in self.incomplete_documents],
             "documents": [d.to_dict() for d in self.documents],
         }
@@ -285,19 +335,21 @@ def _iter_files(
     *,
     recursive: bool,
     extensions: Optional[frozenset],
+    extensions_chosen: bool,
 ) -> List[Path]:
     """Collect candidate document files under *root*, and what went unread.
 
     Returns ``(files, unread)``. The second value is not decoration: a folder
     scan that silently skipped part of the tree must not be reported as a
     clean result, so ``ScanReport.scan_complete`` is False whenever it is
-    non-empty. It carries two different facts, tagged apart
-    (``EXTENSION_FILTERED`` vs. everything else — see ``ScanReport.
-    filtered_files`` / ``unreadable_errors``): a file the walk could not read
-    at all, and a file the walk read the directory entry for but did not open
-    because ``extensions`` did not name its suffix. Both are a document that
-    went unaccounted for and both clear ``scan_complete``; only the former
-    also clears ``ScanReport.all_allowed`` (see its docstring for why).
+    non-empty. It carries three different facts, tagged apart (see
+    ``ScanReport.unreadable_errors`` / ``imposed_filtered_files`` /
+    ``chosen_filtered_files``): a file the walk could not read at all; a file
+    skipped by ``DEFAULT_EXTENSIONS`` because the caller passed no
+    ``extensions`` (*imposed* - the caller does not know what fell out); and
+    a file skipped by an ``extensions`` the caller passed explicitly
+    (*chosen*). All three clear ``scan_complete``; only the first two also
+    clear ``ScanReport.all_allowed`` (see its docstring for why).
 
     This used to call ``rglob`` and catch OSError around ``next()``. A
     generator that raises is finished - the following ``next()`` raises
@@ -340,7 +392,7 @@ def _iter_files(
                 _record(error)
                 continue
             if extensions is not None and path.suffix.lower() not in extensions:
-                unread.append(_filtered_entry(path))
+                unread.append(_filtered_entry(path, chosen=extensions_chosen))
                 continue
             files.append(path)
 
@@ -432,7 +484,7 @@ def scan(
     redaction_mode: RedactionMode = RedactionMode.REDACT,
     min_confidence: Confidence = Confidence.MEDIUM,
     recursive: bool = True,
-    extensions: Optional[frozenset] = DEFAULT_EXTENSIONS,
+    extensions: Optional[frozenset] = _UNSET_EXTENSIONS,  # type: ignore[assignment]
     audit_log_path: Optional[str] = None,
     tenant_id: str = "",
     user_id: str = "",
@@ -455,12 +507,25 @@ def scan(
     The result carries, per document, the clean overlay, the per-span findings,
     and the egress verdict; and, in aggregate, ``all_allowed``.
 
+    ``extensions`` defaults to nothing being passed at all, which is not the
+    same as passing ``DEFAULT_EXTENSIONS``: not passing it means that default
+    scope is IMPOSED on the caller (who does not know what it excludes) and
+    counts against ``ScanReport.all_allowed`` when it skips a file; naming
+    ``extensions`` explicitly - including ``DEFAULT_EXTENSIONS`` by hand, or
+    ``None`` for every file - means the caller CHOSE that scope, and a skip
+    is recorded (``ScanReport.chosen_filtered_files``, ``scan_complete``
+    still goes False) without moving ``all_allowed``. See
+    ``ScanReport.all_allowed`` for the full reasoning.
+
     No host implementation is imported and no enforcement sink is attached; the gate decides
     locally. Honours the four privacy modes (STANDARD, LOCAL_ONLY,
     ANONYMOUS_JSON, REGEX_ONLY): LOCAL_ONLY blocks every external egress, and the
     global privacy mode is set for the duration so the gate honours it, then
     restored.
     """
+    extensions_chosen = extensions is not _UNSET_EXTENSIONS
+    if not extensions_chosen:
+        extensions = DEFAULT_EXTENSIONS
     reject_legacy_env()
     shield = PrivacyShield(
         mode=redaction_mode,
@@ -500,7 +565,8 @@ def scan(
             if path.is_dir():
                 root_label = str(path)
                 walked, unread = _iter_files(
-                    path, recursive=recursive, extensions=extensions
+                    path, recursive=recursive, extensions=extensions,
+                    extensions_chosen=extensions_chosen,
                 )
                 walk_errors.extend(unread)
                 for file_path in walked:
@@ -544,4 +610,6 @@ __all__ = [
     "SpanFinding",
     "DEFAULT_EXTENSIONS",
     "EXTENSION_FILTERED",
+    "EXTENSION_FILTERED_DEFAULT",
+    "EXTENSION_FILTERED_CHOSEN",
 ]

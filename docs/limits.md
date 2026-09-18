@@ -1020,27 +1020,48 @@ document goes unread — an unreadable directory (`walk_errors`) and an
 unavailable media channel (`incomplete_documents`) — already broke both
 flags; this one broke neither.
 
-The skip is now recorded in `walk_errors`, tagged `EXTENSION_FILTERED`
-(`ScanReport.filtered_files`) so it reads apart from an `OSError` entry
-(`ScanReport.unreadable_errors`). `scan_complete` is False whenever
-`walk_errors` is non-empty for either reason, unconditionally — including a
-filter the caller chose on purpose (`--extensions .txt`): a scope decision is
-still a decision about what got looked at, not a claim that the rest was
-read. `all_allowed` took the milder of the two variants this left open: it is
-False for an entry in `unreadable_errors` (the walk could not read something)
-and unaffected by a `filtered_files` entry alone (the caller chose the
-scope). Tested:
-`tests/test_privacy_shield_runner.py::test_extension_filtered_documents_are_recorded_and_break_completeness`,
-`::test_extension_filtered_folder_is_reported_by_the_cli`,
-`::test_default_extensions_also_record_what_they_skip`.
+The skip is now recorded in `walk_errors`, tagged `EXTENSION_FILTERED_DEFAULT`
+or `EXTENSION_FILTERED_CHOSEN` so it reads apart from an `OSError` entry
+(`ScanReport.unreadable_errors` / `imposed_filtered_files` /
+`chosen_filtered_files` / `filtered_files`, the union). `scan_complete` is
+False whenever `walk_errors` is non-empty for any reason, unconditionally —
+including a filter the caller chose on purpose (`--extensions .txt`): a scope
+decision is still a decision about what got looked at, not a claim that the
+rest was read.
 
-That milder choice was not free: `tests/test_media_egress_promise.py::test_the_default_text_walk_is_not_affected_by_the_completeness_rule`
+`all_allowed` splits on a line that is not "was a filter applied" but "did the
+caller choose it". `extensions` not passed at all resolves to
+`DEFAULT_EXTENSIONS` **imposed** on the caller, who has no way to know a
+`.xlsx` fell out of an ordinary, no-flags scan — the case that hits a real
+user, and `all_allowed` is False for it, the same as an unreadable directory.
+`extensions` passed explicitly — `--extensions .txt`, or `DEFAULT_EXTENSIONS`
+named by hand — is **chosen**: recorded, `scan_complete` still goes False, but
+`all_allowed` is unaffected, because the caller already knows what that scope
+excludes. The signature could not use `extensions is DEFAULT_EXTENSIONS` to
+tell the two apart — a caller who names `DEFAULT_EXTENSIONS` explicitly would
+misclassify as "not chosen" — so `extensions` defaults to a private sentinel,
+resolved to `DEFAULT_EXTENSIONS` only after the imposed/chosen split is
+already decided. The CLI carries the same split across its boundary: no flag
+imposes the default; `--all-files` or the new `--extensions` flag chooses a
+scope. Tested:
+`tests/test_privacy_shield_runner.py::test_imposed_default_extension_filter_breaks_all_allowed`,
+`tests/test_privacy_shield_runner.py::test_imposed_default_extension_filter_is_reported_by_the_cli_with_exit_2`,
+`tests/test_privacy_shield_runner.py::test_chosen_extension_filter_is_recorded_but_does_not_break_all_allowed`,
+`tests/test_privacy_shield_runner.py::test_chosen_extension_filter_via_the_cli_exits_0`,
+`tests/test_privacy_shield_runner.py::test_naming_default_extensions_explicitly_is_still_a_choice`,
+`tests/test_privacy_shield_runner.py::test_all_files_disables_filtering_entirely`.
+
+An earlier round of this fix took the milder reading throughout — `all_allowed`
+unaffected by any extension skip, chosen or not — because
+`tests/test_media_egress_promise.py::test_the_default_text_walk_is_not_affected_by_the_completeness_rule`
 already asserted `all_allowed is True` **and** `scan_complete is True` for a
-default folder scan that silently skipped a `.jpg` — the exact blind spot
-above, pinned as a passing test one file over. Its `all_allowed` assertion
-still holds under the milder variant; its `scan_complete` assertion does not,
-because `scan_complete` has no milder variant here — and that file is outside
-this fix's territory, so the conflict is recorded, not resolved in place.
+default folder scan that silently skipped a `.jpg`, and that file was outside
+the fix's declared territory. Reported rather than resolved in place, per
+that boundary. The owner drew the imposed/chosen line instead and granted
+that one test into territory; its assertions and docstring are corrected to
+the line above (`all_allowed is False`, `scan_complete is False`) — it was the
+same blind spot this section closes, encoded as a passing assertion, not its
+rebuttal.
 
 Two entry points disagree on `extensions` by design, and now visibly so: a
 folder walk filters, a directly-passed single file never does (`"A single
