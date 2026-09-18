@@ -219,9 +219,11 @@ trees — pin the major version.
   defeats Luhn — that is what Luhn is for. A `credit_card` pattern match no
   checksum accepts is now kept at MEDIUM with `checksum_validated=False`:
   redacted by default and unable to outrank anything, because the rank rule
-  asks the finding rather than its type. It is NOT filtered out at
-  `min_confidence=HIGH`: that filter reads the pattern's declared confidence,
-  and the demotion happens after it.
+  asks the finding rather than its type. It was NOT filtered out at
+  `min_confidence=HIGH`, because that filter read the pattern's declared
+  confidence and the demotion happens after it — **fixed since; see the entry
+  above.** This sentence is left standing rather than trimmed, so the sequence
+  is readable: a claim, its correction, and then the behaviour made true.
   Tested: `tests/test_privacy_shield_regex_only.py::test_a_labelled_card_with_one_transcription_typo_is_still_claimed`,
   `::test_a_card_shape_cannot_outrank_a_checksum`.
 - **Four defects in the optional national layer, and a fifth in its speed.**
