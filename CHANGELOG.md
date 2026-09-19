@@ -6,6 +6,22 @@
 
 ### Breaking changes
 
+- Serialised findings no longer carry the ORIGINAL text by default.
+  `SpanFinding.to_dict()`, `DocumentScan.to_dict()`, `ScanReport.to_dict()`,
+  `scanner.Finding.to_dict()` and `scanner.ScanResult.to_dict()` gained a
+  keyword-only `include_original=False`, and omit `value` / `context` unless
+  it is passed. `scan --json` omits them too; `--include-original-values`
+  restores them. The values stay on the objects, so in-process telemetry is
+  unchanged -- only the serialised form defaults closed. The reason is the
+  skill's own `prohibited: egress_original_unredacted_text`: `SKILL.md` grants
+  `Bash(privacy-shield:*)`, and in a skill context stdout IS the model's
+  context, so `--json` carrying the original put it one pipe from an external
+  model. Both surfaces moved together; fixing only the CLI would have left the
+  prohibited kind live one call away in `ScanResult.to_dict`. Tested:
+  `tests/test_serialised_original_boundary.py::test_the_serialised_report_carries_no_original_by_default`,
+  `::test_the_serialised_report_is_invariant_under_the_original_values`,
+  `::test_the_scanner_path_has_the_same_default`,
+  `::test_the_cli_only_prints_the_original_when_asked`.
 - `ScanReport.walk_errors` changed type: `List[str]` -> `List[WalkError]`
   (`WalkError` is `(kind: WalkErrorKind, message: str)`, `str(entry)` still
   gives the old message text). A consumer that did `"; ".join(report.

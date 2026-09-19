@@ -60,7 +60,16 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
                                   [--min-confidence low|medium|high]
                                   [--audit-log PATH] [--no-recursive]
                                   [--all-files | --extensions .txt,.csv] [--text]
+                                  [--include-original-values]
 ```
+
+`--json` reports each finding by type, position, confidence and layer, and
+**not** by its original text. `--include-original-values` adds `value` and
+`context` back. The default is closed because stdout is not always a terminal:
+`SKILL.md` grants `Bash(privacy-shield:*)`, and under that grant stdout is the
+model's context, which would put the original one pipe from an external
+service — the act this package's governance block prohibits. Ask for it when a
+person is reading the output; leave it off when a program is.
 
 `--all-files` and `--extensions` are both a caller CHOICE, at the CLI
 boundary exactly as at `scan()`'s: naming neither imposes `DEFAULT_EXTENSIONS`
