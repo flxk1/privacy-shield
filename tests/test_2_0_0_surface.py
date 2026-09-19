@@ -83,6 +83,25 @@ EXTRA_IMPORT_NAMES = frozenset(
 #: unimportable, whatever is installed, so the check does not depend on the
 #: environment it runs in. This is what lets a developer with the full dev
 #: extra reproduce the base-install CI job locally.
+#:
+#: `sys.path.insert(0, REPO_ROOT/"src")` FIRST, unconditionally: this runs in
+#: a brand-new child process that does not inherit pytest's `pythonpath` ini
+#: patch (that only touches the parent process's `sys.path`), so without this
+#: `import privacy_shield` here resolves through the ambient PYTHONPATH and
+#: site-packages exactly like any other Python invocation - and on a machine
+#: with no per-checkout virtualenv, site-packages can hold a build from
+#: BEFORE this worktree's own fix (a sibling session's `pip install .`, or an
+#: earlier run in this same one). Measured: with this line absent, every
+#: `_probe` call below silently exercised whatever was last `pip install`ed
+#: system-wide - `national.PERSON_NUMBER_MODULES["be"]` printed the
+#: PRE-REPAIR tuple while this file's own `import privacy_shield` at module
+#: level correctly saw the worktree, because that import runs in THIS
+#: process, which pytest's `pythonpath` ini option does patch.
+_SRC_ON_PATH = (
+    "import sys\n"
+    f"sys.path.insert(0, {str(REPO_ROOT / 'src')!r})\n"
+)
+
 _BLOCK_EXTRAS = (
     "import sys\n"
     f"_blocked = {sorted(EXTRA_IMPORT_NAMES)!r}\n"
@@ -101,12 +120,14 @@ _BLOCK_EXTRAS = (
 
 
 def _probe(body: str) -> str:
-    """Run *body* in a subprocess where every optional extra is unimportable."""
+    """Run *body* in a subprocess where every optional extra is unimportable
+    and `privacy_shield` resolves to THIS worktree, not whatever else might
+    be installed."""
     import subprocess
     import sys
 
     result = subprocess.run(
-        [sys.executable, "-c", _BLOCK_EXTRAS + body],
+        [sys.executable, "-c", _SRC_ON_PATH + _BLOCK_EXTRAS + body],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, (
@@ -114,6 +135,43 @@ def _probe(body: str) -> str:
         f"{result.stdout}\n{result.stderr}"
     )
     return result.stdout.strip()
+
+
+def test_the_probe_subprocess_resolves_the_worktree_not_a_stale_install(tmp_path):
+    """The regression this file's own subprocess design was exposed to.
+
+    `_probe` launches a NEW process; `import privacy_shield` inside it does
+    not inherit pytest's `pythonpath` patch, so on a machine with no
+    per-checkout virtualenv it fell back to the ambient PYTHONPATH / site-
+    packages - a build from BEFORE this checkout's own fix, if one happens to
+    be installed there. Simulated deterministically here with a decoy package
+    on `PYTHONPATH`, rather than depending on whatever this machine's
+    site-packages actually contains right now.
+    """
+    import os
+    import subprocess
+    import sys
+
+    decoy_root = tmp_path / "decoy"
+    (decoy_root / "privacy_shield").mkdir(parents=True)
+    (decoy_root / "privacy_shield" / "__init__.py").write_text(
+        "DECOY = True\n", encoding="utf-8"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(decoy_root)
+
+    result = subprocess.run(
+        [sys.executable, "-c", _SRC_ON_PATH + (
+            "import privacy_shield\n"
+            "print(getattr(privacy_shield, 'DECOY', False))\n"
+        )],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False", (
+        "the probe subprocess imported a decoy package ahead of the "
+        "worktree - _SRC_ON_PATH construction regressed"
+    )
 
 
 def test_the_package_imports_with_every_optional_extra_absent():
