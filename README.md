@@ -14,14 +14,19 @@ Sending a document to a cloud model sends every personal value in it. Detection 
 pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
 ```
 
-Zero required dependencies. Extras: `[national]` python-stdnum (22 check-digit
-validators for EU national person numbers; off unless a country is configured,
-and about one spurious finding per three documents with every country enabled —
-scope it to your own and measure, see
-[docs/limits.md](docs/limits.md)), `[semantic]` numpy>=1.24 +
+Zero required dependencies. Extras: `[national]` python-stdnum>=1.19 (23
+check-digit validator modules across 21 EU countries for national person
+numbers; off unless a country is configured, and about one spurious finding
+per three documents with every country enabled — scope it to your own and
+measure, see [docs/limits.md](docs/limits.md)), `[freshness]` norm-freshness
+(a staleness verdict for the `[national]` table against whatever
+`python-stdnum` is installed; off unless both are present — see
+`privacy_shield/freshness.py`; not on PyPI as of this writing, only
+`[national]` is installable from PyPI today), `[semantic]` numpy>=1.24 +
 onnxruntime>=1.16 (embeddings/shadow ONNX), `[extract]` PyMuPDF>=1.23 +
 opencv-python-headless>=4.8 (PDF/image, PyMuPDF AGPL), `[openai]` openai>=1
-(local-model client), `[dev]` pyyaml>=6 + pytest>=7.
+(local-model client), `[dev]` pyyaml>=6 + pytest>=7 + hypothesis>=6 +
+schwifty>=2024 + python-stdnum>=1.19.
 
 State lands outside the package in `<user-state>/privacy-shield/`:
 `logs/audit.jsonl` and `privacy_skill_kg/`, lazy-made. User-state is

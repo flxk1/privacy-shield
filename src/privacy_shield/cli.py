@@ -109,6 +109,29 @@ def _print_human(report: ScanReport, written: Optional[List[Path]]) -> None:
         if doc.audit_id:
             out.write(f"    audit_id: {doc.audit_id}\n")
     out.write("-" * 72 + "\n")
+    # UNCONDITIONAL - not gated on `all_allowed`. A CHOSEN `--extensions`
+    # scope that excludes real files is not a defect in `all_allowed` (the
+    # caller asked for that scope, on purpose, and the contract that a
+    # chosen filter does not move `all_allowed` is correct and tested
+    # elsewhere) - but it was invisible in this printer's OTHER output too:
+    # `--extensions .txtt` (a typo) or `--extensions ,` (an empty scope)
+    # matched nothing, printed `documents: 0  all_allowed: True`, and named
+    # neither file anywhere, indistinguishable from an empty, fully-read
+    # folder. `chosen_filtered_files` held both the whole time; nothing
+    # printed it because the entire cause block below only runs when
+    # `all_allowed` is False, and a chosen filter is exactly the case where
+    # it stays True. This is the ALLOWING-side counterpart to the block
+    # below, not a duplicate of it - `imposed_filtered_files` and
+    # `unreadable_errors` still only appear under "not all_allowed".
+    if report.chosen_filtered_files:
+        out.write(
+            f"skipped by the extensions scope you chose "
+            f"({len(report.chosen_filtered_files)} file(s); this does NOT "
+            f"count against all_allowed - check the scope if that's not "
+            f"what you meant):\n"
+        )
+        for entry in report.chosen_filtered_files:
+            out.write(f"    - {entry}\n")
     if written:
         out.write(f"overlays written: {len(written)} -> {written[0].parent}\n")
     if not report.all_allowed:

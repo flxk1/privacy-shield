@@ -2,6 +2,98 @@
 <!-- Copyright 2026 flxk1 -->
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- `ScanReport.walk_errors` changed type: `List[str]` -> `List[WalkError]`
+  (`WalkError` is `(kind: WalkErrorKind, message: str)`, `str(entry)` still
+  gives the old message text). A consumer that did `"; ".join(report.
+  walk_errors)` needs `str(e) for e in report.walk_errors`, or better,
+  `report.unreadable_errors` / `imposed_filtered_files` /
+  `chosen_filtered_files`, which already return plain strings. The old type
+  classified imposed/chosen/unreadable by `str.startswith` on the message,
+  which an OS-reported filename could coincidentally satisfy for the WRONG
+  tag; `kind` is now a field set once by the branch of the walk that produced
+  the entry and is never re-derived from the message. Tested:
+  `tests/test_privacy_shield_runner.py::test_an_unreadable_directory_named_like_a_filter_tag_is_not_misclassified`,
+  `::test_walk_error_kind_is_set_by_the_branch_not_read_from_the_message`.
+- `ScanReport.to_dict()["walk_errors"]` changed shape: a list of strings ->
+  a list of `{"kind", "message"}` objects, `kind` one of `unreadable` /
+  `filtered_default` / `filtered_chosen`. Flattening to strings threw `kind`
+  away at exactly the boundary (JSON, an agent or a shell script) `WalkError`
+  itself says not to re-derive it at. A new top-level `"unreadable_errors"`
+  key carries the plain-string form for a consumer that only wants that.
+  Tested: `tests/test_privacy_shield_runner.py::test_json_walk_errors_keep_kind_a_consumer_must_not_reconstruct`.
+
+### Additions
+
+- `scan()` gained `extensions` (keyword-only) and the CLI gained
+  `--extensions .txt,.csv` / `--all-files`: which file suffixes a folder walk
+  reads. Not passing `extensions` at all IMPOSES `DEFAULT_EXTENSIONS` (the
+  caller does not know what it excludes, and a skipped file counts against
+  `ScanReport.all_allowed` / exit code `2`); passing it explicitly — CHOSEN,
+  including naming `DEFAULT_EXTENSIONS` by hand, or `None` for every file —
+  records the skip (`chosen_filtered_files`) without moving `all_allowed`.
+  Tested: `tests/test_privacy_shield_runner.py::test_imposed_default_extension_filter_breaks_all_allowed`,
+  `::test_chosen_extension_filter_is_recorded_but_does_not_break_all_allowed`,
+  `::test_naming_default_extensions_explicitly_is_still_a_choice`,
+  `::test_all_files_disables_filtering_entirely`.
+- `privacy_shield.freshness` + the `[freshness]` extra: a staleness verdict
+  for the `[national]` table (`national.PERSON_NUMBER_MODULES`) against
+  whatever `python-stdnum` is installed, via the optional `norm-freshness`
+  plane. Off unless both `[national]` and `[freshness]` are installed; the
+  underlying dead-module / unreviewed-validator checks still run off
+  `[national]` alone. `norm-freshness` is not on PyPI as of this writing —
+  `pip install ".[freshness]"` cannot succeed from PyPI today; it is
+  installable from its own source tree. Tested:
+  `tests/test_national_table_freshness.py`, `tests/test_stdnum_floor.py`.
+- The CLI's human output now names, per file or path, which of the four
+  terms behind a `False` `all_allowed` failed (gate-blocked, incompletely
+  read, unreadable, imposed-extension-skipped), and separately — regardless
+  of `all_allowed` — names every file a CHOSEN `--extensions` scope excluded,
+  so a typo'd suffix or an empty `--extensions` that matches nothing is not
+  silently indistinguishable from an empty, fully-read folder. Tested:
+  `tests/test_privacy_shield_runner.py::test_cli_human_output_names_the_cause_of_a_non_document_block`,
+  `::test_cli_human_output_names_a_chosen_filter_that_matched_nothing`.
+
+### Fixed
+
+- `national.PERSON_NUMBER_MODULES["be"]` used `stdnum.be.ssn`, which does
+  not exist below `python-stdnum` 2.0 — below `[national]`'s own declared
+  floor (`python-stdnum>=1.19`). At that floor every scan with `be`
+  configured raised `MissingValidator` uncaught out of `find_national_ids`,
+  for every document, not only a Belgian one. Replaced with `stdnum.be.nn` +
+  `stdnum.be.bis` (both present at the floor; together they accept exactly
+  what `be.ssn` accepts, since `be.ssn` is defined as `be.nn` OR `be.bis`).
+  Tested: `tests/test_stdnum_floor.py`.
+- Before that, `be.ssn` itself corrected a live leak: `national.
+  PERSON_NUMBER_MODULES["be"]` was `stdnum.be.nn`, and `freshness.
+  REVIEWED_UNUSED` excused `be.ssn` as "alias of be.nn" — `be.ssn` is `be.nn`
+  OR `be.bis`, and a BIS number (issued to non-residents) validated under
+  `ssn` and not under `nn` alone, so it reached the overlay unredacted.
+  Tested: `tests/test_national_table_freshness.py::test_the_reproduced_niss_case_is_closed`.
+- The differential search behind `REVIEWED_UNUSED`'s "alias of" entries
+  (`tests/test_national_table_freshness.py::_falsify_alias`) generated
+  digits only, so it could never construct a value distinguishing a
+  letter-containing scheme (`es.nif`'s company CIF `B64717838` from
+  `es.dni`, which rejects it) and reported "no counterexample" — the same
+  green as never having searched. The search now also checks the excluded
+  module's own documented examples directly, narrows its brute-forced
+  prefix to the alphabet those examples actually use per position, and
+  fails loudly if it never once got the excluded module to accept anything
+  it tried, rather than treating that as a passing "no counterexample".
+  Tested: `tests/test_national_table_freshness.py::test_the_search_itself_finds_a_known_non_alias`.
+- `tests/test_2_0_0_surface.py::_probe` ran its subprocess without pinning
+  `sys.path`, so `import privacy_shield` inside it resolved through the
+  ambient `PYTHONPATH` / site-packages rather than this checkout — on a
+  machine with no per-checkout virtualenv, a stale `pip install`ed copy
+  (a sibling session's, or an earlier run's) could silently be what every
+  `test_the_*_still_*_with_every_extra_absent` test exercised. The
+  subprocess now prepends this repo's `src/` to `sys.path` before anything
+  else. Tested:
+  `tests/test_2_0_0_surface.py::test_the_probe_subprocess_resolves_the_worktree_not_a_stale_install`.
+
 ## 2.0.0
 
 Breaking release: the import root, the console script and every environment

@@ -58,8 +58,20 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
                                   [--destination external_llm] [--out DIR] [--json]
                                   [--redaction-mode redact|pseudonymize|hash|detect_only|block]
                                   [--min-confidence low|medium|high]
-                                  [--audit-log PATH] [--no-recursive] [--all-files] [--text]
+                                  [--audit-log PATH] [--no-recursive]
+                                  [--all-files | --extensions .txt,.csv] [--text]
 ```
+
+`--all-files` and `--extensions` are both a caller CHOICE, at the CLI
+boundary exactly as at `scan()`'s: naming neither imposes `DEFAULT_EXTENSIONS`
+(a skip then counts against exit `0`); naming either — including
+`--extensions` with the same suffixes `DEFAULT_EXTENSIONS` covers — is a
+chosen scope, and a skip is recorded but does not move the exit code. A
+CHOSEN filter that ends up excluding every file in scope (a typo'd suffix, an
+empty `--extensions ,`) still exits `0` — that is correct, the caller asked
+for that scope — but every excluded file is named in the human output under
+"skipped by the extensions scope you chose", not silently absorbed into
+`documents: 0`.
 
 It prints the verdict, writes the clean overlays with `--out`, and **exits `0`
 only when `report.all_allowed` is True: every document is fully read AND
@@ -70,8 +82,12 @@ default extension scope silently dropped because neither `--extensions` nor
 `--all-files` was given — (so an agent or a shell can gate on it). The human
 output names which of these tripped the exit code, per file; `--json` carries
 the same facts in `documents[].egress_allowed` / `incomplete_documents` /
-`walk_errors` (`imposed_filtered_files` within it). `-` reads text from
-stdin. Without an install, run it as `python -m privacy_shield.cli scan ...`.
+`walk_errors` (a list of `{"kind", "message"}` objects, `kind` one of
+`unreadable` / `filtered_default` / `filtered_chosen` — never re-derive
+`kind` by matching on `message`, which can carry an OS-reported filename) /
+`unreadable_errors` / `imposed_filtered_files` / `chosen_filtered_files`.
+`-` reads text from stdin. Without an install, run it as
+`python -m privacy_shield.cli scan ...`.
 
 The CLI prints a per-document `audit_id` (`ps-<UTC timestamp>-<random>`), which
 differs on every run.

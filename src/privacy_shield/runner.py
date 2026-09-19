@@ -351,10 +351,20 @@ class ScanReport:
             "total_spans": self.total_spans,
             "all_allowed": self.all_allowed,
             "scan_complete": self.scan_complete,
-            "walk_errors": [str(e) for e in self.walk_errors],
+            # Structured, not flattened to a bare string: `kind` is the field
+            # that decides imposed/chosen/unreadable, and `WalkError`'s own
+            # docstring says `message` must never be re-parsed to recover it
+            # (an OS-reported filename can start with any tag by coincidence
+            # - see commit 5b6c4b5). A consumer of this JSON is exactly the
+            # boundary that guarantee is for; flattening here would recreate
+            # the defect one layer up, in whoever reads this dict next.
+            "walk_errors": [
+                {"kind": e.kind.value, "message": e.message} for e in self.walk_errors
+            ],
             "filtered_files": self.filtered_files,
             "imposed_filtered_files": self.imposed_filtered_files,
             "chosen_filtered_files": self.chosen_filtered_files,
+            "unreadable_errors": self.unreadable_errors,
             "incomplete_documents": [d.source for d in self.incomplete_documents],
             "documents": [d.to_dict() for d in self.documents],
         }

@@ -244,6 +244,41 @@ def test_cli_human_output_names_the_cause_of_a_non_document_block(tmp_path, caps
     assert "skipped by the default extension scope" in out
 
 
+def test_cli_human_output_names_a_chosen_filter_that_matched_nothing(tmp_path, capsys):
+    """Reproduced: `--extensions .txtt` (a typo) on a folder with two real,
+    PII-bearing `.txt` documents.
+
+    `documents: 0  all_allowed: True  EXIT=0` is the CORRECT verdict - the
+    caller chose that scope, on purpose, and a chosen filter must not move
+    `all_allowed` (tested elsewhere). What was missing is that NEITHER file
+    was named anywhere in the output: `chosen_filtered_files` held both the
+    whole time, but the entire cause block only printed when `all_allowed`
+    was False, and a chosen filter is exactly the case where it stays True.
+    A folder that matched nothing because of a typo was indistinguishable
+    from an empty, fully-read folder. The same gap, `--extensions ,` (an
+    empty frozenset) reproduces identically.
+    """
+    root = tmp_path / "folder"
+    root.mkdir()
+    (root / "contact.txt").write_text(
+        f"mail me at {FAKE_EMAIL}\n", encoding="utf-8"
+    )
+    (root / "payment.txt").write_text(f"IBAN {FAKE_IBAN}\n", encoding="utf-8")
+
+    for extensions in (".txtt", ","):
+        code = cli.main(["scan", str(root), "--extensions", extensions])
+        out = capsys.readouterr().out
+
+        assert code == 0, f"a caller-chosen scope moved the exit code ({extensions!r})"
+        assert "documents: 0" in out
+        assert "all_allowed: True" in out
+        assert "contact.txt" in out, (
+            f"a real file skipped by extensions={extensions!r} is named nowhere"
+        )
+        assert "payment.txt" in out
+        assert "extensions scope you chose" in out
+
+
 def test_cli_json_output(pii_folder, temp_audit, capsys):
     code = cli.main(["scan", str(pii_folder), "--json"])
     assert code == 0
@@ -251,6 +286,49 @@ def test_cli_json_output(pii_folder, temp_audit, capsys):
     assert payload["document_count"] == 4
     assert payload["all_allowed"] is True
     assert "documents" in payload
+
+
+def test_json_walk_errors_keep_kind_a_consumer_must_not_reconstruct(tmp_path):
+    """`WalkError`'s own docstring: `message` carries an OS-reported filename
+    and MUST NOT be parsed to recover `kind` - that parsing IS the defect
+    commit 5b6c4b5 closed. `to_dict()` used to flatten `walk_errors` to bare
+    strings with `[str(e) for e in self.walk_errors]`, throwing `kind` away
+    at exactly the boundary an agent or a shell script consumes and would
+    otherwise be tempted to re-derive it the same unsafe way.
+    """
+    import os
+
+    root_name = "extension_filtered_chosen_docs"
+    root = tmp_path / root_name
+    root.mkdir()
+    (root / "readable.txt").write_text("nichts\n", encoding="utf-8")
+    locked = root / "locked"
+    locked.mkdir()
+    (locked / "hidden.txt").write_text("nichts", encoding="utf-8")
+    os.chmod(locked, 0o000)
+    try:
+        report = scan(str(root), extensions=frozenset({".txt"}))
+        payload = report.to_dict()
+
+        assert payload["walk_errors"], "no walk_errors surfaced at all"
+        for entry in payload["walk_errors"]:
+            assert set(entry) == {"kind", "message"}, entry
+        kinds = {entry["kind"] for entry in payload["walk_errors"]}
+        assert "unreadable" in kinds, (
+            "the permission error's kind did not survive into the JSON payload"
+        )
+        assert "unreadable_errors" in payload
+        assert payload["unreadable_errors"] == report.unreadable_errors
+        # And it must NOT be recoverable by re-parsing message text, the
+        # exact thing the docstring warns against and the reproduced defect
+        # was doing.
+        assert not any(
+            entry["message"].startswith("extension_filtered_chosen")
+            and entry["kind"] != "unreadable"
+            for entry in payload["walk_errors"]
+        )
+    finally:
+        os.chmod(locked, 0o755)
 
 
 def test_cli_reads_text_from_stdin(temp_audit, monkeypatch, capsys):
