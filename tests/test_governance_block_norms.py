@@ -79,29 +79,48 @@ _NEGATOR = re.compile(
     re.IGNORECASE,
 )
 
-#: A mention inside a norm slug or an inline code span is naming the norm, not
-#: making the claim. `claim_zero_residual_in_any_shipped_document` is the name
-#: of the prohibition.
-_IS_IDENTIFIER = re.compile(r"[`_]")
+#: Where a sentence ends. The negator has to live in the SAME sentence as the
+#: mention it is claimed to negate: a fixed character lookback let a negator in
+#: the PREVIOUS sentence excuse the claim, and "There is no charge for this
+#: feature. Cleared guarantees zero residual PII." passed a 90-character
+#: window. Measured on the shipped function before this was scoped.
+_SENTENCE_END = re.compile(r"[.!?:;]\s|\n\s*\n")
 
-#: How far back to look for the negator. One wrapped line of prose.
-_NEGATION_WINDOW = 90
+
+def _containing_sentence_before(text: str, position: int) -> str:
+    """The text from the start of the mention's own sentence up to *position*."""
+    start = 0
+    for end in _SENTENCE_END.finditer(text, 0, position):
+        start = end.end()
+    return text[start:position]
+
+
+def _mention_is_inside_an_identifier(text: str, start: int, end: int) -> bool:
+    """True when the mention itself sits in a norm slug or an inline code span.
+
+    Not "a backtick appears nearby": `` "Cleared certifies zero residual in the
+    `overlay` we ship." `` has a backtick twelve characters along and is a
+    claim, not a name. An odd number of backticks before the mention means it
+    is inside a code span; an adjacent word character or underscore means it is
+    part of a slug like `claim_zero_residual_in_any_shipped_document`.
+    """
+    if text.count("`", 0, start) % 2 == 1:
+        return True
+    before = text[start - 1] if start else " "
+    after = text[end] if end < len(text) else " "
+    return before in "_`" or after in "_`" or before.isalnum() or after.isalnum()
 
 
 def _affirmative_zero_residual_claims(text: str) -> list[str]:
     """Every mention of zero residual that is NOT negated and not a slug."""
     claims = []
     for match in _ZERO_RESIDUAL.finditer(text):
-        window = text[max(0, match.start() - _NEGATION_WINDOW):match.start()]
-        tail = text[match.start():match.end() + 30]
-        if _NEGATOR.search(window):
+        sentence = _containing_sentence_before(text, match.start())
+        if _NEGATOR.search(sentence):
             continue
-        # A slug: underscores or backticks immediately around the mention.
-        if _IS_IDENTIFIER.search(text[max(0, match.start() - 12):match.end() + 12]):
+        if _mention_is_inside_an_identifier(text, match.start(), match.end()):
             continue
-        claims.append(
-            text[max(0, match.start() - _NEGATION_WINDOW):match.end() + 30]
-        )
+        claims.append(sentence + text[match.start():match.end() + 30])
     return claims
 
 
@@ -251,3 +270,47 @@ def test_the_verdict_tracks_the_source_class_and_nothing_else():
             f"expected {expected_allowed} (classification "
             f"{result.classification!r})"
         )
+
+
+# ---------------------------------------------------------------------------
+# The guard over the prohibition, guarded
+# ---------------------------------------------------------------------------
+#
+# `_affirmative_zero_residual_claims` is the only thing standing between the
+# documents and `prohibited: claim_zero_residual_in_any_shipped_document`. A
+# porous guard over a prohibition is worse than none: it reads as enforcement.
+# Each case below defeated the shipped guard and is pinned so it cannot return.
+
+_BYPASSES = [
+    # A negator in the PREVIOUS sentence, excused by a fixed 90-char lookback.
+    "The overlay is not a transcript of the source document. "
+    "Cleared certifies zero residual PII in every case.",
+    "There is no charge for this feature. Cleared guarantees zero residual PII.",
+    # A negator in the same sentence but belonging to a different clause.
+    "No operator should be in doubt: cleared guarantees zero residual PII.",
+    # A backtick twelve characters along made the mention look like a slug.
+    "Cleared certifies zero residual in the `overlay` we ship.",
+]
+
+#: Naming the norm, disclaiming it, or quoting the slug is not making the claim.
+_LEGITIMATE = [
+    '"Cleared" means the source class is allowed to egress, not a '
+    "zero-residual certificate.",
+    "The block prohibits claim_zero_residual_in_any_shipped_document.",
+    "See `claim_zero_residual_in_any_shipped_document` in the manifest.",
+    "This is never a zero-residual guarantee.",
+]
+
+
+@pytest.mark.parametrize("text", _BYPASSES)
+def test_a_known_bypass_of_the_zero_residual_guard_is_caught(text):
+    assert _affirmative_zero_residual_claims(text), (
+        f"the guard over the prohibition let this through: {text!r}"
+    )
+
+
+@pytest.mark.parametrize("text", _LEGITIMATE)
+def test_naming_or_disclaiming_the_norm_is_not_the_claim(text):
+    assert not _affirmative_zero_residual_claims(text), (
+        f"the guard flagged text that names or disclaims the norm: {text!r}"
+    )
