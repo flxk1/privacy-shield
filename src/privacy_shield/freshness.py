@@ -65,14 +65,17 @@ PERSON_NUMBER_BASENAMES = frozenset({
 #: rate and has not been measured.
 REVIEWED_UNUSED = {
     ("at", "tin"): "tax number, not the social-insurance person number",
-    # be.nn -> be.ssn, not the other way. be.ssn is be.nn OR be.bis, so a
-    # resident number that validates under be.nn validates under be.ssn too:
-    # falsified against the installed library, not read, in
-    # tests/test_national_table_freshness.py. The reverse claim
-    # ("be", "ssn"): "alias of be.nn" held a round and was false - be.ssn
-    # additionally accepts BIS numbers (non-residents, month field +20/+40)
-    # that be.nn rejects.
-    ("be", "nn"): "alias of be.ssn, which is already validated",
+    # be.nn AND be.bis are both adopted (see national.PERSON_NUMBER_MODULES),
+    # so be.ssn - which IS be.nn OR be.bis, nothing else - is the genuinely
+    # redundant one now. It was the other way for a round: ("be", "ssn"):
+    # "alias of be.nn" held nothing checked it, and be.ssn additionally
+    # accepts BIS numbers (non-residents, month field +20/+40) that be.nn
+    # rejects. Adopting be.ssn directly would have fixed that but does not
+    # exist below python-stdnum 2.0, below `national`'s declared floor
+    # (>=1.19); the pair reaches the same acceptance set without raising it.
+    # This direction is falsified against the installed library, not read, in
+    # tests/test_national_table_freshness.py.
+    ("be", "ssn"): "alias of be.nn or be.bis, which are already validated",
     ("es", "nif"): "covers companies as well as persons; dni/nie are the person forms",
     ("fr", "nif"): "tax number; fr.nir is the person number",
     ("pt", "cc"): "candidate - would give pt a validator it has none of; FP rate unmeasured",

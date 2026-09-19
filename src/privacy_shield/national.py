@@ -115,13 +115,19 @@ DELIBERATELY_ABOVE_A_DOCUMENTED_FORM: Dict[str, str] = {
 
 PERSON_NUMBER_MODULES: Dict[str, Tuple[Tuple[str, int], ...]] = {
     "at": (("stdnum.at.vnr", 10),),
-    # be.ssn, not be.nn: `stdnum.be.ssn` is `be.nn` OR `be.bis` - a resident
-    # national number OR a BIS number (issued to non-residents, month field
-    # advanced by 20 or 40). `be.nn` alone rejects every BIS number, which a
-    # differential search against the installed library found and the table
-    # missed for a round; see `freshness.REVIEWED_UNUSED[("be", "nn")]` and
-    # `tests/test_national_table_freshness.py`.
-    "be": (("stdnum.be.ssn", 11),),
+    # be.nn AND be.bis, not be.ssn. `stdnum.be.ssn` IS `be.nn` OR `be.bis` - a
+    # resident national number OR a BIS number (issued to non-residents,
+    # month field advanced by 20 or 40) - and `be.nn` alone rejects every BIS
+    # number, which a differential search against the installed library found
+    # and the table missed for a round. `be.ssn` was the first fix here and
+    # does not exist below `python-stdnum` 2.0 - `national`'s declared floor
+    # is `python-stdnum>=1.19` (see pyproject.toml), and both `be.nn` and
+    # `be.bis` exist there, so the pair reaches the identical acceptance set
+    # (bis.validate falls through to nn's own check on every non-BIS month;
+    # see stdnum.be.ssn's own source) without raising the floor for every
+    # consumer. See `freshness.REVIEWED_UNUSED[("be", "ssn")]` and
+    # `tests/test_national_table_freshness.py` / `tests/test_stdnum_floor.py`.
+    "be": (("stdnum.be.nn", 11), ("stdnum.be.bis", 11)),
     "bg": (("stdnum.bg.egn", 10),),
     "cy": (),
     "cz": (("stdnum.cz.rc", 10),),
