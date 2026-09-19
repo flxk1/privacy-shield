@@ -131,16 +131,28 @@ class SpanFinding:
     value: str = ""
     context: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
+    def to_dict(self, *, include_original: bool = False) -> Dict[str, Any]:
+        """Serialised span. `value` and `context` are the ORIGINAL text and are
+        omitted unless the caller asks for them.
+
+        Serialisation is where the result leaves the process, so it is where the
+        skill's `prohibited: egress_original_unredacted_text` has to hold. The
+        skill grants `Bash(privacy-shield:*)`, and in a skill context stdout IS
+        the model's context - `--json` carrying the original put it one pipe away
+        from an external model. Local-only telemetry stays reachable on the
+        object; asking for it in the serialised form is now a deliberate act.
+        """
+        span = {
             "pii_type": self.pii_type,
             "start": self.start,
             "end": self.end,
             "confidence": self.confidence,
             "layer": self.layer,
-            "value": self.value,
-            "context": self.context,
         }
+        if include_original:
+            span["value"] = self.value
+            span["context"] = self.context
+        return span
 
 
 @dataclass
@@ -185,13 +197,13 @@ class DocumentScan:
         """False when some PII channel never looked at this document."""
         return not self.incomplete_channels
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, *, include_original: bool = False) -> Dict[str, Any]:
         return {
             "source": self.source,
             "input_type": self.input_type,
             "overlay": self.overlay,
             "span_count": self.span_count,
-            "spans": [s.to_dict() for s in self.spans],
+            "spans": [s.to_dict(include_original=include_original) for s in self.spans],
             "pii_detected": self.pii_detected,
             "findings_by_type": self.findings_by_type,
             "egress_allowed": self.egress_allowed,
@@ -342,7 +354,7 @@ class ScanReport:
     def blocked_documents(self) -> List[DocumentScan]:
         return [d for d in self.documents if not d.egress_allowed]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, *, include_original: bool = False) -> Dict[str, Any]:
         return {
             "mode": self.mode,
             "destination": self.destination,
@@ -366,7 +378,9 @@ class ScanReport:
             "chosen_filtered_files": self.chosen_filtered_files,
             "unreadable_errors": self.unreadable_errors,
             "incomplete_documents": [d.source for d in self.incomplete_documents],
-            "documents": [d.to_dict() for d in self.documents],
+            "documents": [
+                d.to_dict(include_original=include_original) for d in self.documents
+            ],
         }
 
 

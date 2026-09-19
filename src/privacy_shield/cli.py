@@ -229,7 +229,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     written = _write_overlays(report, Path(args.out)) if args.out else None
 
     if args.json:
-        payload = report.to_dict()
+        payload = report.to_dict(include_original=args.include_original_values)
         if written:
             payload["overlays_written"] = [str(p) for p in written]
         json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
@@ -283,6 +283,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_p.add_argument("--out", help="Directory to write the clean overlays into.")
     scan_p.add_argument("--json", action="store_true", help="Emit the full report as JSON.")
+    scan_p.add_argument(
+        "--include-original-values", action="store_true",
+        help="Include each finding's original value and surrounding context in "
+             "--json. OFF by default: stdout is the model's context when this "
+             "CLI runs under the skill's Bash grant.",
+    )
     scan_p.add_argument("--audit-log", help="Path for the shield's per-document audit log.")
     scan_p.add_argument(
         "--no-recursive",

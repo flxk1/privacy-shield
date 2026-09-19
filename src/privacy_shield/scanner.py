@@ -92,19 +92,25 @@ class Finding:
     #: finding.
     checksum_validated: bool = False
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, *, include_original: bool = False) -> dict:
+        """`value` and `context` are the ORIGINAL text and are omitted unless
+        asked for - the same boundary as `runner.SpanFinding.to_dict`. Fixing
+        only the CLI would have left the prohibited kind live one call away.
+        """
+        finding = {
             "type": self.pii_type.value,
-            "value": self.value,
             "start": self.start,
             "end": self.end,
             "confidence": self.confidence.value,
             "layer": self.layer,
-            "context": self.context,
             "zone": self.zone,
             "page": self.page,
             "checksum_validated": self.checksum_validated,
         }
+        if include_original:
+            finding["value"] = self.value
+            finding["context"] = self.context
+        return finding
 
 
 @dataclass
@@ -133,16 +139,18 @@ class ScanResult:
             result[key].append(f)
         return result
 
-    def to_dict(self) -> dict:
+    def to_dict(self, *, include_original: bool = False) -> dict:
         return {
             "has_pii": self.has_pii,
             "finding_count": len(self.findings),
             "high_confidence_count": self.high_confidence_count,
             "scan_time_ms": self.scan_time_ms,
             "layers_used": self.layers_used,
-            "findings": [f.to_dict() for f in self.findings],
+            "findings": [
+                f.to_dict(include_original=include_original) for f in self.findings
+            ],
             "findings_by_type": {
-                k: [f.to_dict() for f in v]
+                k: [f.to_dict(include_original=include_original) for f in v]
                 for k, v in self.findings_by_type.items()
             },
         }
