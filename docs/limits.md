@@ -795,8 +795,9 @@ green does not cover. To cover them:
 brew install exiftool ffmpeg && pip install mutagen && pytest -rs
 ```
 
-Measured on python 3.12 with `.[dev,semantic,extract,openai]`. The 8 failures
-are the documented `tests/test_simplifier.py` LLM-path cases in every column.
+Measured on python 3.12 with `.[dev,semantic,extract,openai]`. The 8
+`tests/test_simplifier.py` LLM-path failures these columns used to carry are gone;
+see below.
 
 All other numbers below are measured in **CI's environment**, which is
 `pip install ".[dev,semantic,extract,openai]"` and nothing else — notably
@@ -804,7 +805,17 @@ All other numbers below are measured in **CI's environment**, which is
 
 ```
 python3 -m pytest -q      # python 3.12, .[dev,semantic,extract,openai]
-1165 passed, 8 failed, 10 skipped
+1165 passed, 8 failed, 10 skipped     # BEFORE the llm_runtime fixture, for reference
+```
+
+That run is kept as the before. The 8 failures are fixed, so the counts above are
+stale and have to be re-measured in CI's environment, which is not reproducible
+here — the number below was measured with `.[dev]` plus numpy and pyyaml, a
+different extras set, so it is not comparable column to column:
+
+```
+python3 -m pytest -q      # python 3.12, .[dev] + numpy + pyyaml
+1249 passed, 17 skipped
 ```
 
 `--collect-only` reports 1182 items; the run above reports 1183 outcomes,
@@ -818,14 +829,21 @@ environment than CI's and was not reproducible. **The other 8 are the media
 backends CI does not install** — exiftool, ffmpeg/ffprobe, mutagen — and they
 are listed one per line by `pytest -rs`. That list is the honest statement of
 what CI's green does not cover; see the matrix at the top of this section. The 8
-failures are all in `tests/test_simplifier.py`'s LLM path, which patches
-`privacy_shield.services.llm_runtime` — an upstream gateway this package does
-not ship; they fail identically on the tip before this round's changes.
+failures that used to sit in `tests/test_simplifier.py`'s LLM path are fixed. They
+patched `privacy_shield.services.llm_runtime` — an upstream gateway this package
+does not ship and never did — and six of them an even older
+`privacy_shield.runtime.llm_gateway`; `mock.patch` cannot resolve a module that is
+not importable, so all eight failed at setup and the branches they name were never
+executed. They now inject a stand-in module, so those branches run.
+`simplify_response*` still degrades to the unchanged response at runtime when the
+gateway is absent, which is every install of this package, and
+`test_the_gateway_really_is_absent_from_the_distribution` holds that premise: it
+fails if the gateway ever ships, which is when these tests should patch it instead.
 `openai` is installed here (and by CI's `tests` job) so
 `tests/test_local_model_endpoint_guard.py`'s send-path assertions run rather
 than skip.
-`.github/workflows/ci.yml` deselects the 8 llm_runtime tests by name, so the
-`tests` job runs 1051 passed, 8 deselected.
+`.github/workflows/ci.yml` no longer deselects them: the list of 8 names it
+carried is gone, and the `tests` job runs the whole suite.
 
 ### The media paths' coverage, before and after
 

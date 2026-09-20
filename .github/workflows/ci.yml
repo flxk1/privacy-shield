@@ -147,15 +147,7 @@ jobs:
       - name: install and test
         run: |
           python3 -m pip install ".[dev,semantic,extract,openai]"
-          python3 -m pytest -q \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseSync::test_llm_simplification_success \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseSync::test_llm_failure_returns_original \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseSync::test_llm_empty_result_returns_original \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseSync::test_llm_short_result_returns_original \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseSync::test_llm_exception_returns_original \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseSync::test_german_language \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseAsync::test_async_simplification_success \
-            --deselect tests/test_simplifier.py::TestSimplifyResponseAsync::test_async_failure_returns_original
+          python3 -m pytest -q
 
   commit-discipline:
     runs-on: ubuntu-latest

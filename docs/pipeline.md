@@ -57,7 +57,7 @@ and the optional enforcement seam.
 | Prompt-injection / threat scan | `security_scanner.py` | complete |
 | Audit trail | `audit_log.py`, `privacy_skill_kg.py` | complete |
 | JSON-template overlay helper | `helpers/json_template_overlay.py` | complete |
-| Text simplifier | `simplifier.py` | core complete; LLM path needs the upstream LLM gateway |
+| Text simplifier | `simplifier.py` | core complete; LLM path needs the upstream LLM gateway, absent here, so it returns the response unchanged |
 | Declarative config | `configs/privacy_shield/*` (taxonomy, patterns, lexica ×7, onnx policy, review profiles) | complete |
 
 ## Layout

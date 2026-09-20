@@ -6,6 +6,17 @@
 
 ### Fixed
 
+- The 8 `tests/test_simplifier.py` LLM-path tests run instead of failing at setup.
+  They patched `privacy_shield.services.llm_runtime` — an upstream gateway this
+  package does not ship — and six of them an older `privacy_shield.runtime.llm_gateway`
+  that never existed; `mock.patch` cannot resolve a module that is not importable, so
+  every one failed before reaching the code, and the branches they name had no
+  coverage at all. They now inject a stand-in module. `.github/workflows/ci.yml` no
+  longer deselects them by name. Runtime behaviour is unchanged: with no gateway
+  installed, `simplify_response*` still returns the response untouched.
+  Tested: `tests/test_simplifier.py::test_the_gateway_really_is_absent_from_the_distribution`
+  (the premise — it fails if the gateway ever ships), plus the 8 restored cases.
+
 - `HASH` redaction is reachable again. `Redactor` has required an explicit
   `hash_salt` for `HASH` since DSK K-03 and refuses to invent one, but neither
   `scan()` nor `PrivacyShield` accepted the argument, so every `HASH` call through

@@ -1,8 +1,41 @@
 """Tests for the Plain Language Mode simplifier module."""
 
 import asyncio
+import sys
+import types
+
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+
+# `privacy_shield.services.llm_runtime` is an upstream gateway this package does not
+# ship and never did, so `simplifier` imports it inside the call and returns the
+# response unchanged when it is absent. These tests used to `@patch` that path (six of
+# them a `privacy_shield.runtime.llm_gateway` that never existed either), which cannot
+# resolve a module that is not importable: all eight failed at setup, so the LLM
+# branches they name were never executed and CI deselected them by name. Injecting a
+# stand-in module exercises those branches instead of the import guard.
+@pytest.fixture
+def llm_runtime(monkeypatch):
+    module = types.ModuleType("privacy_shield.services.llm_runtime")
+    module.LLMGatewayResult = object
+    module.call_smart = MagicMock()
+    module.call_smart_async = AsyncMock()
+    monkeypatch.setitem(sys.modules, "privacy_shield.services.llm_runtime", module)
+    return module
+
+
+def test_the_gateway_really_is_absent_from_the_distribution():
+    """The premise of the fixture: unstubbed, the import fails and the text comes back
+    unchanged. If the gateway ever ships, this fails and the fixture becomes a mock of
+    something real — which is the point at which these tests should patch it instead."""
+    from privacy_shield.simplifier import simplify_response_sync
+
+    with pytest.raises(ImportError):
+        import privacy_shield.services.llm_runtime  # noqa: F401
+    original = "This is the original text that is longer than 100 characters and would " \
+               "otherwise be sent to the gateway for simplification of its wording."
+    assert simplify_response_sync(original) == original
 
 
 class TestShouldSimplify:
@@ -279,10 +312,10 @@ class TestSimplifyResponseSync:
         text = "This is a short response."
         assert simplify_response_sync(text) == text
 
-    @patch("privacy_shield.runtime.llm_gateway.call_smart")
-    def test_llm_simplification_success(self, mock_call_smart):
+    def test_llm_simplification_success(self, llm_runtime):
         """Successful LLM simplification."""
         from privacy_shield.simplifier import simplify_response_sync
+        mock_call_smart = llm_runtime.call_smart
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -295,10 +328,10 @@ class TestSimplifyResponseSync:
         assert result == mock_result.text.strip()
         mock_call_smart.assert_called_once()
 
-    @patch("privacy_shield.runtime.llm_gateway.call_smart")
-    def test_llm_failure_returns_original(self, mock_call_smart):
+    def test_llm_failure_returns_original(self, llm_runtime):
         """LLM failure should return original text."""
         from privacy_shield.simplifier import simplify_response_sync
+        mock_call_smart = llm_runtime.call_smart
 
         mock_result = MagicMock()
         mock_result.success = False
@@ -310,10 +343,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("privacy_shield.runtime.llm_gateway.call_smart")
-    def test_llm_empty_result_returns_original(self, mock_call_smart):
+    def test_llm_empty_result_returns_original(self, llm_runtime):
         """Empty LLM result should return original text."""
         from privacy_shield.simplifier import simplify_response_sync
+        mock_call_smart = llm_runtime.call_smart
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -325,10 +358,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("privacy_shield.runtime.llm_gateway.call_smart")
-    def test_llm_short_result_returns_original(self, mock_call_smart):
+    def test_llm_short_result_returns_original(self, llm_runtime):
         """Very short LLM result (< 50 chars) should return original."""
         from privacy_shield.simplifier import simplify_response_sync
+        mock_call_smart = llm_runtime.call_smart
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -340,10 +373,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("privacy_shield.runtime.llm_gateway.call_smart")
-    def test_llm_exception_returns_original(self, mock_call_smart):
+    def test_llm_exception_returns_original(self, llm_runtime):
         """LLM exception should return original text."""
         from privacy_shield.simplifier import simplify_response_sync
+        mock_call_smart = llm_runtime.call_smart
 
         mock_call_smart.side_effect = Exception("Network error")
 
@@ -352,10 +385,10 @@ class TestSimplifyResponseSync:
 
         assert result == original
 
-    @patch("privacy_shield.runtime.llm_gateway.call_smart")
-    def test_german_language(self, mock_call_smart):
+    def test_german_language(self, llm_runtime):
         """German language should use German prompt."""
         from privacy_shield.simplifier import simplify_response_sync
+        mock_call_smart = llm_runtime.call_smart
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -374,10 +407,10 @@ class TestSimplifyResponseSync:
 class TestSimplifyResponseAsync:
     """Tests for simplify_response async path."""
 
-    @patch("privacy_shield.services.llm_runtime.call_smart_async")
-    def test_async_simplification_success(self, mock_call_smart_async):
+    def test_async_simplification_success(self, llm_runtime):
         """Async simplification should return rewritten text when successful."""
         from privacy_shield.simplifier import simplify_response
+        mock_call_smart_async = llm_runtime.call_smart_async
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -396,10 +429,10 @@ class TestSimplifyResponseAsync:
         assert result == mock_result.text.strip()
         mock_call_smart_async.assert_called_once()
 
-    @patch("privacy_shield.services.llm_runtime.call_smart_async")
-    def test_async_failure_returns_original(self, mock_call_smart_async):
+    def test_async_failure_returns_original(self, llm_runtime):
         """Async simplification failure should preserve original text."""
         from privacy_shield.simplifier import simplify_response
+        mock_call_smart_async = llm_runtime.call_smart_async
 
         mock_call_smart_async.side_effect = RuntimeError("timeout")
         original = (
