@@ -10,7 +10,9 @@
   version literal beside `pyproject.toml`'s and nothing compared the two, so the
   release bump moved the packaging metadata and left it behind: an install of the
   `v2.1.0` tag reported `2.0.0` from `__version__` while
-  `importlib.metadata.version` reported `2.1.0`. Treat `v2.1.0` as superseded.
+  `importlib.metadata.version` reported `2.1.0`. The `v2.1.0` tag was withdrawn
+  rather than left installable; its commit remains on `main` as this release's
+  parent, and everything it introduced — recorded below under 2.1.0 — ships here.
   Tested: `tests/test_2_0_0_surface.py::test_dunder_version_agrees_with_the_packaging_metadata`,
   which fails if they ever disagree again.
 
