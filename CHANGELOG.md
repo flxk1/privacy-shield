@@ -2,7 +2,7 @@
 <!-- Copyright 2026 flxk1 -->
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 ### Fixed
 
