@@ -690,3 +690,58 @@ def test_an_unreadable_directory_still_breaks_all_allowed_alongside_a_filtered_f
         )
     finally:
         os.chmod(locked, 0o755)
+
+
+# --- HASH mode reachability (hash_salt through scan -> PrivacyShield -> Redactor) ---
+#
+# `Redactor` has required an explicit `hash_salt` for HASH since DSK K-03, and refuses
+# to invent one. Neither `scan()` nor `PrivacyShield` accepted the argument, so every
+# HASH call through them raised no matter what the caller passed: the mode was accepted
+# by the signature and unreachable in fact. These tests hold the plumbing, in both
+# directions — that a salt gets through, and that its absence still fails closed.
+
+HASH_SALT = "a" * 64
+
+
+def test_hash_mode_is_reachable_through_scan():
+    from privacy_shield.runner import scan
+    from privacy_shield.redactor import RedactionMode
+
+    report = scan("Ada: ada@example.com", redaction_mode=RedactionMode.HASH,
+                  hash_salt=HASH_SALT, force_text=True)
+    document = report.documents[0]
+    assert "ada@example.com" not in document.overlay
+    assert "[SHA:" in document.overlay and document.placeholder_count == 1
+    assert not document.redaction_blocked
+
+
+def test_hash_mode_without_a_salt_still_fails_closed_through_scan():
+    from privacy_shield.runner import scan
+    from privacy_shield.redactor import RedactionMode
+
+    with pytest.raises(ValueError, match="HASH mode requires an explicit hash_salt"):
+        scan("Ada: ada@example.com", redaction_mode=RedactionMode.HASH, force_text=True)
+
+
+def test_the_hash_is_stable_for_a_salt_and_changes_with_it():
+    """A hash the salt does not reach would be either unusable or unsafe: stable across
+    calls is the point of HASH, and salt-dependent is what keeps it from being a
+    rainbow-table lookup of the value."""
+    from privacy_shield.runner import scan
+    from privacy_shield.redactor import RedactionMode
+
+    def overlay(salt):
+        return scan("Ada: ada@example.com", redaction_mode=RedactionMode.HASH,
+                    hash_salt=salt, force_text=True).documents[0].overlay
+
+    assert overlay(HASH_SALT) == overlay(HASH_SALT)
+    assert overlay(HASH_SALT) != overlay("b" * 64)
+
+
+def test_redact_text_also_takes_a_salt():
+    from privacy_shield.redactor import RedactionMode, redact_text
+
+    result = redact_text("Ada: ada@example.com", mode=RedactionMode.HASH, hash_salt=HASH_SALT)
+    assert "ada@example.com" not in result.redacted_text and "[SHA:" in result.redacted_text
+    with pytest.raises(ValueError, match="HASH mode requires an explicit hash_salt"):
+        redact_text("Ada: ada@example.com", mode=RedactionMode.HASH)

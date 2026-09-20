@@ -547,6 +547,7 @@ def scan(
     destination: str = "external_llm",
     redaction_mode: RedactionMode = RedactionMode.REDACT,
     min_confidence: Confidence = Confidence.MEDIUM,
+    hash_salt: Optional[str] = None,
     recursive: bool = True,
     extensions: Optional[frozenset] = _UNSET_EXTENSIONS,  # type: ignore[assignment]
     audit_log_path: Optional[str] = None,
@@ -595,6 +596,7 @@ def scan(
         mode=redaction_mode,
         selection_mode=SelectionMode.ALL,
         min_confidence=min_confidence,
+        hash_salt=hash_salt,
         privacy_mode=mode,
         audit_log_path=audit_log_path,
     )

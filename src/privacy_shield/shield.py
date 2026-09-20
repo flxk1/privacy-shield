@@ -343,6 +343,9 @@ class PrivacyShield:
         mode: RedactionMode = RedactionMode.REDACT,
         selection_mode: SelectionMode = SelectionMode.ALL,
         min_confidence: Confidence = Confidence.MEDIUM,
+        # REQUIRED for HASH mode (DSK K-03): the Redactor refuses to invent one, so
+        # without a way to pass it here HASH was unreachable through this class.
+        hash_salt: Optional[str] = None,
 
         # Privacy mode settings (data flow control)
         privacy_mode: PrivacyMode = PrivacyMode.STANDARD,
@@ -449,6 +452,7 @@ class PrivacyShield:
         self.redactor = Redactor(
             mode=mode,
             selection_mode=selection_mode,
+            hash_salt=hash_salt,
             min_confidence=min_confidence,
             block_on_types=self.block_on_types,
         )

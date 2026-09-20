@@ -598,6 +598,7 @@ def redact_text(
     mode: RedactionMode = RedactionMode.REDACT,
     min_confidence: Confidence = Confidence.MEDIUM,
     layers: Optional[List[int]] = None,
+    hash_salt: Optional[str] = None,
 ) -> RedactionResult:
     """
     Convenience function to scan and redact text in one call.
@@ -607,6 +608,7 @@ def redact_text(
         mode: Redaction mode.
         min_confidence: Minimum confidence to redact.
         layers: Scanner layers to use.
+        hash_salt: Salt for hashing. REQUIRED for HASH mode per DSK compliance.
 
     Returns:
         RedactionResult with redacted text.
@@ -616,5 +618,5 @@ def redact_text(
     scanner = PrivacyScanner(layers=layers, min_confidence=min_confidence)
     scan_result = scanner.scan(text)
 
-    redactor = Redactor(mode=mode, min_confidence=min_confidence)
+    redactor = Redactor(mode=mode, min_confidence=min_confidence, hash_salt=hash_salt)
     return redactor.redact(scan_result)

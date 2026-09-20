@@ -2,6 +2,22 @@
 <!-- Copyright 2026 flxk1 -->
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `HASH` redaction is reachable again. `Redactor` has required an explicit
+  `hash_salt` for `HASH` since DSK K-03 and refuses to invent one, but neither
+  `scan()` nor `PrivacyShield` accepted the argument, so every `HASH` call through
+  them raised `ValueError` whatever the caller passed — a mode the signature
+  advertised and the API could not reach. `hash_salt` now threads
+  `scan()` -> `PrivacyShield` -> `Redactor`, and `redact_text()` takes it too.
+  Absent, `HASH` still fails closed; a salt is never invented.
+  Tested: `tests/test_privacy_shield_runner.py::test_hash_mode_is_reachable_through_scan`,
+  `::test_hash_mode_without_a_salt_still_fails_closed_through_scan`,
+  `::test_the_hash_is_stable_for_a_salt_and_changes_with_it`,
+  `::test_redact_text_also_takes_a_salt`.
+
 ## 2.0.0
 
 Breaking release: the import root, the console script and every environment
