@@ -332,3 +332,14 @@ def test_every_test_a_document_cites_exists(document):
         f"{document} cites tests that do not exist, so those claims are "
         f"unbacked prose: {missing}"
     )
+
+def test_dunder_version_agrees_with_the_packaging_metadata():
+    """`__version__` is a second source of truth for the version, hardcoded beside the
+    one in pyproject. Nothing compared them, so bumping the release for 2.1.0 moved the
+    metadata and left `__version__` reporting 2.0.0 — an install of the 2.1.0 tag told
+    you it was 2.0.0. They are compared here so the two cannot drift apart again."""
+    import importlib.metadata
+
+    import privacy_shield
+
+    assert privacy_shield.__version__ == importlib.metadata.version("privacy-shield")
