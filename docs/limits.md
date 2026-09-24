@@ -523,11 +523,13 @@ words: a proper noun used as an agent that is not a person. `issued by Charles
 Schwab` and `compiled by Thames Valley` are claimed, and nothing in the text
 separates either from `issued by Charles Schneider`. A company named after a
 person and a site used as an author need vocabulary to resolve, and vocabulary
-is what the licence gate below refuses. Dropping the one entry `"agency"` from
-`en.PROBES` takes English to 0 false positives on all 61 documents and drops
-recall on the independent positions from 13/21 to 10/21 counting the English
-rules alone (14/21 to 11/21 for the shipped dispatcher, where the German
-ruleset also runs) — at or below German's 11/21. That switch is the owner's.
+is what the licence gate below refuses. Re-measured after the per-language split (dropping `"agency"` from
+`en._ORDER` on a scratch copy): English's false positives on the 77-document
+clean corpus halve, 10 to 5, and recall on the independent positions drops
+from 7/21 to 4/21 counting English's rules alone, 10/21 to 8/21 for the
+shipped dispatcher (German's always-on GIVEN rule keeps 8 that agency's
+withdrawal would cost) — above German's own 7/21 either way. That switch is
+the owner's.
 
 ### Why there is no NER model behind the `semantic` extra
 
@@ -1083,24 +1085,39 @@ recording chaptered `Vernehmung Mustermann` now reports `title` in
 `pii_fields`; it previously did not appear even in `raw_tags`.
 
 **`de._is_organisational`'s restricted union (ORGANISATIONAL + LEGAL_FORMS,
-not TEMPORAL) is not a strict superset of main's own check on every input,
-UNRESOLVED, owner's call.** An adversarial differential of 3,724 generated
-inputs finds 30 - all one shape, "[a given name] [an ORGANISATIONAL-union
-word used as a fake surname]" such as "Kind regards\nKarl-Heinz Finance" -
-where main's simpler check (German's own ORGANISATIONAL table alone; German
-has no word for "Finance"/"Sales"/"Office"/"Legal"/"Payable") claims the
-two-word string as a person and this layer, correctly refusing an
-organisational word as a surname, does not. Matching main exactly (dropping
-the ORGANISATIONAL/LEGAL_FORMS union too) closes that differential to zero
-but reopens the two real false positives the union was built to close -
-`Accounts Payable` and `Customer Services`, both in the 77-document English
-corpus - moving the measured cost from 10 FP / 1.21% to 12 FP / 1.61% and
-failing 7 tests already in this suite. Tested (both directions, so a future
-change to either side is visible here):
-`tests/test_name_layer_enumeration_limit.py::test_a_temporal_given_name_signs_a_letter`,
-`tests/test_name_layer_enumeration_limit.py::test_english_organisational_and_legal_form_words_still_refuse_a_german_signature`;
-the 30-input differential itself is not in this repository's suite - it is
-adversarially generated, not corpus-measured - see the merge commit message.
+not TEMPORAL) is not a strict superset of main's own check on every input -
+decided by the owner (Felix, 2026-09-24): the restricted union is kept.** An
+adversarial differential of 3,724 generated inputs finds 30, and they are NOT
+all one shape:
+
+  - **25 are the accepted shape** - a given name from `{Karl-Heinz, Mai}`
+    followed by an ORGANISATIONAL-union word standing in as a fake surname,
+    from `{Finance, Sales, Office, Legal, Payable}` - where main's simpler
+    check (German's own ORGANISATIONAL table alone; German has no word for
+    any of those five) claims the two-word string as a person and this
+    layer, correctly refusing an organisational word as a surname, does not.
+    The 25: `Karl-Heinz Finance` (×4, one per template it recurs in),
+    `Karl-Heinz Sales` (×4), `Karl-Heinz Office` (×2), `Karl-Heinz Payable`
+    (×2), `Karl-Heinz Legal` (×1), `Mai Finance` (×2), `Mai Sales` (×4),
+    `Mai Office` (×2), `Mai Payable` (×1), `Mai Legal` (×3).
+  - **5 are CORRECTED main false positives** - real people this layer no
+    longer claims because they never were people, which is the union
+    working as designed, not a differential loss: `Accounts Payable` (×3 -
+    the bare "Kind regards" form, the "...\nShared Service Centre\nNorthern
+    Operations" form, and the "Mit freundlichen Gruessen" form),
+    `Customer Services` (×1, the `EN_CLEAN_DEV[0]` corpus document),
+    `Nordstern Limited` (×1).
+
+  Matching main exactly (dropping the ORGANISATIONAL/LEGAL_FORMS union too)
+  closes the 25 but reopens the 5 - moving the measured cost from 10 FP /
+  1.21% to 12 FP / 1.61% on the real 77-document English corpus and failing
+  7 tests already in this suite. Tested (both directions, so a future change
+  to either side is visible here):
+  `tests/test_name_layer_enumeration_limit.py::test_a_temporal_given_name_signs_a_letter`,
+  `tests/test_name_layer_enumeration_limit.py::test_english_organisational_and_legal_form_words_still_refuse_a_german_signature`;
+  the 30-input differential itself is not in this repository's suite - it is
+  adversarially generated, not corpus-measured - see commit `a4c28fd` for the
+  full list and the numbers behind both options.
 
 **A residue class distinct from the eighth (CRLF counting, fixed above),
 found by the gate's own property run during this change and reproducing

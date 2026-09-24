@@ -58,58 +58,7 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `::test_every_name_layer_module_imports_only_the_standard_library`,
   `::test_the_name_layer_works_with_the_optional_extras_blocked`.
 
-### Fixed
-
-- **Detection dropped German entirely once any other language's marker
-  appeared**, so a document scoring one English marker and zero German ones
-  never ran the German GIVEN rule at all - "Meeting with Julia Schmidt and
-  Jan Müller on Monday.", "Kind regards\nJan Müller" and "From: Sarah
-  Villanueva" lost their German names, contradicting this file's own promise
-  that "a wrong guess costs a wider union rather than a missed name."
-  `detect.resolve` now always includes German (when registered) in its
-  undeclared-language result; an explicit declaration still isolates one
-  language exactly, which is what the cross-language cost measurements need.
-  Tested: `tests/test_name_layer_cross_language.py::test_german_given_names_are_found_even_when_english_is_the_detected_language`,
-  `::test_detection_only_adds_languages_never_drops_german`,
-  `::test_a_declared_language_still_isolates_when_it_excludes_german`.
-- **`name_layer/shared.claim` (the dispatcher's and English's claim rule) was
-  still the pre-`6b0f7e5` first-overlap-wins version**, despite its own
-  docstring calling it "main's rule": it inspected the first overlapping span
-  and returned, so a correct wider claim was discarded on the strength of one
-  earlier partial one. Ported main's covers-every-overlap version. Tested:
-  `tests/test_name_layer_mechanism.py::test_shared_claim_replaces_every_span_it_covers_not_just_the_first`,
-  `::test_shared_claim_is_all_or_nothing_over_multiple_overlaps`.
-- **`de._is_organisational` used the full exclusion union, including every
-  registered language's TEMPORAL set**, which exists to keep month names out
-  of the GIVEN rule and not to gate a signature line: "Mit freundlichen
-  Gruessen\nMai Schmidt" lost its own signature, "Mai" being German for May
-  as well as a given name. Restricted to the ORGANISATIONAL and LEGAL_FORMS
-  unions, which cost nothing measured and keep the cross-language protection
-  ("Kind regards\nAccounts Payable", "...\nNordstern Limited") the union was
-  for. Tested:
-  `tests/test_name_layer_enumeration_limit.py::test_a_temporal_given_name_signs_a_letter`,
-  `::test_english_organisational_and_legal_form_words_still_refuse_a_german_signature`.
-
-  **TRADE-OFF NOT RESOLVED HERE, flagged for the owner:** an adversarial
-  differential (3,724 generated inputs) found 30 where this restricted union
-  still claims less than main's own `_is_organisational` (German's
-  ORGANISATIONAL table alone, no union at all) - every one is a fuzzer-built
-  "[given name] [organisational-union word standing in as a fake surname]"
-  string such as "Kind regards\nKarl-Heinz Finance"; main's simpler check
-  does not recognise "Finance"/"Sales"/"Office"/"Legal"/"Payable" as
-  organisational at all (they are English words, absent from German's own
-  table) and claims the two-word string as a person. Matching main exactly
-  (dropping the ORGANISATIONAL/LEGAL_FORMS union too) satisfies that
-  differential completely (0 of 3,724 lost, confirmed) but reopens the two
-  real false positives the union closed - `Accounts Payable` and `Customer
-  Services` reappear in the 77-document English corpus (10 -> 12 FP spans,
-  1.21% -> 1.61% character loss) and 7 tests this branch already had revert.
-  This commit keeps the restricted union (10 FP / 1.21%, matches every
-  existing measurement in this file) rather than the exact-main match (0
-  lost on the differential, 12 FP / 1.61%) - a choice between two invariants
-  the fix cannot satisfy at once, made here provisionally and named for the
-  owner to confirm or reverse; see the merge commit message for the full
-  numbers.
+### Changed
 
 - **The English counterpart of probe A is withdrawn before it ever shipped.**
   A value after a person-role label (`Caseworker: Ashcroft`, `CC: Ingrid
@@ -176,6 +125,57 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 - **The exclusion union costs no name**: 0 of 307 common member-state surnames
   are refused by any of its four classes. Tested:
   `tests/test_name_layer_enumeration_limit.py::test_no_common_eu_surname_is_refused_by_the_remaining_lists`.
+- **Detection dropped German entirely once any other language's marker
+  appeared**, so a document scoring one English marker and zero German ones
+  never ran the German GIVEN rule at all - "Meeting with Julia Schmidt and
+  Jan Müller on Monday.", "Kind regards\nJan Müller" and "From: Sarah
+  Villanueva" lost their German names, contradicting this file's own promise
+  that "a wrong guess costs a wider union rather than a missed name."
+  `detect.resolve` now always includes German (when registered) in its
+  undeclared-language result; an explicit declaration still isolates one
+  language exactly, which is what the cross-language cost measurements need.
+  Tested: `tests/test_name_layer_cross_language.py::test_german_given_names_are_found_even_when_english_is_the_detected_language`,
+  `::test_detection_only_adds_languages_never_drops_german`,
+  `::test_a_declared_language_still_isolates_when_it_excludes_german`.
+- **`name_layer/shared.claim` (the dispatcher's and English's claim rule) was
+  still the pre-`6b0f7e5` first-overlap-wins version**, despite its own
+  docstring calling it "main's rule": it inspected the first overlapping span
+  and returned, so a correct wider claim was discarded on the strength of one
+  earlier partial one. Ported main's covers-every-overlap version. Tested:
+  `tests/test_name_layer_mechanism.py::test_shared_claim_replaces_every_span_it_covers_not_just_the_first`,
+  `::test_shared_claim_is_all_or_nothing_over_multiple_overlaps`.
+- **`de._is_organisational` used the full exclusion union, including every
+  registered language's TEMPORAL set**, which exists to keep month names out
+  of the GIVEN rule and not to gate a signature line: "Mit freundlichen
+  Gruessen\nMai Schmidt" lost its own signature, "Mai" being German for May
+  as well as a given name. Restricted to the ORGANISATIONAL and LEGAL_FORMS
+  unions, which cost nothing measured and keep the cross-language protection
+  ("Kind regards\nAccounts Payable", "...\nNordstern Limited") the union was
+  for. Tested:
+  `tests/test_name_layer_enumeration_limit.py::test_a_temporal_given_name_signs_a_letter`,
+  `::test_english_organisational_and_legal_form_words_still_refuse_a_german_signature`.
+
+  **Decided by the owner (Felix, 2026-09-24): the restricted union is
+  kept.** An adversarial differential (3,724 generated inputs) found 30
+  where this restricted union claims less than main's own
+  `_is_organisational` (German's ORGANISATIONAL table alone, no union at
+  all), and they are not one shape: 25 are a fuzzer-built "[given name from
+  `{Karl-Heinz, Mai}`] [organisational-union word from `{Finance, Sales,
+  Office, Legal, Payable}` standing in as a fake surname]" - main's simpler
+  check does not recognise any of those five as organisational (they are
+  English words, absent from German's own table) and claims the two-word
+  string as a person, which this layer correctly refuses. The other 5 are
+  the two real false positives the restricted union exists to close,
+  reappearing under main's simpler check: `Accounts Payable` (×3 - the bare
+  "Kind regards" form, the "...Shared Service Centre..." form, and the "Mit
+  freundlichen Gruessen" form), `Customer Services` (×1), `Nordstern
+  Limited` (×1). Matching main exactly (dropping the ORGANISATIONAL/
+  LEGAL_FORMS union too) would close the 25 but reopen those 5 in the real
+  77-document English corpus (10 -> 12 FP spans, 1.21% -> 1.61% character
+  loss) and fail 7 tests already in this suite; the restricted union kept
+  here costs the 25, all adversarially generated and none in this
+  repository's own corpus, and keeps every existing measurement unchanged.
+  See commit `a4c28fd` for the full 30-input list and both options' numbers.
 
 ### Found, not fixed
 
