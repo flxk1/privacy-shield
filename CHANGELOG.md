@@ -124,7 +124,7 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `tests/test_redaction_result_boundary.py`, every `RedactionMode`, with an
   `include_original` negative control.
 
-- **`scan --json` no longer prints an overlay the originals are still in.** Under `detect_only` nothing redacts and under `block` the redactor refuses, so `overlay` was the untouched original while `egress_allowed` was True; `to_dict()` already omitted the span `value`/`context` but returned `overlay` as is, and verbatim emails and IBANs reached stdout. `overlay` is now `null` whenever a detected value is still in it, the omission is named in `overlay_withheld`, `--out` writes no `.overlay.txt` for that document, and the human output says it withheld one. `include_original=True` / `--include-original-values` still returns it. `egress_allowed` is unchanged: it answers the source-classification question, not a residual one (`docs/limits.md`). New `DocumentScan.overlay_residual`.
+- **`scan --json` no longer prints an overlay the originals are still in.** Under `detect_only` nothing redacts, and under `block` the redactor may refuse (it does for an IBAN), and then `overlay` was the untouched original while `egress_allowed` was True; `to_dict()` already omitted the span `value`/`context` but returned `overlay` as is, and verbatim emails and IBANs reached stdout. `overlay` is now `null` whenever a detected value is still in it, the omission is named in `overlay_withheld`, `--out` writes no `.overlay.txt` for that document, and the human output says it withheld one. `include_original=True` / `--include-original-values` still returns it. `egress_allowed` is unchanged: it answers the source-classification question, not a residual one (`docs/limits.md`). New `DocumentScan.overlay_residual`, read per detected span: its `value` still in the overlay, or a `value` that is empty or is not the source at its offsets, since the local-model layer records a hint as `value` with `end = start + 10`. Tested: `tests/test_overlay_residual_boundary.py`, every `RedactionMode` × `PrivacyMode` over German, English, IBAN, email and name-only input, with an `include_original` negative control.
 
 - **A table's header applies to that table only** - in English as well. The
   shared probe held one flag over the whole document, so a parts table after a
@@ -196,6 +196,14 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Found, not fixed
 
+- **The local-model layer's spans have made-up offsets.** `scanner.py` gives a
+  layer-5 finding `end = start + 10` and its `value_hint` as `value`, so under
+  `redact` the redactor replaces ten characters from the start position and
+  the rest of the detected text stays in `DocumentScan.overlay`. The serialised
+  report withholds such an overlay; the object still carries it.
+- **`AnonymisationResult.to_dict()` carries the input.** In `assess` mode
+  `processed_text` is the text unchanged. A separate skill API, not the scan
+  overlay.
 - An eighth residue class in the identifier layer, found by
   `tests/test_leak_invariant.py::test_release_gate_property` during this change
   and reproducing unchanged at `521fec2`: a Luhn-valid window assembled from a

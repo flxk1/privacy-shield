@@ -175,6 +175,8 @@ class DocumentScan:
     placeholder_count: int = 0
     audit_id: Optional[str] = None
     errors: List[str] = field(default_factory=list)
+    # Set by the runner, which still holds the source text; a count, never an original.
+    source_residual: int = field(default=0, repr=False)
 
     @property
     def span_count(self) -> int:
@@ -199,15 +201,19 @@ class DocumentScan:
 
     @property
     def overlay_residual(self) -> int:
-        """How many distinct detected values are still verbatim in `overlay`.
+        """How many detected spans' originals are still verbatim in `overlay`.
 
-        Under DETECT_ONLY nothing redacts and under BLOCK the redactor refuses,
-        so `overlay` is the untouched original while `egress_allowed` can be
-        True: the gate rules on source classification, not on the residual.
-        Read span by span against the detected values, not from
-        `placeholder_count`, which counts what was replaced, not what was left.
+        Under DETECT_ONLY nothing redacts and under BLOCK the redactor may
+        refuse, and then `overlay` is the untouched original while
+        `egress_allowed` can be True: the gate rules on source classification,
+        not on the residual. Read span by span, not from `placeholder_count`,
+        which counts what was replaced, not what was left. A span's `value` is
+        not always its original - the local-model layer records a hint - so the
+        runner also counts every span whose `value` is not the source at its
+        offsets (`_residual`).
         """
-        return len({s.value for s in self.spans if s.value and s.value in self.overlay})
+        by_value = len({s.value for s in self.spans if isinstance(s.value, str) and s.value and s.value in self.overlay})
+        return max(self.source_residual, by_value)
 
     def to_dict(self, *, include_original: bool = False) -> Dict[str, Any]:
         # `overlay` is withheld, and the omission named, whenever a detected
@@ -517,6 +523,17 @@ def _spans_from(result: ShieldResult) -> List[SpanFinding]:
     ]
 
 
+def _residual(source: str, overlay: str, findings) -> int:
+    """Detected spans whose original may still be in *overlay*: a `value` still
+    in it, and every span whose `value` is empty, not a string, or not the
+    source at its offsets - the redactor rewrote those offsets, not what the
+    layer found, and the local-model layer records its hint (which may be null)
+    as `value`, with `end = start + 10`."""
+    values = [f.value if isinstance(f.value, str) else "" for f in findings]
+    misplaced = sum(1 for f, v in zip(findings, values) if not v or (source and source[f.start:f.end] != v))
+    return misplaced + len({v for v in values if v.strip() and v in overlay})
+
+
 def _process_one(
     shield: PrivacyShield,
     gate: PrivacyGate,
@@ -544,6 +561,7 @@ def _process_one(
     )
 
     return DocumentScan(
+        source_residual=_residual(result.extracted_text, overlay, result.findings),
         source=source,
         input_type=result.input_type.value,
         overlay=overlay,

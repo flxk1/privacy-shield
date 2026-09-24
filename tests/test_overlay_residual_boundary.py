@@ -33,6 +33,10 @@ _INPUTS = [
                 "his card is 4111 1111 1111 1111.", ()),
     ("iban", f"Bitte überweisen Sie den Betrag auf das Konto {_IBAN}.", (_IBAN,)),
     ("email", f"Reply to {_EMAIL} before Friday.", (_EMAIL,)),
+    # a name alone: beside a high-confidence identifier, a guard that only counted
+    # high-confidence spans still withheld the overlay and passed every cell above.
+    ("german-name", "Bitte rufen Sie Frau Erika Mustermann morgen an.", ()),
+    ("english-name", "Please call Mr John Smith tomorrow about the invoice.", ()),
 ]
 _SALT = "a" * 64
 
@@ -142,3 +146,38 @@ def test_the_cli_json_and_out_paths(tmp_path, capsys, redaction):
 
     main(["scan", str(document), "--json", "--redaction-mode", redaction, "--include-original-values"])
     assert _EMAIL in capsys.readouterr().out
+
+
+def test_a_bare_name_under_detect_only_is_withheld():
+    """Not vacuous: the name layer finds it at medium confidence, alone."""
+    report = _scan("Bitte rufen Sie Frau Erika Mustermann morgen an.",
+                   PrivacyMode.STANDARD, RedactionMode.DETECT_ONLY)
+    doc = report.documents[0]
+    assert doc.spans and all(s.confidence != "high" for s in doc.spans)
+    out = report.to_dict()["documents"][0]
+    assert out["overlay"] is None and "Mustermann" not in json.dumps(report.to_dict())
+
+
+@pytest.mark.parametrize("hint", ["Alter Wasserturm 7", "", None])
+@pytest.mark.parametrize("redaction", [RedactionMode.DETECT_ONLY, RedactionMode.REDACT,
+                                       RedactionMode.PSEUDONYMIZE, RedactionMode.BLOCK])
+def test_a_span_whose_value_is_not_its_original_is_still_withheld(monkeypatch, redaction, hint):
+    """The local-model layer records a `value_hint`, not the matched text, and
+    `end = start + 10`: under detect_only a residual read from `value` alone let
+    the overlay out verbatim, and under redact the redactor replaced ten
+    characters and let the rest of the address out."""
+    import privacy_shield.services.local_model_runtime as runtime
+
+    text = "treffpunkt ist wie immer am alten wasserturm 7 hinten."
+    hit = {"type": "address", "value_hint": hint, "start_pos": text.index("am alten")}
+    monkeypatch.setattr(runtime, "is_local_model_available", lambda *a, **k: True)
+    monkeypatch.setattr(runtime, "detect_pii_with_local_model", lambda t, **k: {
+        "detected_pii": [hit], "confidence": 0.9, "categories": ["address"],
+        "safe_to_send_external": False, "error": None})
+    report = scan(text, mode=PrivacyMode.STANDARD, redaction_mode=redaction, force_text=True)
+    doc = report.documents[0]
+    span = doc.spans[0]
+    assert [s.layer for s in doc.spans] == [5] and span.value != text[span.start:span.end]
+    out = report.to_dict()["documents"][0]
+    assert out["overlay"] is None and "overlay_withheld" in out
+    assert "asserturm" not in json.dumps(report.to_dict())
