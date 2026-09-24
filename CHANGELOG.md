@@ -109,6 +109,8 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **`scan --json` no longer prints an overlay the originals are still in.** Under `detect_only` nothing redacts and under `block` the redactor refuses, so `overlay` was the untouched original while `egress_allowed` was True; `to_dict()` already omitted the span `value`/`context` but returned `overlay` as is, and verbatim emails and IBANs reached stdout. `overlay` is now `null` whenever a detected value is still in it, the omission is named in `overlay_withheld`, `--out` writes no `.overlay.txt` for that document, and the human output says it withheld one. `include_original=True` / `--include-original-values` still returns it. `egress_allowed` is unchanged: it answers the source-classification question, not a residual one (`docs/limits.md`). New `DocumentScan.overlay_residual`.
+
 - **A table's header applies to that table only** - in English as well. The
   shared probe held one flag over the whole document, so a parts table after a
   person table had its product column claimed and a person table after a parts
@@ -178,6 +180,8 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   See commit `a4c28fd` for the full 30-input list and both options' numbers.
 
 ### Found, not fixed
+
+- **`RedactionResult.to_dict()` carries originals.** Under `pseudonymize` and `hash`, `mappings` is keyed by the detected value. Neither `scan()` nor the CLI serialises a `RedactionResult`, but a caller of `Redactor.redact(...).to_dict()` gets the original.
 
 - An eighth residue class in the identifier layer, found by
   `tests/test_leak_invariant.py::test_release_gate_property` during this change
