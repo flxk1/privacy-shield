@@ -109,6 +109,15 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **`RedactionResult.to_dict()` no longer carries the originals.** Under
+  `pseudonymize` and `hash`, `mappings` is keyed by the detected value, and a
+  `Redactor` keeps that map across calls, so a result also carried every
+  earlier document's originals. `mappings` is now `null` unless
+  `include_original=True`, and `mappings_withheld` names the omission.
+  `scan()` and the CLI never serialised a `RedactionResult`. Tested:
+  `tests/test_redaction_result_boundary.py`, every `RedactionMode`, with an
+  `include_original` negative control.
+
 - **A table's header applies to that table only** - in English as well. The
   shared probe held one flag over the whole document, so a parts table after a
   person table had its product column claimed and a person table after a parts

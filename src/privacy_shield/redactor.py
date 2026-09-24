@@ -60,7 +60,12 @@ class RedactionResult:
     blocked: bool = False
     block_reason: Optional[str] = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self, *, include_original: bool = False) -> dict:
+        """`mappings` is keyed by the ORIGINAL detected value under pseudonymize
+        and hash, and a hash value is itself a verifier for it. It is withheld
+        unless asked for - the same boundary as `runner.SpanFinding.to_dict`.
+        """
+        withheld = bool(self.mappings) and not include_original
         return {
             "mode": self.mode.value,
             "selection_mode": self.selection_mode.value,
@@ -69,7 +74,8 @@ class RedactionResult:
             "regions_excluded": self.regions_excluded,
             "blocked": self.blocked,
             "block_reason": self.block_reason,
-            "mappings": self.mappings,
+            "mappings": None if withheld else dict(self.mappings),
+            "mappings_withheld": withheld,
             "finding_count": len(self.findings),
         }
 
