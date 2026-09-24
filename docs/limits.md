@@ -270,6 +270,29 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   overlaps characters another validated identifier owns, **every piece of it
   nobody owns that is at least `MATERIAL_RESIDUE` characters long is claimed.**
 
+  The union rule's price, measured not assumed: the whole IBAN is always
+  covered and there are no split spans.
+
+  **Forward:** a coincidental header-shaped window anywhere inside a
+  letter-bearing BBAN passes mod-97 (~1 in 97 once such a window exists) and
+  stretches the claimed span into following text, bounded by that window's
+  own registered length - a few characters in a short sentence, 24 characters
+  over three words in the pinned FR case. Pinned: MT, IE, BG, LV, RO, FR
+  (`test_the_forward_overclaim_is_pinned_not_fixed`,
+  `test_the_forward_overclaim_can_run_past_the_first_word`).
+
+  **Backward:** for any country's IBAN, a header-shaped token right before it
+  (e.g. `GB82`) forms a window with the IBAN's own opening characters and
+  pulls the span's start back, about 1% of draws, measured on DE, AT, FI,
+  NL, MT, IE, BG and FR. Not a letter-bearing-BBAN mechanism. Pinned: MT, DE
+  (`test_the_overclaim_can_run_backward_from_a_preceding_header_shaped_token`).
+
+  Measured, not pinned - per-IBAN forward rate in this package's own three
+  test sentences: BG ~0.5%, IE ~0.3%, MT ~0.2–0.4%, RO <0.1%, LV ~0.01%.
+
+  Kept deliberately: the over-claim never leaks and never leaves a
+  validating window partially covered.
+
   Round 19 restricted that to windows sitting inside one unbroken group, and
   that was **a refusal wearing a precondition** — the very thing the sentence
   above says may never decide a redaction. A card written in four groups of

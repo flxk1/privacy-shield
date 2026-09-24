@@ -13,6 +13,8 @@ of one layer must not be read as a certificate for the other.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from privacy_shield.identifiers import (
@@ -69,6 +71,33 @@ def _iban_for(country: str) -> str:
     return str(_schwifty.IBAN.random(country_code=country))
 
 
+def _assert_iban_fully_covered(sentence, iban):
+    """Exactly one span, starting at the IBAN and covering it whole.
+
+    Not `== [iban]`: a letter-bearing BBAN can coincidentally validate a
+    window that overruns into the next word (see the pinned forward-overclaim
+    tests below), and the union rule in `_claim` keeps that window rather
+    than truncating it. What must still hold, and what a missed IBAN, a
+    truncated one, a shifted start, a short end or a split into two spans
+    would all violate: one span, starting exactly on the IBAN, whose `(start,
+    end)` covers exactly `value` (checked against the alphanumerics of
+    `sentence[start:end]`, since `value` is the run compacted of whitespace),
+    and whose value is the IBAN plus at most a prefix of the word immediately
+    following it.
+    """
+    spans = find_ibans(sentence)
+    assert len(spans) == 1, (sentence, spans)
+    start, end, value = spans[0]
+    assert start == sentence.index(iban), (sentence, spans)
+    compacted = "".join(ch for ch in sentence[start:end] if ch.isalnum())
+    assert compacted == value, (sentence, spans)
+    assert value.startswith(iban), (sentence, spans)
+    overclaim = value[len(iban):]
+    following = sentence[start + len(iban):].lstrip()
+    next_word = re.match(r"\w*", following).group(0)
+    assert next_word.startswith(overclaim), (sentence, spans, next_word)
+
+
 @pytest.mark.parametrize("country", sorted(EU_COUNTRIES))
 def test_every_eu_country_has_a_registered_iban_length(country):
     assert country in IBAN_LENGTHS, EU_COUNTRIES[country]
@@ -82,6 +111,15 @@ def test_an_iban_from_every_eu_country_is_found_inside_prose(country):
     Five rather than one because the generator is random: a single example can
     miss a structural form the detector mishandles, and the point of borrowing
     the oracle is to stop choosing the examples ourselves.
+
+    Asserts coverage, not exact equality: a letter-bearing BBAN (here mostly
+    MT, IE, BG, RO, LV - rates and mechanism in `docs/limits.md`) can
+    coincidentally validate a window that runs into the next word, kept by
+    the union rule and pinned exactly below. Equality would make this test
+    intermittently fail on real IBANs, in these three short sentences at a
+    per-IBAN rate of roughly 0.5% (BG) down to 0.01% (LV), without catching
+    anything an untruncated, single, correctly anchored span would not also
+    catch.
     """
     for _ in range(5):
         iban = _iban_for(country)
@@ -91,10 +129,7 @@ def test_an_iban_from_every_eu_country_is_found_inside_prose(country):
             f"Payment to {iban} please.",
             f"Maksu tilille {iban} kiitos.",
         ):
-            assert [value for _s, _e, value in find_ibans(sentence)] == [iban], (
-                country,
-                sentence,
-            )
+            _assert_iban_fully_covered(sentence, iban)
 
 
 @requires_schwifty
@@ -126,6 +161,100 @@ def test_our_own_iban_arithmetic_was_wrong_and_this_is_how_we_know():
         except Exception:
             rejected.append(country)
     assert rejected == ["BG", "IE", "IT", "LV", "MT", "NL", "RO"], rejected
+
+
+#: Real reproductions of the forward overclaim: somewhere inside a
+#: letter-bearing BBAN (the pinned LV shape starts at offset 8, in the
+#: account part, not at the bank code), a window happens to read as a
+#: registered country header, so the coincidental window's mod-97 check
+#: passes and `_claim`'s union rule extends the span into the following
+#: word. Each was confirmed against `iban_ok` and `schwifty.IBAN` before
+#: being pinned.
+FORWARD_OVERCLAIM_SHAPES = [
+    ("MT51QSHU044290KHHZAXXRG8DMSH9AL", "Zahlung an {iban} bitte.",
+     "MT51QSHU044290KHHZAXXRG8DMSH9ALbit"),
+    ("MT72HNRE31749MZRMGD53UZINWQU9M4", "Payment to {iban} please.",
+     "MT72HNRE31749MZRMGD53UZINWQU9M4pl"),
+    ("IE73UNCR56051804308862", "Payment to {iban} please.",
+     "IE73UNCR56051804308862please"),
+    ("BG56INGB879070RF5AYZFF", "Maksu tilille {iban} kiitos.",
+     "BG56INGB879070RF5AYZFFkiitos"),
+    ("LV92HANDFK95IOFRNXV8B", "Zahlung an {iban} bitte.",
+     "LV92HANDFK95IOFRNXV8Bbitte"),
+    ("RO10INGB86ERZ4M64QWHWSYJ", "Payment to {iban} please.",
+     "RO10INGB86ERZ4M64QWHWSYJplea"),
+]
+
+
+@requires_schwifty
+@pytest.mark.parametrize("iban, template, claimed", FORWARD_OVERCLAIM_SHAPES)
+def test_the_forward_overclaim_is_pinned_not_fixed(iban, template, claimed):
+    """A kept behaviour, not a bug: the union rule extends each of these real
+    IBANs' spans into the next word's opening letters, exactly this far."""
+    assert iban_ok(iban)
+    assert _schwifty.IBAN(iban)
+    sentence = template.format(iban=iban)
+    assert [value for _s, _e, value in find_ibans(sentence)] == [claimed]
+
+
+@pytest.mark.parametrize("iban, _template, _claimed", FORWARD_OVERCLAIM_SHAPES)
+def test_the_same_ibans_are_claimed_exactly_without_a_following_word(
+    iban, _template, _claimed
+):
+    """The overclaim needs an alphanumeric word right after the IBAN: alone,
+    or followed only by a sentence terminator, each is claimed exactly."""
+    assert [value for _s, _e, value in find_ibans(iban)] == [iban]
+    assert [value for _s, _e, value in find_ibans(f"{iban}.")] == [iban]
+
+
+@requires_schwifty
+def test_the_forward_overclaim_can_run_past_the_first_word():
+    """Pins that the over-claim is bounded by the coincidental window's own
+    registered length, not by the next word: a real French IBAN whose
+    over-claim runs 24 characters into three following words.
+
+    Reproduced from `docs/limits.md`'s measurement, confirmed against
+    `iban_ok` and `schwifty.IBAN` before being pinned.
+    """
+    iban = "FR881990680631JNRBWNCBXML39"
+    assert iban_ok(iban)
+    assert _schwifty.IBAN(iban)
+    sentence = f"Payment to {iban} please transfer immediately tomorrow morning."
+    claimed = "FR881990680631JNRBWNCBXML39pleasetransferimmediatel"
+    assert [value for _s, _e, value in find_ibans(sentence)] == [claimed]
+
+
+#: Real reproductions of the backward overclaim: a header-shaped token right
+#: before the IBAN (here `GB82`) forms, with the IBAN's own opening
+#: characters, a window that coincidentally passes mod-97 - the same union
+#: rule pulling the claimed span's start backward instead of forward. Not a
+#: letter-bearing-BBAN mechanism: DE and AT/FI-shaped BBANs are all digits,
+#: so this reproduces for any country. Each was confirmed against `iban_ok`
+#: and `schwifty.IBAN` before being pinned.
+BACKWARD_OVERCLAIM_SHAPES = [
+    ("MT85DNRE69277BVRIACJUA2IFSWT6HJ", "GB82MT85DNRE69277BVRIACJUA2IFSWT6HJ"),
+    ("DE36711600009423455025", "GB82DE36711600009423455025"),
+]
+
+
+@requires_schwifty
+@pytest.mark.parametrize("iban, claimed", BACKWARD_OVERCLAIM_SHAPES)
+def test_the_overclaim_can_run_backward_from_a_preceding_header_shaped_token(
+    iban, claimed
+):
+    """Pins that the union rule extends a span backward, not only forward,
+    for any country: found by looping `schwifty.IBAN.random(...)` against
+    `Code GB82 {iban} ok.` (MT: 150 draws to the first hit; DE: 160),
+    confirmed against `iban_ok` and `schwifty.IBAN` before being pinned."""
+    assert iban_ok(iban)
+    assert _schwifty.IBAN(iban)
+    sentence = f"Code GB82 {iban} ok."
+    spans = find_ibans(sentence)
+    assert [value for _s, _e, value in spans] == [claimed]
+    start, end, _value = spans[0]
+    idx = sentence.index(iban)
+    assert start < idx
+    assert start <= idx and idx + len(iban) <= end
 
 
 @pytest.mark.parametrize(
