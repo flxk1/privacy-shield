@@ -111,15 +111,24 @@ def line_spans(text: str) -> List[Tuple[int, int, str]]:
 def claim(spans: List[Span], start: int, end: int, text: str) -> None:
     """Add a claim, preferring the WIDER of two overlapping ones.
 
-    Main's rule, adopted here for the dispatcher and for English. It used to
-    be all-or-nothing: any overlap and the new claim was dropped. So when the
-    title rule claimed the given names of a four-part name, the wider claim
-    that would have included the surname was refused and the surname egressed.
-    A narrower claim is now replaced rather than defended.
+    Main's rule (`6b0f7e5`), adopted here for the dispatcher and for English.
+    A claim only replaces spans it overlaps when it covers EVERY one of them;
+    inspecting the first overlap and returning let a correct later claim be
+    discarded on the strength of one earlier partial one - the same defect
+    `de.py`'s own `_claim` carried before that fix.
     """
-    for index, (existing_start, existing_end, _value) in enumerate(spans):
-        if start < existing_end and existing_start < end:
-            if start <= existing_start and end >= existing_end:
-                spans[index] = (start, end, text[start:end])
-            return
-    spans.append((start, end, text[start:end]))
+    overlapping = [
+        index
+        for index, (existing_start, existing_end, _value) in enumerate(spans)
+        if start < existing_end and existing_start < end
+    ]
+    if not overlapping:
+        spans.append((start, end, text[start:end]))
+        return
+    if all(
+        start <= spans[index][0] and end >= spans[index][1]
+        for index in overlapping
+    ):
+        for index in reversed(overlapping):
+            del spans[index]
+        spans.append((start, end, text[start:end]))

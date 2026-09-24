@@ -276,3 +276,29 @@ def test_a_pathological_line_does_not_make_the_name_layer_hang(label, text):
     find_names(text)
     elapsed = time.perf_counter() - started
     assert elapsed < 2.0, f"{label}: {elapsed:.1f}s"
+
+
+# ---------------------------------------------------------------------------
+# shared.claim ported main's 6b0f7e5 covers-every-overlap rule for the
+# dispatcher and English; it had regressed to the pre-fix first-overlap-wins
+# behaviour despite its own docstring claiming otherwise.
+# ---------------------------------------------------------------------------
+
+def test_shared_claim_replaces_every_span_it_covers_not_just_the_first():
+    from privacy_shield.name_layer.shared import claim
+
+    text = "Anna Schmidt Peter Weber"
+    spans = [(0, 12, "Anna Schmidt"), (13, 24, "Peter Weber")]
+    claim(spans, 0, 24, text)
+    assert spans == [(0, 24, text)], spans
+
+
+def test_shared_claim_is_all_or_nothing_over_multiple_overlaps():
+    from privacy_shield.name_layer.shared import claim
+
+    text = "Anna Schmidt Peter Weber"
+    spans = [(0, 12, "Anna Schmidt"), (13, 24, "Peter Weber")]
+    # A claim covering only the first of two overlapping spans is refused,
+    # exactly as it is refused when it covers only one span of one.
+    claim(spans, 0, 18, text[:18])
+    assert spans == [(0, 12, "Anna Schmidt"), (13, 24, "Peter Weber")]

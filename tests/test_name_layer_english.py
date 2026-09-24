@@ -8,14 +8,22 @@ person.
 
 MEASURED through the scanner, on 77 English documents containing no personal
 data (12 development, 8 held out, 29 adversarial, 20 written against the
-probes, 8 written against the exclusions) and on 29 documents with names:
+probes, 8 written against the exclusions) and on 29 documents with names.
+German is always one of the resolved languages now (`detect.resolve`: a
+declared or detected language may only ADD to German, never replace it -
+main's rules run everywhere), so the recall columns below are the UNION with
+German's GIVEN rule, not English alone; the FP/char-loss columns are not
+affected because none of German's own added claims lands outside a genuine
+name - see the recall table's own footnote and
+tests/test_name_layer_cross_language.py for the precision measurement that
+checks this holds on German's own clean corpus too:
 
                             clean docs                documents with names
                             FP spans  char loss       recall    precision
-    development                 0        0.00%        13/21       13/13
-    held out                    0        0.00%        11/15       11/11
+    development                 0        0.00%        16/21       16/16
+    held out                    0        0.00%        12/15       12/12
     adversarial (three batches) 10       1.21%          -           -
-    independent positions       -          -           8/21        8/8
+    independent positions       -          -          10/21       10/10
 
 THE TEN FALSE POSITIVES ARE THREE NAMED CLASSES, not a number:
 
@@ -38,8 +46,9 @@ THE TEN FALSE POSITIVES ARE THREE NAMED CLASSES, not a number:
     characters of those eight short documents.
 
 WHAT EACH PROBE COSTS AND BUYS, over the same 77 clean documents, English
-rules alone (the shipped dispatcher scores one name higher on the independent
-corpus because the German GIVEN rule also runs):
+rules ALONE (`en.find_names`, not the shipped dispatcher - see the recall
+table above for the union with German's always-on GIVEN rule, which is 3
+higher on the named corpora and 3 higher on the independent one):
 
     variant                          FP    named   independent
     core + table + agency [SHIPPED]  10    24/36      7/21
@@ -51,14 +60,20 @@ corpus because the German GIVEN rule also runs):
       + name_line                    25    24/36     10/21
       + all six candidates           29    36/36     20/21
 
-THE LABEL PROBE IS WITHDRAWN, and it is the largest single recall loss in this
-file: 12 of 36 named occurrences and 6 of 21 independent ones, for no measured
-false positive on any of the 77 documents. It is withdrawn anyway, because
-German's identical probe was also free on its own corpora - the owner approved
-it on a measured zero - and produced 18 false-positive spans on the first
-independent corpus it met. A label and a colon are evidence that a VALUE
-follows, not that the value is a person, and the enumeration that decides the
-difference fails OPEN. See the note in `name_layer/en.py`.
+THE LABEL PROBE IS WITHDRAWN, and it is the largest single recall loss in
+English's OWN rules: 12 of 36 named occurrences and 6 of 21 independent ones,
+for no measured false positive on any of the 77 documents. It is withdrawn
+anyway, because German's identical probe was also free on its own corpora -
+the owner approved it on a measured zero - and produced 18 false-positive
+spans on the first independent corpus it met. A label and a colon are
+evidence that a VALUE follows, not that the value is a person, and the
+enumeration that decides the difference fails OPEN. See the note in
+`name_layer/en.py`. Some of the label positions this cost - the ones the
+label VALUE is also a German-recognised given name plus surname, such as
+"From: Sarah Villanueva" - are recovered anyway once German's GIVEN rule runs
+unconditionally, not by English's probe; that is the 3-name gap between
+English alone and the dispatcher above, and it is a different mechanism from
+the one that was withdrawn.
 
 THE HELD-OUT HALVES were written before the rules and not looked at until the
 design was frozen. The second adversarial batch was written against the probes
@@ -158,10 +173,13 @@ def test_the_adversarial_false_positives_are_exactly_the_named_class(scanner):
     assert len(claimed) == 10, claimed
 
 
-#: Recall on the named corpora, pinned in BOTH directions. It is no longer
-#: 100%: withdrawing the label probe made every name that occurs only after a
-#: label invisible, and that is 12 of the 36.
-NAMED_RECALL = {"development": (13, 21), "held out": (11, 15)}
+#: Recall on the named corpora (through the dispatcher, German always-on),
+#: pinned in BOTH directions. It is no longer 100%: withdrawing the label
+#: probe made every name that occurs only after a label invisible to
+#: English's OWN rules - 12 of the 36 - and German's always-on GIVEN rule
+#: recovers 3 of those 12 (the ones whose label value is also a German given
+#: name plus surname), leaving 9/36 actually missed here.
+NAMED_RECALL = {"development": (16, 21), "held out": (12, 15)}
 
 
 @pytest.mark.parametrize(
@@ -201,7 +219,9 @@ def test_nothing_but_the_english_name_is_claimed(corpus, label, scanner):
     assert not extra, f"{label}: {extra}"
 
 
-ENGLISH_INDEPENDENT_RECALL = 8
+#: Through the dispatcher (German always-on); English's rules alone measure
+#: 7/21 (see the ablation table above).
+ENGLISH_INDEPENDENT_RECALL = 10
 ENGLISH_INDEPENDENT_TOTAL = 21
 
 
@@ -269,9 +289,14 @@ def test_an_english_non_person_is_not_claimed(text, scanner):
         ("Kind regards\nLaura Whitfield\nHead of Procurement\n", ["Laura Whitfield"]),
         ("Regards\nBen\n", ["Ben"]),
         ("Attn: Helen Ferreira\n", ["Helen Ferreira"]),
-        # and the position the withdrawn label probe used to cover, now empty
+        # and the position the withdrawn label probe used to cover: still
+        # empty for a bare surname English's rules alone have no way to
+        # claim, but "Sarah" is also a German given name, and German's
+        # always-on GIVEN rule claims the full name after it regardless of
+        # the label - a different mechanism recovering part of the same
+        # position, not the withdrawn probe coming back.
         ("Caseworker: Ashcroft\n", []),
-        ("From: Sarah Villanueva\n", []),
+        ("From: Sarah Villanueva\n", ["Sarah Villanueva"]),
         ("Liam O'Donnell\n12 Bridge Street\nBristol BS1 5TR\n", ["Liam O'Donnell"]),
         ("The report was prepared by Jane Elliott.\n", ["Jane Elliott"]),
         ("The audit was signed off by Paul Mensah.\n", ["Paul Mensah"]),

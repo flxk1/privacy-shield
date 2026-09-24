@@ -407,12 +407,21 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   produced 75% character loss and the choice belongs to the owner.
 ## The name layer, per language
 
-`find_names(text)` applies the rules of every language a document evidences and
-of all of them when it evidences none; `find_names(text, "en")` applies one
-declared language. A language is one module registering one `Ruleset` in
-`privacy_shield/name_layer/`, evidence is per language, and the exclusions are
-the union over every registered language plus the ISO 20275 legal forms —
-`name_layer/shared.py` states why that split and not another.
+`find_names(text)` applies the rules of every language a document evidences,
+of all of them when it evidences none, and of German always in addition to
+whatever else it evidences - German is the only language with independent
+measurements and detection is a routing hint, so it may only ADD a language,
+never drop German (`name_layer/detect.py::resolve`). `find_names(text, "en")`
+applies one declared language exactly, with no addition - that isolation is
+what the cross-language cost measurements below need. A language is one
+module registering one `Ruleset` in `privacy_shield/name_layer/`, evidence is
+per language, and the exclusions are the union over every registered
+language plus the ISO 20275 legal forms — `name_layer/shared.py` states why
+that split and not another. German's own signature-line filter
+(`de._is_organisational`) draws on the ORGANISATIONAL and LEGAL_FORMS unions
+only, never the TEMPORAL one - a month name is not a reason to refuse a
+signature, and "Mai"/"Jan" are both German calendar abbreviations and German
+given names.
 
 **Two languages have rules. Twenty-two do not, and are `unmeasured`.**
 `unmeasured` is not `unsupported`: an unrecognised or undeclared language is
@@ -425,9 +434,17 @@ Estonian, and this table says so rather than counting it as coverage.
 |---|---|---|---|---|---|---|---|
 | German (`de`) | in-repo, `tests/corpora_german.py` | 42 | 0 | 0.00% | 18 | 26/26 | 26/26 |
 | German (`de`) | independent positions | — | — | — | 11 | 7/21 | 7/7 |
-| English (`en`) | in-repo, `tests/corpora_english.py` | 77 | 10 | 1.21% | 18 | 24/36 | 24/24 |
-| English (`en`) | independent positions | — | — | — | 11 | 8/21 | 8/8 |
+| English (`en`), through the dispatcher | in-repo, `tests/corpora_english.py` | 77 | 10 | 1.21% | 18 | 28/36 | 28/28 |
+| English (`en`), through the dispatcher | independent positions | — | — | — | 11 | 10/21 | 10/10 |
 | other 22 official languages | none | — | — | — | — | unmeasured | unmeasured |
+
+English rules alone (no German addition, `en.find_names` directly) measure
+24/36 and 7/21 - the ablation table in
+`tests/test_name_layer_english.py` has the detail. The 4-name gap on the
+named corpora (3 on the independent one) is German's GIVEN rule firing on the
+label positions the withdrawn English probe would have covered, where the
+label's value is also a German given name plus surname ("From: Sarah
+Villanueva").
 
 The English 77 clean documents are 12 development, 8 held out, 29 adversarial,
 20 written against the probes and 8 written against the exclusions. The
@@ -438,9 +455,11 @@ The German numbers are main's, unchanged: probe A is withdrawn there and its
 English counterpart is withdrawn here, for the same reason - a label and a
 colon are evidence that a VALUE follows, and the enumeration that decides
 whether the value is a person fails OPEN. That withdrawal is the largest
-single recall loss in the English layer: 12 of 36 named occurrences and 6 of
-21 independent ones, for no false positive measured on any of the 77
-documents. It is withdrawn anyway, because German's identical probe was also
+single recall loss in English's OWN rules: 12 of 36 named occurrences and 6
+of 21 independent ones, for no false positive measured on any of the 77
+documents - German's always-on GIVEN rule recovers 4 and 3 of those
+respectively (see the recall table above), by a different mechanism than the
+withdrawn probe. It is withdrawn anyway, because German's identical probe was also
 free on its own corpora and cost 18 false-positive spans on the first
 independent corpus it met. The ten false positives are three named
 classes — a proper noun used as an agent (`Charles Schwab`, `Thames Valley`),
@@ -643,7 +662,7 @@ MIT, and the only two EU languages whose spaCy models are):
 |---|---|---|---|---|---|
 | German, ours | 42 | **0** | 0.00% | 26/26 | 7/21 |
 | German, Presidio | 42 | 10 | 1.63% | 20/26 | **14/21** |
-| English, ours | 77 | **10** | 1.21% | 24/36 | 8/21 |
+| English, ours (through the dispatcher) | 77 | **10** | 1.21% | 28/36 | 10/21 |
 | English, Presidio | 77 | 22 | 3.50% | **33/36** | **17/21** |
 
 **Presidio doubles the recall and doubles-to-triples the false positives.**
@@ -1062,6 +1081,26 @@ of the container-tag channel rather than a new one: ffprobe reports them given
 `-show_chapters`, and they flow through `tag_pii_type` like any other tag. A
 recording chaptered `Vernehmung Mustermann` now reports `title` in
 `pii_fields`; it previously did not appear even in `raw_tags`.
+
+**`de._is_organisational`'s restricted union (ORGANISATIONAL + LEGAL_FORMS,
+not TEMPORAL) is not a strict superset of main's own check on every input,
+UNRESOLVED, owner's call.** An adversarial differential of 3,724 generated
+inputs finds 30 - all one shape, "[a given name] [an ORGANISATIONAL-union
+word used as a fake surname]" such as "Kind regards\nKarl-Heinz Finance" -
+where main's simpler check (German's own ORGANISATIONAL table alone; German
+has no word for "Finance"/"Sales"/"Office"/"Legal"/"Payable") claims the
+two-word string as a person and this layer, correctly refusing an
+organisational word as a surname, does not. Matching main exactly (dropping
+the ORGANISATIONAL/LEGAL_FORMS union too) closes that differential to zero
+but reopens the two real false positives the union was built to close -
+`Accounts Payable` and `Customer Services`, both in the 77-document English
+corpus - moving the measured cost from 10 FP / 1.21% to 12 FP / 1.61% and
+failing 7 tests already in this suite. Tested (both directions, so a future
+change to either side is visible here):
+`tests/test_name_layer_enumeration_limit.py::test_a_temporal_given_name_signs_a_letter`,
+`tests/test_name_layer_enumeration_limit.py::test_english_organisational_and_legal_form_words_still_refuse_a_german_signature`;
+the 30-input differential itself is not in this repository's suite - it is
+adversarially generated, not corpus-measured - see the merge commit message.
 
 **A residue class distinct from the eighth (CRLF counting, fixed above),
 found by the gate's own property run during this change and reproducing

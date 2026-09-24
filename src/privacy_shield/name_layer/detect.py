@@ -58,13 +58,25 @@ def resolve(
 ) -> List[str]:
     """The rulesets to apply, in claim order.
 
-    * A declared language wins, and only registered ones are kept.
+    * A declared language wins, and only registered ones are kept. A
+      declaration is a promise the caller makes and the layer keeps it
+      exactly - including a language that is NOT German, which is why this
+      branch does not also add German: `find_names(text, "en")` isolates
+      English on purpose, for the cross-language measurement in
+      tests/test_name_layer_cross_language.py.
     * A declared language with no ruleset in this package falls back to the
       full union as a best effort. It is NOT silently treated as "no names":
       an unsupported language must not look like a clean document. Its status
       is `unmeasured` in `docs/limits.md` and it stays unmeasured until
       somebody builds a corpus for it.
     * Otherwise detection decides, and an undecided document gets everything.
+      German is always in that result when it is registered: it is the only
+      language with independent measurements, and detection is a routing hint
+      that may only ADD a language, never remove the one the docs promise is
+      always on. Before this, a document scoring even one English marker and
+      zero German ones dropped German's GIVEN rule entirely - "Kind
+      regards\\nJan Mueller" is closed with an English marker and carries a
+      German name, and detection may not cost it.
     """
     registered = registry.languages()
     if declared:
@@ -74,4 +86,9 @@ def resolve(
         if known:
             return known
         return registered
-    return detect(text) or registered
+    detected = detect(text)
+    if not detected:
+        return registered
+    if "de" in registered and "de" not in detected:
+        detected = detected + ["de"]
+    return detected

@@ -150,3 +150,61 @@ def test_detection_ranks_the_dominant_language_first():
     english = "Dear Sir or Madam, please find our letter attached for your records."
     assert detect.resolve(german)[0] == "de"
     assert detect.resolve(english)[0] == "en"
+
+
+# ---------------------------------------------------------------------------
+# German is always resolved: detection may only ADD a language, never drop
+# German. Before this, a document scoring one English marker and zero German
+# ones lost the German GIVEN rule entirely, and main's own docs promised the
+# opposite ("a wrong guess costs a wider union rather than a missed name").
+# Regressions pinned against main's behaviour on these exact inputs.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        pytest.param(
+            "Meeting with Julia Schmidt and Jan Müller on Monday.",
+            ["Julia Schmidt", "Jan Müller"],
+            id="english_detected_german_given_names",
+        ),
+        pytest.param(
+            "The employee named Erika Mustermann",
+            ["Erika Mustermann"],
+            id="english_frame_german_given_name",
+        ),
+        pytest.param(
+            "Kind regards\nJan Müller",
+            ["Jan Müller"],
+            id="english_signature_german_given_name",
+        ),
+        pytest.param(
+            "From: Sarah Villanueva",
+            ["Sarah Villanueva"],
+            id="english_label_german_given_name",
+        ),
+    ],
+)
+def test_german_given_names_are_found_even_when_english_is_the_detected_language(
+    text, expected
+):
+    assert "de" in detect.resolve(text)
+    assert [v for _s, _e, v in find_names(text)] == expected
+
+
+def test_detection_only_adds_languages_never_drops_german():
+    """`resolve` without a declaration is `detect(text) | {"de"}`, not
+    `detect(text)` alone - German is main's only measured layer and it runs
+    unconditionally."""
+    english_only = "Dear Sir or Madam, please find our letter attached."
+    assert detect.detect(english_only) == ["en"]
+    assert set(detect.resolve(english_only)) == {"en", "de"}
+
+
+def test_a_declared_language_still_isolates_when_it_excludes_german():
+    """The always-on rule is for undeclared detection only. An explicit
+    declaration is still a promise the layer keeps exactly - this is what
+    lets tests/test_name_layer_cross_language.py measure one language's
+    rules in isolation via a declared language."""
+    text = "| Position | Bearbeiter |\n| 10       | Osterloh   |\n"
+    assert find_names(text, "en") == []

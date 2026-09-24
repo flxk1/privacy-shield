@@ -161,3 +161,30 @@ def test_the_measured_cost_of_not_carrying_the_iso_table(text, claimed):
     rather than only in a document.
     """
     assert [value for _s, _e, value in find_names(text)] == claimed
+
+
+# ---------------------------------------------------------------------------
+# de._is_organisational is main's rule: German's own ORGANISATIONAL table
+# plus the ORGANISATIONAL/LEGAL_FORMS unions (never TEMPORAL - a month name
+# is not a reason to refuse a signature, and "Mai"/"Jan" are both German
+# calendar abbreviations and German given names).
+# ---------------------------------------------------------------------------
+
+def test_a_temporal_given_name_signs_a_letter():
+    """Regression: the exclusion union used to also carry every language's
+    TEMPORAL set into the signature-line filter, and "Mai" - May in German,
+    also a given name - refused its own signature."""
+    from privacy_shield.names import find_names as _find
+
+    assert [v for _s, _e, v in _find("Mit freundlichen Gruessen\nMai Schmidt\n")] == [
+        "Mai Schmidt"
+    ]
+
+
+def test_english_organisational_and_legal_form_words_still_refuse_a_german_signature():
+    """The cross-language protection the union bought is kept for
+    organisational words and legal forms - just not for temporal ones."""
+    from privacy_shield.names import find_names as _find
+
+    assert _find("Kind regards\nAccounts Payable\n") == []
+    assert _find("Kind regards\nNordstern Limited\n") == []

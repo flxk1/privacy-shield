@@ -147,14 +147,34 @@ Veranstaltungsbüro Beschaffung Disposition Fuhrpark Werkstatt
 def _is_organisational(candidate: str) -> bool:
     """A role or a department, not a person.
 
-    Held to the exclusion UNION rather than to the German table alone. The
-    German-only version claimed "Accounts Payable" under an English "Kind
-    regards" - German's closing formulae have always included the English
-    ones, so its signature rule has always been able to fire on an English
-    letter, and before the union it did so without English's reasons not to.
-    Measured by tests/test_name_layer_cross_language.py.
+    Main's rule: German's own ORGANISATIONAL table, and nothing else. The
+    exclusion UNION (`registry.exclusions()`) was tried here and withdrawn -
+    it pulled in every registered language's TEMPORAL set alongside the safe
+    organisational words, and TEMPORAL exists to keep month names out of the
+    GIVEN rule, not to gate a signature line: "Mit freundlichen Gruessen\\nMai
+    Schmidt" lost its own signature, "Mai" being German for May as well as a
+    given name.
+
+    The cross-language regressions the union was built for - "Kind
+    regards\\nAccounts Payable" and "Kind regards\\nNordstern Limited" under
+    German's closing formulae, which have always included the English ones -
+    are held instead by the ORGANISATIONAL and LEGAL_FORMS unions only
+    (`registry.exclusions().organisational` / `.legal_forms`), never the
+    temporal one, and by the same pairing English's own agency guard uses
+    (`en._frame_claim_survives_the_guards`): an organisational word or a
+    known legal form is never a person's name in any registered language,
+    which is not true of a month name and a given name sharing a spelling.
+    Measured by tests/test_name_layer_cross_language.py and
+    tests/test_name_layer_enumeration_limit.py.
     """
-    return registry.exclusions().blocks(candidate.split())
+    words = candidate.split()
+    if any(word in ORGANISATIONAL for word in words):
+        return True
+    exclusions = registry.exclusions()
+    return any(
+        word in exclusions.organisational or word in exclusions.legal_forms
+        for word in words
+    )
 
 
 def _line_spans(text: str) -> List[Tuple[int, int, str]]:
