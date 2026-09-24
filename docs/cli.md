@@ -65,7 +65,10 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
 
 `--json` reports each finding by type, position, confidence and layer, and
 **not** by its original text. `--include-original-values` adds `value` and
-`context` back. The default is closed because stdout is not always a terminal:
+`context` back, and with them any `overlay` a detected value is still in: under
+`detect_only` or `block` that overlay is the original, so by default it is `null`
+with the omission named in `overlay_withheld`, and `--out` does not write it.
+The default is closed because stdout is not always a terminal:
 `SKILL.md` grants `Bash(privacy-shield:*)`, and under that grant stdout is the
 model's context, which would put the original one pipe from an external
 service — the act this package's governance block prohibits. Ask for it when a

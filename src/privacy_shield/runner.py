@@ -197,11 +197,32 @@ class DocumentScan:
         """False when some PII channel never looked at this document."""
         return not self.incomplete_channels
 
+    @property
+    def overlay_residual(self) -> int:
+        """How many distinct detected values are still verbatim in `overlay`.
+
+        Under DETECT_ONLY nothing redacts and under BLOCK the redactor refuses,
+        so `overlay` is the untouched original while `egress_allowed` can be
+        True: the gate rules on source classification, not on the residual.
+        Read span by span against the detected values, not from
+        `placeholder_count`, which counts what was replaced, not what was left.
+        """
+        return len({s.value for s in self.spans if s.value and s.value in self.overlay})
+
     def to_dict(self, *, include_original: bool = False) -> Dict[str, Any]:
+        # `overlay` is withheld, and the omission named, whenever a detected
+        # value is still in it: the same boundary as the span `value`/`context`,
+        # since there it IS the original. `egress_allowed` is left as it is.
+        residual = 0 if include_original else self.overlay_residual
+        withheld = (
+            {"overlay_withheld": f"{residual} detected value(s) still present; not a cleaned overlay"}
+            if residual else {}
+        )
         return {
             "source": self.source,
             "input_type": self.input_type,
-            "overlay": self.overlay,
+            "overlay": None if residual else self.overlay,
+            **withheld,
             "span_count": self.span_count,
             "spans": [s.to_dict(include_original=include_original) for s in self.spans],
             "pii_detected": self.pii_detected,

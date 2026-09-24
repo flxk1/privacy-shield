@@ -6,9 +6,26 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
 
 - **The egress verdict is a source classification, not proof of anonymity.** The
   gate blocks LOCAL_ONLY / confidential / berufsgeheimnis / Art. 9 sources; a
-  non-confidential PII document passes and its redacted overlay leaves. The gate
-  leaves the overlay unscanned, so "cleared" stays short of a zero-residual
-  certificate.
+  non-confidential PII document passes, whatever its overlay still holds. The
+  gate leaves the overlay unscanned, so "cleared" stays short of a zero-residual
+  certificate — and under `detect_only` (nothing redacts) or `block` (the
+  redactor refuses) the overlay is the untouched original while
+  `egress_allowed` is True. That verdict is unchanged on purpose; the residual
+  is held at serialisation instead (next entry).
+- **A serialised report never carries an overlay a detected value is still in.**
+  `to_dict()` (and so `scan --json`) used to omit the span `value`/`context` but
+  return `overlay` as is, so `--json` printed verbatim emails and IBANs on 18 of
+  the 80 mode × redaction × input combinations the matrix covers — every one
+  under `detect_only` or `block`. `overlay` is now `null` whenever
+  `DocumentScan.overlay_residual` is non-zero, and the omission is named in
+  `overlay_withheld` rather than dropped silently; `--out` writes no
+  `.overlay.txt` for such a document and the human output says it withheld one.
+  `include_original=True` / `--include-original-values` still returns it.
+  `anonymous_json` builds its overlay from anonymised JSON whatever the
+  redaction mode, so it never has a residual to withhold. The residual is read
+  against the values the scan detected: a value no layer found is not withheld
+  and not counted, so this bounds the serialiser, not detection. Pinned by
+  `tests/test_overlay_residual_boundary.py`.
 - **Overlapping findings no longer splice the overlay.** This entry used to say
   placeholder fragments were "a known redactor artefact" of overlapping
   findings. They were not cosmetic — a spliced replacement left un-redacted PII

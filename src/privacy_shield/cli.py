@@ -74,6 +74,10 @@ def _write_overlays(report: ScanReport, out_dir: Path) -> List[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
     for doc in report.documents:
+        # a file named .overlay.txt is read as cleaned; one a detected value is
+        # still in (detect_only, block) is not written, as to_dict withholds it.
+        if doc.overlay_residual:
+            continue
         dest = out_dir / f"{_safe_name(doc.source)}.overlay.txt"
         dest.write_text(doc.overlay, encoding="utf-8")
         written.append(dest)
@@ -134,6 +138,10 @@ def _print_human(report: ScanReport, written: Optional[List[Path]]) -> None:
             out.write(f"    - {entry}\n")
     if written:
         out.write(f"overlays written: {len(written)} -> {written[0].parent}\n")
+    for doc in report.documents:
+        if doc.overlay_residual:
+            out.write(f"overlay withheld: {doc.source}: {doc.overlay_residual} detected "
+                      f"value(s) still present; not a cleaned overlay\n")
     if not report.all_allowed:
         # `all_allowed` is a conjunction of FOUR terms (see its docstring):
         # every document cleared the gate, every document was fully read, the
