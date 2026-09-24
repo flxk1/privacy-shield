@@ -115,6 +115,16 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   now asserts coverage, and the reproduced shapes, forward and backward, are
   pinned exactly.
 
+- **`scan --redaction-mode hash` works from the CLI.** `scan()` took a
+  `hash_salt` but the CLI had no way to pass one, so the mode always exited 1.
+  The salt now comes from `--hash-salt` or `PRIVACY_SHIELD_HASH_SALT`, and the
+  flag wins if both are set. The environment variable is the one to use: an
+  argument shows in the process list and shell history, and a known salt lets
+  anyone test guessed values against the hashes. With neither set, the CLI
+  exits 1 and names both. The salt reaches no output. `SKILL.md` tells an
+  agent to rely on the variable and never to pass, read or print the salt.
+  Tested: `tests/test_cli_hash_salt.py`.
+
 - **`RedactionResult.to_dict()` no longer carries the originals.** Under
   `pseudonymize` and `hash`, `mappings` is keyed by the detected value, and a
   `Redactor` keeps that map across calls, so a result also carried every

@@ -28,6 +28,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+import os
 from typing import List, Optional
 
 from ._legacy_env import reject_legacy_env
@@ -36,6 +37,8 @@ from .utils.file_io import path_exists
 from .runner import ScanReport, scan
 from .scanner import Confidence
 from .shield import PrivacyMode
+
+HASH_SALT_ENV = "PRIVACY_SHIELD_HASH_SALT"
 
 _MODES = {
     "STANDARD": PrivacyMode.STANDARD,
@@ -220,6 +223,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         )
         force_text = True
 
+    hash_salt = args.hash_salt or os.environ.get(HASH_SALT_ENV, "") or None
+    if redaction_mode is RedactionMode.HASH and not hash_salt:
+        sys.stderr.write(
+            f"error: --redaction-mode hash needs a salt: set {HASH_SALT_ENV} "
+            "or pass --hash-salt.\n"
+        )
+        return 1
+
     report = scan(
         target,
         mode=mode,
@@ -231,6 +242,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         tenant_id=args.tenant_id,
         user_id=args.user_id,
         force_text=force_text,
+        hash_salt=hash_salt,
         **scan_kwargs,
     )
 
@@ -288,6 +300,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(_CONFIDENCE),
         default=Confidence.MEDIUM.value,
         help="Minimum detection confidence to act on (default: medium).",
+    )
+    scan_p.add_argument(
+        "--hash-salt",
+        help=f"Salt for --redaction-mode hash, required there; use 32+ characters. "
+             f"Prefer {HASH_SALT_ENV}: an argument is visible in the process "
+             f"list and shell history, and a known salt lets anyone test "
+             f"guessed values against the hashes. The flag wins if both are set.",
     )
     scan_p.add_argument("--out", help="Directory to write the clean overlays into.")
     scan_p.add_argument("--json", action="store_true", help="Emit the full report as JSON.")

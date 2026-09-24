@@ -84,3 +84,10 @@ path above — see `degrade_gracefully_without_optional_extras` below.
   a test in `tests/test_governance_block_norms.py`.
 - The optional semantic (embeddings / local model) and document/media extraction
   layers require extras and degrade gracefully when absent.
+- `--redaction-mode hash` takes its salt from `PRIVACY_SHIELD_HASH_SALT`, which
+  the user sets before the session starts. Never pass `--hash-salt`, never put
+  the salt or `$PRIVACY_SHIELD_HASH_SALT` in any argument, and never read or
+  print the variable: whoever knows the salt can test guessed values against
+  the hashes. If the variable is unset the CLI exits `1`; ask the user to set
+  it rather than inventing a salt.
+- Write `--out` to a folder outside the one being scanned.

@@ -57,6 +57,7 @@ Installed as the `privacy-shield` console script by `pip install .`:
 privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REGEX_ONLY]
                                   [--destination external_llm] [--out DIR] [--json]
                                   [--redaction-mode redact|pseudonymize|hash|detect_only|block]
+                                  [--hash-salt SALT]
                                   [--min-confidence low|medium|high]
                                   [--audit-log PATH] [--no-recursive]
                                   [--all-files | --extensions .txt,.csv] [--text]
@@ -73,6 +74,12 @@ The default is closed because stdout is not always a terminal:
 model's context, which would put the original one pipe from an external
 service — the act this package's governance block prohibits. Ask for it when a
 person is reading the output; leave it off when a program is.
+
+`--redaction-mode hash` needs a salt, from `PRIVACY_SHIELD_HASH_SALT` or
+`--hash-salt` (the flag wins; an empty value counts as unset); one under 32
+characters is accepted with a logged warning. Without one the CLI exits `1`. Use the environment variable: an argument shows in the process
+list and shell history, and whoever knows the salt can test guessed values
+against the hashes.
 
 `--all-files` and `--extensions` are both a caller CHOICE, at the CLI
 boundary exactly as at `scan()`'s: naming neither imposes `DEFAULT_EXTENSIONS`
