@@ -109,6 +109,12 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **The random IBAN-in-prose test asserted exact equality and failed
+  intermittently.** A coincidental mod-97 pass can extend the claimed span
+  forward or backward, kept by the union rule (`docs/limits.md`); the test
+  now asserts coverage, and the reproduced shapes, forward and backward, are
+  pinned exactly.
+
 - **`RedactionResult.to_dict()` no longer carries the originals.** Under
   `pseudonymize` and `hash`, `mappings` is keyed by the detected value, and a
   `Redactor` keeps that map across calls, so a result also carried every
