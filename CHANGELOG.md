@@ -113,9 +113,8 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   of the same type reached into a checksum-validated span, both were trimmed
   back to the same interval and both were reported: `001 4111 1111 1111 1111`
   gave two `phone` spans at (0, 4). The redaction was unaffected; the span
-  list and its counts were not. The stronger of identical findings is kept.
-  The leak oracle had counted each as a claim and reported an undetected
-  `001` elsewhere in the text as a survivor; it now counts occurrences.
+  list and its counts were not. The stronger of identical findings is kept;
+  findings of different types on one interval are both kept.
 
 - **The random IBAN-in-prose test asserted exact equality and failed
   intermittently.** A coincidental mod-97 pass can extend the claimed span

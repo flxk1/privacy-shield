@@ -161,6 +161,21 @@ def test_findings_trimmed_to_one_interval_become_one(weaker_first):
     assert trimmed == [(0, 4, Confidence.HIGH)], trimmed
 
 
+def test_findings_of_different_types_on_one_interval_both_stay():
+    from privacy_shield.scanner import Finding
+
+    text = "001 4111 1111 1111 1111 A001"
+    card = Finding(PIIType.CREDIT_CARD, text[4:23], 4, 23, Confidence.HIGH, 1,
+                   checksum_validated=True)
+    phone = Finding(PIIType.PHONE, text[0:8], 0, 8, Confidence.HIGH, 1)
+    path = Finding(PIIType.FILE_PATH, text[0:10], 0, 10, Confidence.HIGH, 4)
+
+    kept = PrivacyScanner()._yield_to_validated([phone, path, card], text)
+
+    trimmed = sorted((f.pii_type.value, f.start, f.end) for f in kept if not f.checksum_validated)
+    assert trimmed == [("file_path", 0, 4), ("phone", 0, 4)], trimmed
+
+
 def test_precedence_never_reduces_redacted_coverage(monkeypatch):
     """Whatever the labels, the redacted region may only grow, never shrink.
 
