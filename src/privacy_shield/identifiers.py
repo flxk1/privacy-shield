@@ -108,10 +108,9 @@ MATERIAL_RESIDUE = 8
 
 # THE RULE, in one sentence:
 #
-#   A candidate is any maximal sequence of identifier characters joined by single
-#   characters that are not alphanumeric at all, or are modifier letters, and
-#   not a line break, carrying at most one such joiner for every two identifier
-#   characters.
+#   A candidate is any maximal sequence of identifier characters joined by runs
+#   of characters that are not alphanumeric at all or are modifier letters,
+#   interrupted by at most one line terminator.
 #
 # Not a list of separators. Twice now a list has been walked around. The first
 # version enumerated " \t-", and a no-break space, a soft hyphen and a
@@ -139,7 +138,8 @@ MATERIAL_RESIDUE = 8
 #
 # Invisible characters (Unicode Cf - soft hyphen, zero-width space, joiners,
 # BOM) are removed before any of this and count for nothing: they are not
-# there. A line break is never a joiner. An alphanumeric that is not an
+# there. A line break joins like any other non-alphanumeric, but a candidate
+# may contain at most one (MAX_LINE_BREAKS). An alphanumeric that is not an
 # identifier character - an umlaut, a CJK character - is not a joiner either;
 # it ends the run, because it is a letter in a word rather than punctuation
 # between digits. A modifier letter (Lm) is the exception and joins: the

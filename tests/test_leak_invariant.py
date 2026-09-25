@@ -82,9 +82,10 @@ _ORACLE_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
 
 def _ascii_of(char: str) -> "str | None":
-    """What an identifier character IS: a decimal digit of any script, or a
-    letter compatibility-equal to one ASCII letter. A card in full-width
-    digits is a card; the oracle cannot find less than that."""
+    """What an identifier character IS: a decimal digit of any script, or an
+    alphanumeric that is not a modifier letter and is compatibility-equal
+    to one ASCII letter. A card in full-width digits is a card; the oracle
+    cannot find less than that."""
     if not char.isalnum() or unicodedata.category(char) == "Lm":
         return None
     digit = unicodedata.decimal(char, None)
