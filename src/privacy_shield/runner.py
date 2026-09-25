@@ -12,13 +12,16 @@ engine. Per document it drives the real pipeline —
       -> build clean overlay       (redactor overlay, or anonymous_json in
                                      ANONYMOUS_JSON mode)
       -> egress-guard decision     (gate.PrivacyGate on source classification)
-      -> audit                     (gate records AI_PRIVACY_SHIELD_DECISION)
+      -> audit                     (opt-in only: gate records
+                                     AI_PRIVACY_SHIELD_DECISION when
+                                     audit_log_path is given)
 
 and returns a structured :class:`ScanReport`: the clean overlay (the only thing
 meant to leave the machine), the per-span findings, and the egress verdict.
 
-No external enforcement sink is attached. The gate
-decides locally and records to the standalone :mod:`privacy_shield.audit_log`.
+No external enforcement sink is attached. Nothing is written to disk unless
+``audit_log_path`` is given, in which case the gate records to it; no
+breach-detector escalation.
 """
 
 from __future__ import annotations
@@ -606,7 +609,8 @@ def scan(
     local-LLM -> redact -> overlay), the clean overlay is built, and the egress
     guard decides — on the source classification — whether the (overlaid) payload
     may leave for *destination*. Only when it may does the clean overlay leave.
-    Every decision is recorded to the standalone audit trail by the gate.
+    Nothing is written to disk by default; pass ``audit_log_path`` to record
+    every decision to that path.
 
     The result carries, per document, the clean overlay, the per-span findings,
     and the egress verdict; and, in aggregate, ``all_allowed``.
@@ -639,7 +643,10 @@ def scan(
         privacy_mode=mode,
         audit_log_path=audit_log_path,
     )
-    gate = PrivacyGate()  # standalone local decision and audit
+    # Standalone local decision; recorded only when audit_log_path is given
+    # (routed to the gate too, matching PrivacyShield's own audit_log_path);
+    # no breach-detector escalation by default.
+    gate = PrivacyGate(audit_log=audit_log_path)
 
     # The gate reads the *global* privacy mode; align it with this call so
     # LOCAL_ONLY (and friends) are honoured, then restore.
