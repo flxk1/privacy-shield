@@ -91,6 +91,7 @@ def log_audit_event(
     details: Optional[Dict[str, Any]] = None,
     success: bool = True,
     tenant_id: Optional[str] = None,
+    path: Optional[Path] = None,
 ) -> None:
     """Log a security-relevant event.
 
@@ -100,8 +101,10 @@ def log_audit_event(
         ip: IP address of the client (if applicable)
         details: Additional event-specific details
         success: Whether the action was successful
+        path: Explicit destination, overriding env/default resolution for
+              this call only (callers configuring their own audit sink).
     """
-    path = _resolved_audit_log_path()
+    path = Path(path) if path is not None else _resolved_audit_log_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     entry = {
