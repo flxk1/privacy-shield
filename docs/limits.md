@@ -1164,9 +1164,8 @@ all one shape:
   adversarially generated, not corpus-measured - see commit `a4c28fd` for the
   full list and the numbers behind both options.
 
-**A residue class distinct from the eighth (CRLF counting, fixed above),
-found by the gate's own property run during this change and reproducing
-unchanged at `521fec2`.** In STANDARD mode:
+**The residue this branch reported against `521fec2` was already closed on
+main.** In STANDARD mode at `521fec2`:
 
 ```
 input   'UUID 550e8400-e29b-41d4-a716-446655440000 DE89370400440532013000 00 00 7'
@@ -1174,17 +1173,17 @@ overlay 'UUID 550e8400-e29b-41d4-a716-446655440000 [IBAN] 00 00 7'
 leak    validated credit_card left 8 of 15 characters of residue in overlay
 ```
 
-A Luhn-valid 14-to-15-digit window is assembled from the tail of the UUID and
-the digits that follow the redacted IBAN; the IBAN is replaced, the card-shaped
-window is not, and eight of its characters stay in the overlay. It is **not
-caused by this change** - the name layer does not touch identifiers, and the
-exact input was fed to `521fec2` and leaks identically there. It is recorded
-here rather than pinned as a test, because the finder is
-`tests/test_leak_invariant.py::test_release_gate_property` and that test is
-already the right alarm: it draws this shape at random, so **the leak-gate CI
-job will fail intermittently until the class is fixed**, which is a property
-of the class and not a flake to be silenced. The fix belongs to the identifier
-layer.
+The overlay is the same on main today and the gate is clean. The "residue" was
+the gate compacting the overlay across the placeholder, which joined the UUID's
+trailing `0000` to the `00 00 7` after `[IBAN]`; no eight characters of the
+window stand together in the overlay. Main closed it in 2.0.0, before this
+branch merged: `d79dc72` silenced it by having the gate refuse windows that
+overlap another identifier, a refusal that hid a genuine card and was removed;
+`b652788` closed it for good, since the gate never compacts across a
+placeholder. The input is pinned in all three egress modes, and restoring
+whole-overlay compaction fails it in each:
+`tests/test_leak_invariant.py::test_a_card_is_not_LABELLED_out_of_another_identifiers_digits`
+(`uuid_then_iban_then_trailing_digits`).
 
 ## Test split
 

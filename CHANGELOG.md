@@ -221,17 +221,6 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 - **`AnonymisationResult.to_dict()` carries the input.** In `assess` mode
   `processed_text` is the text unchanged. A separate skill API, not the scan
   overlay.
-- An eighth residue class in the identifier layer, found by
-  `tests/test_leak_invariant.py::test_release_gate_property` during this change
-  and reproducing unchanged at `521fec2`: a Luhn-valid window assembled from a
-  UUID tail and the digits after a redacted IBAN leaves 8 characters of
-  residue in the overlay. The input is written out in `docs/limits.md`. The
-  property draws the shape at random, so the leak-gate job will fail
-  intermittently until it is fixed; that is the alarm working. Distinct from
-  the eighth leak class main fixed on top of this branch point (CRLF
-  terminator counting, released in 2.1.0 below) - the ordinal collided
-  because both were counted independently before the histories met; this one
-  is still open.
 
 ### Evaluated, not adopted
 
