@@ -9,15 +9,20 @@ personal) MUST call ``privacy_gate.check()`` before:
 This module bridges the existing Privacy Shield (4 modes) with the
 data policy guard (4 classification tiers) into a single check point.
 
-Optional external enforcement
------------------------------
-Every entry point behaves in two modes:
+Optional recording, enforcement and breach escalation
+------------------------------------------------------
+Every entry point behaves in these layers, each off by default:
 
-- **Default (no host sink):** the gate decides locally (mode + classification
-  + Art. 9 tiers, plus the scanner's regex/embeddings/local-LLM verdict upstream)
-  and records the decision to the standalone :mod:`privacy_shield.audit_log`. Fully
-  functional alone; ``require_privacy_check`` raises :class:`PermissionError` on
-  an unsafe egress exactly as before.
+- **Default (no sink, no audit config):** the gate decides locally (mode +
+  classification + Art. 9 tiers, plus the scanner's regex/embeddings/local-LLM
+  verdict upstream) and writes NOTHING to disk — no audit record, no breach
+  notification. Fully functional alone; ``require_privacy_check`` raises
+  :class:`PermissionError` on an unsafe egress exactly as before.
+- **Audit configured (``audit_log=`` a path, or the standard path via
+  ``audit_log_path()``, or ``PRIVACY_SHIELD_AUDIT_LOG`` set):** the decision
+  is additionally recorded to :mod:`privacy_shield.audit_log` at that path.
+- **Breach detector configured (``breach_detector=`` an instance, e.g. the
+  module ``breach_detector``):** a block additionally escalates to it.
 - **Enriched (an enforcement sink is attached):** the SAME local decision is
   ADDITIONALLY surfaced to the optional
   :class:`~privacy_shield.enforcement.EnforcementSink` (host verdict plus
@@ -35,7 +40,8 @@ import functools
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from ._legacy_env import reject_legacy_env
 from .enforcement import (
@@ -45,6 +51,9 @@ from .enforcement import (
     EnforcementVerdict,
     NoOpEnforcementSink,
 )
+
+if TYPE_CHECKING:
+    from .breach import BreachDetector
 
 logger = logging.getLogger(__name__)
 
@@ -139,19 +148,59 @@ class PrivacyGate:
 
     Both modes are complete:
 
-    - **Default (no sink):** :meth:`check` decides locally and records to
-      :mod:`privacy_shield.audit_log`. This is the complete standalone gate.
-    - **Enriched (sink attached):** the local decision is additionally handed to
-      the attached :class:`~privacy_shield.enforcement.EnforcementSink`
-      via ``record_decision`` for governance/audit enrichment (verdict +
-      signed-chain receipt). Attach one with :meth:`attach_enforcement_sink`;
-      :meth:`plan_action` optionally consults the sink's ``gate`` for a
-      prospective action. With none attached the sink is inert.
+    - **Default (no sink, no audit config):** :meth:`check` decides locally
+      and writes NOTHING to disk — no audit record, no breach-detector
+      notification. This is the complete standalone gate.
+    - **Enriched (sink attached / audit configured):** the local decision is
+      additionally handed to the attached
+      :class:`~privacy_shield.enforcement.EnforcementSink` via
+      ``record_decision`` for governance/audit enrichment (verdict +
+      signed-chain receipt), and/or recorded to the configured ``audit_log``
+      path and/or escalated to the configured ``breach_detector``. Attach a
+      sink with :meth:`attach_enforcement_sink`; configure audit/breach with
+      the constructor or :meth:`configure_audit`. With none configured every
+      side channel is inert.
     """
 
-    def __init__(self, enforcement_sink: Optional[EnforcementSink] = None) -> None:
+    def __init__(
+        self,
+        enforcement_sink: Optional[EnforcementSink] = None,
+        *,
+        audit_log: Optional[Union[str, Path]] = None,
+        breach_detector: Optional["BreachDetector"] = None,
+    ) -> None:
         # Capability flag: default is the inert no-op sink.
         self._sink: EnforcementSink = enforcement_sink or NOOP_SINK
+        # Default: no audit write, no breach escalation. Opt in explicitly,
+        # e.g. audit_log=audit_log_path() for the standard user-state path;
+        # PRIVACY_SHIELD_AUDIT_LOG, when set, is itself the opt-in (resolved
+        # per-call in _resolve_audit_log, so a later-set env var is honoured
+        # by the module singleton too).
+        self._audit_log: Optional[Path] = Path(audit_log) if audit_log else None
+        self._breach_detector: Optional["BreachDetector"] = breach_detector
+
+    def _resolve_audit_log(self) -> Optional[Path]:
+        if self._audit_log is not None:
+            return self._audit_log
+        import os
+
+        from .audit_log import AUDIT_LOG_ENV, audit_log_path
+
+        if str(os.environ.get(AUDIT_LOG_ENV, "")).strip():
+            return audit_log_path()
+        return None
+
+    def configure_audit(
+        self,
+        *,
+        audit_log: Optional[Union[str, Path]] = None,
+        breach_detector: Optional["BreachDetector"] = None,
+    ) -> None:
+        """Configure audit recording / breach escalation on an existing gate
+        (e.g. the module :data:`privacy_gate` singleton). Both default back
+        to inert when omitted."""
+        self._audit_log = Path(audit_log) if audit_log else None
+        self._breach_detector = breach_detector
 
     # ------------------------------------------------------------------
     # Optional enforcement seam
@@ -208,15 +257,16 @@ class PrivacyGate:
     ) -> PrivacyGateResult:
         """Check whether *data* may be sent to *destination*.
 
-        Behaviour in both modes:
+        Behaviour:
 
-        - **Default (no sink):** decides locally and records the decision to
-          :mod:`privacy_shield.audit_log`. Returns the local
-          :class:`PrivacyGateResult`.
-        - **Enriched (sink attached):** additionally surfaces the SAME decision
-          to the enforcement sink (``record_decision``) for a governance verdict
-          + signed-chain receipt. The returned result is unchanged — enrichment
-          is additive.
+        - **Default (no sink, no audit config):** decides locally and writes
+          nothing to disk. Returns the local :class:`PrivacyGateResult`.
+        - **Audit configured:** additionally records the decision to the
+          configured ``audit_log`` path via :mod:`privacy_shield.audit_log`.
+        - **Sink attached:** additionally surfaces the SAME decision to the
+          enforcement sink (``record_decision``) for a governance verdict +
+          signed-chain receipt. The returned result is unchanged in every
+          case — recording/enrichment is additive.
 
         Args:
             data: The payload to be transmitted (must contain a ``text``
@@ -242,9 +292,10 @@ class PrivacyGate:
     ) -> PrivacyGateResult:
         """Pure LOCAL egress decision (mode + classification + Art. 9 tiers).
 
-        This is the standalone core of the gate: it consults no sink and has no
-        audit side effects. :meth:`check` wraps it with the standalone audit
-        record and the optional enforcement-sink surface.
+        This is the standalone core of the gate: it consults no sink and
+        writes no audit record. On a block it notifies the configured
+        ``breach_detector`` (none by default, so inert); :meth:`check` wraps
+        it with the audit record and the optional enforcement-sink surface.
         """
         mode = self._get_privacy_mode(tenant_id)
         text = self._extract_text(data)
@@ -319,13 +370,16 @@ class PrivacyGate:
     ) -> PrivacyGateResult:
         """Record the local decision, then surface it to the optional sink.
 
-        Default: writes the decision to the standalone audit trail
-        and returns *result* unchanged. Enriched (sink attached): additionally
-        hands the SAME decision to the enforcement sink for a governance verdict
-        + signed-chain receipt. Both steps are defensive — enrichment or audit
+        Default (no ``audit_log`` configured): writes nothing, returns
+        *result* unchanged. Configured: writes the decision to the given
+        audit path. Enriched (sink attached): additionally hands the SAME
+        decision to the enforcement sink for a governance verdict +
+        signed-chain receipt. All steps are defensive — enrichment or audit
         failure never changes the egress decision.
         """
-        self._record_audit(result, destination, tenant_id, user_id, data)
+        audit_log = self._resolve_audit_log()
+        if audit_log is not None:
+            self._record_audit(result, destination, tenant_id, user_id, data, audit_log)
         try:
             self._sink.record_decision(
                 EnforcementDecision(
@@ -343,15 +397,16 @@ class PrivacyGate:
             logger.debug("Enforcement sink record_decision skipped: %s", exc)
         return result
 
-    @staticmethod
     def _record_audit(
+        self,
         result: PrivacyGateResult,
         destination: str,
         tenant_id: str,
         user_id: str,
         data: Dict[str, Any],
+        audit_log: Path,
     ) -> None:
-        """Write the egress decision to the standalone audit trail (default)."""
+        """Write the egress decision to *audit_log*."""
         try:
             from privacy_shield.audit_log import AuditEvent, log_audit_event
 
@@ -360,6 +415,7 @@ class PrivacyGate:
                 user=user_id or None,
                 success=result.allowed,
                 tenant_id=tenant_id or None,
+                path=audit_log,
                 details={
                     "destination": destination,
                     "allowed": result.allowed,
@@ -526,16 +582,18 @@ class PrivacyGate:
     ) -> None:
         """Hook called when a transmission is blocked.
 
-        Logs the event and notifies the breach detector so that
-        repeated violations are surfaced.
+        Logs the event (not disk state) and, when a ``breach_detector`` is
+        configured, notifies it so that repeated violations are surfaced.
+        Default (none configured): logs only, no breach escalation.
         """
         logger.warning(
             "PrivacyGate BLOCKED: event=%s dest=%s tenant=%s user=%s",
             event_type, destination, tenant_id, user_id,
         )
+        if self._breach_detector is None:
+            return
         try:
-            from privacy_shield.breach import breach_detector
-            breach_detector.detect_anomaly(
+            self._breach_detector.detect_anomaly(
                 event_type=event_type,
                 details={
                     "destination": destination,
@@ -581,13 +639,13 @@ def require_privacy_check(
     ``user_id``.  If the gate blocks the call a ``PermissionError``
     is raised with the blocked reason.
 
-    Optional enforcement runs through the module :data:`privacy_gate`
-    singleton, so behaviour follows :meth:`PrivacyGate.check` in both modes —
-    **default (no sink):** decision is local and recorded to the standalone
-    audit trail; an unsafe egress raises :class:`PermissionError`. **Enriched
-    (a sink is attached to the singleton):** the same decision is additionally
-    surfaced to the enforcement sink. Attaching a sink never changes whether
-    the call is blocked.
+    Runs through the module :data:`privacy_gate` singleton, so behaviour
+    follows :meth:`PrivacyGate.check` — **default:** decision is local and
+    nothing is written to disk; an unsafe egress raises
+    :class:`PermissionError`. Configure the singleton's audit/breach
+    recording or enforcement sink with :meth:`PrivacyGate.configure_audit`
+    / :meth:`PrivacyGate.attach_enforcement_sink` before use — neither ever
+    changes whether the call is blocked.
     """
     def decorator(fn: Callable) -> Callable:
         @functools.wraps(fn)
