@@ -86,9 +86,19 @@ def test_replacement_names_are_honoured(tmp_path, monkeypatch):
 
 
 def test_neither_name_set_uses_the_default(tmp_path):
+    # No opt-in (no audit_log/audit_log_path arg, no env var): audit.py 2.1.1
+    # writes nothing by default, so the path resolves under tmp_path but is
+    # never created.
     for call in ENTRY_POINTS.values():
         call()
     assert tmp_path in audit_log_path().parents
+    assert not audit_log_path().exists()
+
+
+def test_neither_name_set_still_resolves_default_when_opted_in(tmp_path):
+    # audit_log_path() itself is unaffected by the opt-in default: explicit
+    # opt-in to it still lands under the same resolved location.
+    PrivacyGate(audit_log=audit_log_path()).check({"text": "hello"}, "external_llm")
     assert audit_log_path().is_file()
 
 

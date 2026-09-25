@@ -7,7 +7,8 @@ prove:
   injected PII redacted (no injected value survives into the overlay);
 - the egress verdict is correct (LOCAL_ONLY / berufsgeheimnis / Art. 9 block;
   a non-confidential PII doc passes);
-- every decision is recorded to the standalone ``audit_log``;
+- nothing is written to disk by default; passing ``audit_log_path`` records
+  a decision per document there;
 - the runner attaches no external enforcement adapter;
 - the CLI writes overlays and reports the right exit code.
 """
@@ -89,8 +90,9 @@ def pii_folder(tmp_path):
 # ---------------------------------------------------------------------------
 # scan() — folder walk, clean overlay, span by span
 # ---------------------------------------------------------------------------
-def test_scan_folder_redacts_pii_span_by_span(pii_folder, temp_audit):
-    report = scan(pii_folder, mode=PrivacyMode.STANDARD)
+def test_scan_folder_redacts_pii_span_by_span(pii_folder, tmp_path, temp_audit):
+    audit_file = tmp_path / "opt-in-audit.jsonl"
+    report = scan(pii_folder, mode=PrivacyMode.STANDARD, audit_log_path=str(audit_file))
 
     assert isinstance(report, ScanReport)
     # Four files walked (incl. the nested one).
@@ -113,10 +115,24 @@ def test_scan_folder_redacts_pii_span_by_span(pii_folder, temp_audit):
     assert payment.egress_allowed is True
     assert report.all_allowed is True
 
-    # The gate recorded a decision per document to the standalone audit trail.
-    events = temp_audit()
-    decisions = [e for e in events if e["event"] == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value]
+    # audit_log_path opts both writers in: the shield's own per-document audit
+    # entries (no "event" key) and the gate's decisions, mixed into one file.
+    events = [
+        json.loads(line)
+        for line in audit_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    decisions = [e for e in events if e.get("event") == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value]
     assert len(decisions) == report.document_count
+
+
+def test_scan_writes_nothing_without_audit_log_path(pii_folder, tmp_path, temp_audit):
+    before_home = set(tmp_path.rglob("*"))
+    before_folder = set(pii_folder.rglob("*"))
+    report = scan(pii_folder, mode=PrivacyMode.STANDARD)
+    assert report.document_count == 4
+    assert set(tmp_path.rglob("*")) - before_home == set()
+    assert set(pii_folder.rglob("*")) - before_folder == set()
 
 
 def test_scan_raw_text_produces_overlay(temp_audit):

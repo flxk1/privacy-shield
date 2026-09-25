@@ -27,14 +27,14 @@ def unwritable_breach_log_dir(tmp_path, monkeypatch):
 
 
 def test_broken_breach_log_dir_does_not_break_the_gate_decision(unwritable_breach_log_dir):
-    gate = PrivacyGate()
+    gate = PrivacyGate(breach_detector=unwritable_breach_log_dir)
     for _ in range(5):  # BreachDetector's escalation threshold
         gate._on_blocked("local_only_external_blocked", "external_llm", "t1", "u1", {})
     # no exception means the egress-check isolation held
 
 
 def test_broken_breach_log_dir_logs_at_error_not_debug(unwritable_breach_log_dir, caplog):
-    gate = PrivacyGate()
+    gate = PrivacyGate(breach_detector=unwritable_breach_log_dir)
     with caplog.at_level(logging.DEBUG, logger="privacy_shield.gate"):
         for _ in range(5):
             gate._on_blocked("local_only_external_blocked", "external_llm", "t1", "u1", {})
