@@ -1830,11 +1830,13 @@ def test_an_address_is_reported_as_it_was_written():
     ],
 )
 def test_an_address_the_finder_cannot_read_is_a_documented_limit(text):
-    """docs/limits.md, "Addresses not found". If one starts being found, this
-    fails and the entry comes out."""
+    """docs/limits.md, "Addresses not found". If one starts being found, or
+    the gate starts seeing it, this fails and the entry comes out."""
     from privacy_shield import identifiers
 
     assert not identifiers.find_emails(text)
+    document = scan(text, force_text=True).documents[0]
+    assert document.overlay == text and not leaks_in(text, document)
 
 
 def test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark():
@@ -1845,6 +1847,16 @@ def test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark():
     text = f"Mail {address}"
     after_mark = text.rindex("\u0308") + 1
     assert [(s, e) for s, e, _v in identifiers.find_emails(text)] == [(after_mark, len(text))]
+
+
+@pytest.mark.parametrize("invisible", ["\u200b", "\u00ad"], ids=["zero_width_space", "soft_hyphen"])
+def test_an_invisible_character_in_a_local_part_ends_it(invisible):
+    """docs/limits.md, "Addresses not found"."""
+    from privacy_shield import identifiers
+
+    text = f"Mail eri{invisible}ka@example.com"
+    start = text.index(invisible) + 1
+    assert [(s, e) for s, e, _v in identifiers.find_emails(text)] == [(start, len(text))]
 
 
 def test_the_gate_misses_a_partly_surviving_local_part():

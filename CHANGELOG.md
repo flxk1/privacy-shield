@@ -114,8 +114,9 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   every egress mode: the finder expanded only around an ASCII `@`. It now
   folds digits and letters as a run does, reads every character NFKC maps
   to `@ . _ % + -` as that, and reads the ideographic full stops `。` and
-  `｡` as `.` in a domain that has no reading without them. `iban_ok` and `email_ok` read the same fold, so a full-width
-  IBAN or address is no longer rejected by its own validator. Addresses the
+  `｡` as `.` in a domain that has no reading without them. `iban_ok` and
+  `email_ok` read the same fold, so a full-width IBAN or address is no longer
+  rejected by its own validator. Addresses the
   finder still cannot read - an IDN domain, decomposed Unicode, a zero-width
   character, a wrapped address - are listed in `docs/limits.md`. Tested:
   `tests/test_leak_invariant.py::test_an_address_written_in_full_width_is_an_address`,
