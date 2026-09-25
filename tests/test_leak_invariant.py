@@ -291,6 +291,8 @@ def _read(value: str) -> str:
     out = []
     for char in value:
         folded = _ascii_of(char)
+        if char in "\u3002\uff61":
+            folded = "."
         if folded is None and not char.isascii():
             compat = unicodedata.normalize("NFKC", char)
             if len(compat) == 1 and compat in "@._%+-":
@@ -1711,6 +1713,15 @@ FULL_WIDTH_ADDRESSES = [
     pytest.param("erika@example\uff0ecom", id="full_width_dot"),
     pytest.param("erika\ufe6bexample.com", id="small_commercial_at"),
     pytest.param("m\u00fcller\uff20kanzlei.de", id="umlaut_local_part"),
+    pytest.param("erika\uff3fmustermann@example.com", id="full_width_underscore"),
+    pytest.param("erika\uff05mustermann@example.com", id="full_width_percent"),
+    pytest.param("erika\uff0bmustermann@example.com", id="full_width_plus"),
+    pytest.param("erika\uff0dmustermann@example.com", id="full_width_hyphen"),
+    pytest.param("erika@ex\ufe63ample.com", id="small_hyphen_in_domain"),
+    pytest.param("erika\uff12\uff10\uff12\uff16\uff20example.com", id="full_width_digits"),
+    pytest.param("erika@example\uff12\uff10\uff12\uff16.com", id="full_width_digits_in_domain"),
+    pytest.param("erika@example\u3002com", id="ideographic_full_stop"),
+    pytest.param("erika@example\uff61com", id="halfwidth_ideographic_full_stop"),
 ]
 
 
@@ -1761,7 +1772,52 @@ def test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out():
         assert leaks_in(f"Daten {source}", kept), source
 
 
-@pytest.mark.parametrize("text", ["Preis 5\uff203.50 EUR", "Mail a\uff20b bitte"])
+def test_the_at_signs_are_every_character_nfkc_reads_as_at():
+    import sys
+
+    from privacy_shield import identifiers
+
+    every = {
+        chr(code) for code in range(sys.maxunicode + 1)
+        if unicodedata.normalize("NFKC", chr(code)) == "@"
+    }
+    assert set(identifiers.AT_SIGNS) == every
+
+
+def test_an_address_is_reported_as_it_was_written():
+    from privacy_shield import identifiers
+
+    address = "\uff45\uff52\uff49\uff4b\uff41\uff20example.com"
+    text = f"Mail {address} bitte"
+    start = text.index(address)
+    assert identifiers.find_emails(text) == [(start, start + len(address), address)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Mail erika@m\u00fcller.de bitte", id="idn_domain"),
+        pytest.param(
+            "Mail " + unicodedata.normalize("NFD", "jos\u00e9@example.com") + " bitte",
+            id="decomposed_local_part",
+        ),
+        pytest.param("Mail erika\u200b@example.com bitte", id="zero_width_before_at"),
+        pytest.param("Mail \u24d4\u24e1\u24d8\u24da\u24d0@example.com bitte", id="circled_local_part"),
+        pytest.param("Mail erika\uff20\nexample.com bitte", id="wrapped_after_at"),
+    ],
+)
+def test_an_address_the_finder_cannot_read_is_a_documented_limit(text):
+    """docs/limits.md, "Addresses not found". If one starts being found, this
+    fails and the entry comes out."""
+    from privacy_shield import identifiers
+
+    assert not identifiers.find_emails(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Preis 5\uff203.50 EUR", "Mail a\uff20b bitte", "\u308a\u3093\u3054""3\u500b\uff20""100\u5186"],
+)
 def test_a_full_width_at_is_not_an_address_by_itself(text):
     document = scan(text, force_text=True).documents[0]
     assert document.overlay == text

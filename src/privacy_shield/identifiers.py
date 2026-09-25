@@ -293,18 +293,28 @@ def _identifier_char(char: str) -> Optional[str]:
 #: Address punctuation, which NFKC maps from its full-width and small forms.
 _EMAIL_PUNCTUATION = frozenset("@._%+-")
 
+#: Every character NFKC reads as "@". A text with none of them holds no
+#: address, and the fold is skipped.
+AT_SIGNS = "@\uff20\ufe6b"
+
+#: The ideographic full stops RFC 3490 accepts as label dots alongside the
+#: full-width one; NFKC maps neither to ".".
+_IDNA_DOTS = frozenset("\u3002\uff61")
+
 
 def _email_char(char: str) -> str:
     """*char* as the e-mail finder reads it; one character in, one out.
 
-    Identifier characters fold as in a run, and so does address punctuation:
+    Digits and letters fold as in a run, and so does address punctuation:
     "ｅｒｉｋａ＠ｅｘａｍｐｌｅ．ｃｏｍ" is an address, and reading "＠" as
-    anything but "@" sent it out with pii_detected False. Anything else,
-    an umlaut in a local part included, stays itself.
+    anything but "@" sent it out with pii_detected False. A letter with no
+    ASCII form - an umlaut in a local part - stays itself.
     """
     folded = _identifier_char(char)
     if folded is not None:
         return folded
+    if char in _IDNA_DOTS:
+        return "."
     if not char.isascii():
         compat = unicodedata.normalize("NFKC", char)
         if compat in _EMAIL_PUNCTUATION:
@@ -366,9 +376,10 @@ _DOMAIN_AFTER_AT = re.compile(
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}"
 )
 
-#: The local part accepts non-ASCII letters (RFC 6531); the domain stays
-#: ASCII, since an internationalised domain reaches this code already
-#: punycoded.
+#: The local part accepts non-ASCII letters (RFC 6531). The domain is ASCII
+#: after the fold: an internationalised domain written in its own script
+#: ("müller.de" rather than "xn--mller-kva.de") is not found - see
+#: docs/limits.md.
 RFC_EMAIL = re.compile(
     r"\A[^\W]*[\w._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\Z",
@@ -736,6 +747,8 @@ def find_emails(text: str) -> List[Span]:
     join and left "abcdef1234@" standing in the overlay. The mailbox name of a
     real address, which is usually the person's name.
     """
+    if not any(sign in text for sign in AT_SIGNS):
+        return []
     # Searched on the folded text, which has the same length, so every offset
     # found there is an offset into *text*.
     original, text = text, fold(text)
