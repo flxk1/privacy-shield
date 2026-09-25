@@ -142,6 +142,25 @@ def test_a_pattern_straddling_a_validated_span_keeps_both_remainders():
     ]
 
 
+@pytest.mark.parametrize("weaker_first", [True, False])
+def test_findings_trimmed_to_one_interval_become_one(weaker_first):
+    """Both phone patterns reach from "001" into the card; trimmed, they are
+    the same (0, 4). One finding comes out, and the stronger one."""
+    from privacy_shield.scanner import Finding
+
+    text = "001 4111 1111 1111 1111 A001"
+    card = Finding(PIIType.CREDIT_CARD, text[4:23], 4, 23, Confidence.HIGH, 1,
+                   checksum_validated=True)
+    weak = Finding(PIIType.PHONE, text[0:18], 0, 18, Confidence.MEDIUM, 1)
+    strong = Finding(PIIType.PHONE, text[0:8], 0, 8, Confidence.HIGH, 1)
+    phones = [weak, strong] if weaker_first else [strong, weak]
+
+    kept = PrivacyScanner()._yield_to_validated([*phones, card], text)
+
+    trimmed = [(f.start, f.end, f.confidence) for f in kept if f.pii_type is PIIType.PHONE]
+    assert trimmed == [(0, 4, Confidence.HIGH)], trimmed
+
+
 def test_precedence_never_reduces_redacted_coverage(monkeypatch):
     """Whatever the labels, the redacted region may only grow, never shrink.
 

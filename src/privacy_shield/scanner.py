@@ -1017,7 +1017,20 @@ class PrivacyScanner:
                     value=text[start:end],
                     context=self._get_context(text, start, end),
                 ))
-        return kept
+
+        # Trimming makes different findings identical: both phone patterns
+        # match "001 4111 ..." at 0 and both are cut back to (0, 4) where the
+        # card begins. One occurrence is one finding; the stronger one stays.
+        unique: dict = {}
+        for finding in kept:
+            key = (finding.pii_type, finding.start, finding.end)
+            held = unique.get(key)
+            if held is None or (
+                (finding.checksum_validated, self._confidence_value(finding.confidence))
+                > (held.checksum_validated, self._confidence_value(held.confidence))
+            ):
+                unique[key] = finding
+        return list(unique.values())
 
     def _merge_names(
         self,
