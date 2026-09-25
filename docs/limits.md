@@ -843,22 +843,39 @@ next round starts from this rather than rediscovering it:
   `tests/test_iban_registry.py` compares it against `schwifty`, a maintained
   external implementation, and fails on any drift. Without that dependency
   installed the check skips loudly rather than passing.
-- **An identifier character is a decimal digit of any script or a letter
-  compatibility-equal to one ASCII letter.** ASCII used to be the finding
-  rule, and `Karte ４１１１ １１１１ １１１１ １１１１` went out as
-  `Karte [PHONE] １１１１` in all three egress modes, egress allowed. Runs now
-  fold each character to the ASCII one it stands for, one for one, so offsets
-  still index the text: full-width, Arabic-Indic, Devanagari and every other
-  Unicode `Nd` digit, full-width Latin letters, and a card of mixed widths.
-  Circled and superscript numerals are not decimal digits and are not folded,
-  by the detector or the gate. Invisible characters (Unicode `Cf` — soft
+- **An identifier character is a decimal digit of any script, or an
+  alphanumeric that is compatibility-equal to one ASCII letter.** ASCII used
+  to be the finding rule, and `Karte ４１１１ １１１１ １１１１ １１１１` went
+  out as `Karte [PHONE] １１１１` in all three egress modes, egress allowed.
+  Runs now fold each character to the ASCII one it stands for, one for one,
+  so offsets still index the text: full-width, Arabic-Indic, Devanagari, Thai
+  and every other Unicode `Nd` digit, full-width Latin letters, and a card of
+  mixed widths. A symbol is not folded even when NFKC spells it as a letter
+  (a circled or squared letter joins two groups), a modifier letter joins
+  (the katakana `ー` is typed as the dash in Japanese numbers), and circled,
+  superscript and Hanzi numerals are not decimal digits. The detector and the
+  gate hold the same definition. Invisible characters (Unicode `Cf` — soft
   hyphen, zero-width space, BOM) are removed first and never break a run.
-  E-mail domains stay ASCII. Tested:
+  Tested:
   `tests/test_leak_invariant.py::test_a_card_in_non_ascii_digits_is_a_card`,
   `::test_a_full_width_iban_is_an_iban`,
   `::test_a_card_of_mixed_widths_is_one_card`,
+  `::test_a_symbol_between_groups_joins_them`,
   `::test_the_gate_sees_full_width_residue`,
-  `::test_a_digit_is_a_decimal_digit_on_both_sides`.
+  `::test_the_gate_sees_full_width_iban_residue`,
+  `::test_a_digit_is_a_decimal_digit_on_both_sides`,
+  `::test_release_gate_property_in_other_digits`.
+- **Non-Latin text now over-redacts at the ASCII rate.** A digit is a digit
+  in any script, so a run of numbers that happens to pass Luhn is claimed
+  whatever it is written in. Measured, not pinned, on realistic Japanese
+  lines: postcodes, phone numbers, prices and prose 0%; date ranges such as
+  `２００５/９/２２～２０２２/３/１５` about 25%, as they are when written in
+  ASCII.
+- **Not found in any width: an e-mail written with a full-width `＠` or
+  full-width letters, and an IBAN whose country code is in look-alike
+  Cyrillic letters (`ДЕ89…`).** The e-mail finder and IBAN country codes are
+  ASCII. Pinned by
+  `tests/test_leak_invariant.py::test_the_ascii_that_remains_is_a_documented_limit`.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.

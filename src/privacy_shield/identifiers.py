@@ -246,8 +246,12 @@ def _is_joiner(char: str) -> bool:
     Keeping it out was justified as "a run must not span a document", but what
     actually bounds a run is the span and interior-group limits, not the
     newline - measured below.
+
+    A modifier letter (Lm) joins too. The katakana prolonged-sound mark is
+    typed as the dash in Japanese numbers - "４１１１ー１１１１" - and a
+    modifier never ends a number the way a word letter does.
     """
-    return not char.isalnum()
+    return not char.isalnum() or unicodedata.category(char) == "Lm"
 
 #: Characters a local part may contain. Non-ASCII letters included, because
 #: RFC 6531 addresses exist and "mueller" is spelt with an umlaut in Germany.
@@ -272,6 +276,10 @@ def _identifier_char(char: str) -> Optional[str]:
     """
     if char.isascii():
         return char if char.isalnum() else None
+    # A symbol is not a letter because NFKC spells it as one: a circled "a" is
+    # punctuation between two groups, and folding it ended the run mid-card.
+    if not char.isalnum() or unicodedata.category(char) == "Lm":
+        return None
     digit = unicodedata.decimal(char, None)
     if digit is not None:
         return str(digit)
@@ -347,16 +355,16 @@ def email_ok(value: str) -> bool:
 def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
     """Every maximal run of identifier characters, compacted to alphanumerics.
 
-    A run grows over ASCII alphanumerics and over a SINGLE space, tab or hyphen
-    that is itself followed by an alphanumeric - the way a human writes an IBAN
-    in groups of four. It ends at anything else, a newline included. Yields
+    A run grows over identifier characters and over joiners that are followed
+    by one - the way a human writes an IBAN in groups of four. It ends at
+    anything else. Yields
     ``(compact, offsets)`` where ``offsets[i]`` is the index in *text* of
     ``compact[i]``, so a claimed span maps back exactly, separators and all.
 
     Characters are folded by `_identifier_char`: a full-width or
     Arabic-Indic digit continues the run as the digit it is. Other letters end
-    it: an IBAN is ASCII, and letting an umlaut continue the run would only
-    glue unrelated words to it.
+    it: letting an umlaut continue the run would only glue unrelated words to
+    it.
     """
     # Invisible characters are dropped first, so nothing downstream has to know
     # they exist. The offsets still point into the ORIGINAL text, so a claimed

@@ -85,6 +85,8 @@ def _ascii_of(char: str) -> "str | None":
     """What an identifier character IS: a decimal digit of any script, or a
     letter compatibility-equal to one ASCII letter. A card in full-width
     digits is a card; the oracle cannot find less than that."""
+    if not char.isalnum() or unicodedata.category(char) == "Lm":
+        return None
     digit = unicodedata.decimal(char, None)
     if digit is not None:
         return str(digit)
@@ -240,7 +242,7 @@ def _oracle_cards(text: str) -> "list[tuple[str, str, int, int]]":
                         found.append(
                             (candidate, text[start:index + 1], start, index + 1)
                         )
-            elif char.isalnum():
+            elif char.isalnum() and unicodedata.category(char) != "Lm":
                 break
     return found
 
@@ -270,7 +272,7 @@ def _oracle_ibans(text: str) -> "list[tuple[str, str, int, int]]":
                             (candidate, text[start:index + 1], start, index + 1)
                         )
                     break
-            elif char.isalnum():
+            elif char.isalnum() and unicodedata.category(char) != "Lm":
                 break
     return found
 
@@ -1139,6 +1141,43 @@ if given is not None:  # pragma: no branch
         )
 
 
+if given is not None:  # pragma: no branch
+    _SCRIPT_ZEROS = [0xFF10, 0x0660, 0x06F0, 0x0966, 0x0E50]
+    _WIDE_JOINERS = ["\u3000", "\uff0d", "\u30fc", "\u30fb", "\u3001", " ", ""]
+
+    def _in_script(value: str, zero: int, wide_letters: bool) -> str:
+        out = []
+        for char in value:
+            if char.isdigit():
+                out.append(chr(zero + int(char)))
+            elif wide_letters and char.isascii() and char.isalpha():
+                out.append(chr(ord(char) + 0xFEE0))
+            else:
+                out.append(char)
+        return "".join(out)
+
+    @settings(max_examples=150, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+    @given(
+        st.lists(_fragment, min_size=1, max_size=6),
+        st.sampled_from(_WIDE_JOINERS),
+        st.sampled_from(_SCRIPT_ZEROS),
+        st.booleans(),
+        st.sampled_from(EGRESS_MODES),
+    )
+    def test_release_gate_property_in_other_digits(fragments, joiner, zero, wide, mode):
+        """The release gate's property, with the digits in another script and
+        the joins in the ones a CJK or Arabic document uses."""
+        text = joiner.join(_in_script(f, zero, wide) for f in fragments)
+        if not text.strip():
+            return
+        document = scan(text, mode=mode, force_text=True).documents[0]
+        leaks = leaks_in(text, document)
+        assert not leaks, (
+            f"mode={mode.value}\ninput={text!r}\noverlay={document.overlay!r}\n"
+            + "; ".join(leaks)
+        )
+
+
 def test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans():
     """The cloud-egress mode had its own, unfixed copy of the overlap bug.
 
@@ -1533,11 +1572,60 @@ def test_the_gate_sees_full_width_residue():
     assert leaks_in(text, kept)
 
 
+def test_the_gate_sees_full_width_iban_residue():
+    from types import SimpleNamespace
+
+    iban = _full_width(EXAMPLE_IBAN_SPACED)
+    text = f"IBAN {iban}"
+    assert any(kind == "iban" for kind, _c, _w in validated_identifiers(text))
+    kept = SimpleNamespace(
+        egress_allowed=True, overlay="IBAN [IBAN]" + iban[9:], spans=[]
+    )
+    assert leaks_in(text, kept)
+
+
+@pytest.mark.parametrize(
+    "between",
+    [
+        pytest.param("\u24d0", id="circled_letter"),
+        pytest.param("\U0001f130", id="squared_letter"),
+        pytest.param("\u30fc", id="prolonged_sound_mark"),
+        pytest.param("\u02b0", id="modifier_letter"),
+    ],
+)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_symbol_between_groups_joins_them(between, mode):
+    """Folding by NFKC alone read a circled "a" as the letter a and ended the
+    run mid-card: "4111 1111\u24d01111 1111" went out whole where it had been
+    caught. And the katakana prolonged-sound mark is how a Japanese writer
+    types the dash in a number."""
+    for identifier in (EXAMPLE_CARD_SPACED, EXAMPLE_IBAN_SPACED):
+        groups = identifier.split(" ")
+        text = "Konto " + between.join(groups) + " danke"
+        assert_no_leak(text, mode=mode)
+        document = scan(text, mode=mode, force_text=True).documents[0]
+        assert _PLACEHOLDER.sub("", document.overlay) == "Konto  danke", (
+            document.overlay
+        )
+
+
+def test_the_gate_sees_a_prolonged_sound_mark_card_the_detector_drops(monkeypatch):
+    """The gate must not inherit the detector's joiner rule: if the detector
+    stops joining across \u30fc, the gate says so."""
+    from privacy_shield import identifiers
+
+    monkeypatch.setattr(identifiers, "_is_joiner", lambda char: not char.isalnum())
+    text = "Karte " + "\u30fc".join(_in_digits(EXAMPLE_CARD_SPACED, 0xFF10).split(" "))
+    document = scan(text, force_text=True).documents[0]
+    assert leaks_in(text, document), document.overlay
+
+
 @pytest.mark.parametrize(
     "digits",
     [
         pytest.param("\u2463\u2460\u2460\u2460" * 4, id="circled"),
         pytest.param("\u2074\u00b9\u00b9\u00b9" * 4, id="superscript"),
+        pytest.param("\u56db\u4e00\u4e00\u4e00" * 4, id="hanzi"),
     ],
 )
 def test_a_digit_is_a_decimal_digit_on_both_sides(digits):
@@ -1549,6 +1637,26 @@ def test_a_digit_is_a_decimal_digit_on_both_sides(digits):
     assert identifiers.luhn_ok(EXAMPLE_CARD)
     assert not identifiers.find_cards(digits)
     assert not validated_identifiers(digits)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Mail erika\uff20example.com", id="full_width_at"),
+        pytest.param(
+            "Mail " + _full_width("erika@example.com").replace("\uff20", "@"),
+            id="full_width_address",
+        ),
+        pytest.param("IBAN \u0414\u0415" + EXAMPLE_IBAN[2:], id="cyrillic_country_code"),
+    ],
+)
+def test_the_ascii_that_remains_is_a_documented_limit(text):
+    """docs/limits.md: the e-mail finder and IBAN country codes are ASCII. If
+    either starts being found, this fails and the limit comes out."""
+    from privacy_shield import identifiers
+
+    assert not identifiers.find_emails(text)
+    assert not any(kind in ("email", "iban") for kind, _c, _w in validated_identifiers(text))
 
 
 # ---------------------------------------------------------------------------
