@@ -129,12 +129,11 @@ MATERIAL_RESIDUE = 8
 # is not one. A joiner is defined by what it is NOT, so there is no list left
 # to be short.
 #
-# The bound is what stops prose being assembled into a false positive. Real
-# grouping is sparse - sixteen digits in fours is three joiners, an IBAN in
-# fours is five - while text punctuated down to single characters ("4.1.1.1")
-# is fifteen joiners for sixteen characters. Requiring an identifier's own
-# characters to outnumber its punctuation two to one admits every real grouping
-# and rejects assembled prose.
+# There is no bound on how much punctuation a candidate carries. Text
+# punctuated down to single characters ("4.1.1.1...") is claimed if it
+# validates, because `pdftotext` writes a letter-spaced form field exactly that
+# way and nothing in the text tells the two apart; the over-redaction is in
+# docs/limits.md. The only layout bound is the line-terminator count below.
 #
 # Invisible characters (Unicode Cf - soft hyphen, zero-width space, joiners,
 # BOM) are removed before any of this and count for nothing: they are not
@@ -245,9 +244,9 @@ def _is_joiner(char: str) -> bool:
     value wrapping in a narrow column are both ordinary `pdftotext` artefacts
     from the extraction path this package ships; each was handled alone and
     their intersection leaked all sixteen digits with pii_detected False.
-    Keeping it out was justified as "a run must not span a document", but what
-    actually bounds a run is the span and interior-group limits, not the
-    newline - measured below.
+    Keeping it out was justified as "a run must not span a document"; what
+    bounds a candidate is that it may contain at most one line terminator
+    (MAX_LINE_BREAKS), not that a newline ends it.
 
     A modifier letter (Lm) joins too. The katakana prolonged-sound mark is
     typed as the dash in Japanese numbers - "４１１１ー１１１１" - and a
@@ -397,10 +396,9 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
             # is the most ordinary text-extraction artefact there is - a
             # `pdftotext` column gap, fixed-width padding, a dot leader, a
             # monospaced table pipe - and requiring exactly one ended the
-            # candidate before the validator ever saw it. How much punctuation
-            # a candidate may carry in total is decided at claim time by the
-            # span budget, which is a bound on the whole identifier rather than
-            # a hard limit of one on each gap.
+            # candidate before the validator ever saw it. Nothing bounds the
+            # punctuation a candidate carries; at claim time only its line
+            # terminators are counted.
             if ahead < count:
                 following = visible[ahead][0]
                 if _identifier_char(following) is not None:

@@ -1325,10 +1325,11 @@ def test_a_line_break_is_now_an_inline_separator():
     ships - leaked all sixteen digits of a card with pii_detected False.
 
     The exclusion was justified as "a run must not span a document". What
-    actually bounds a run is the span limit and the interior-group limit, and
+    bounded a run then was the span limit and the interior-group limit, and
     admitting the newline moved neither false-positive budget by a single span:
     eight cards and no IBANs on the realistic corpus, eight on the hostile one,
-    zero on the forty-two German documents.
+    zero on the forty-two German documents. Both limits are gone since; a
+    candidate may now contain at most one line terminator.
     """
     from privacy_shield import identifiers
 
