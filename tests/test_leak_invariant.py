@@ -80,6 +80,22 @@ from privacy_shield.identifiers import IBAN_LENGTHS as _IBAN_LENGTHS
 
 _ORACLE_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
+
+def _ascii_of(char: str) -> "str | None":
+    """What an identifier character IS: a decimal digit of any script, or an
+    alphanumeric that is not a modifier letter and is compatibility-equal
+    to one ASCII letter. A card in full-width digits is a card; the oracle
+    cannot find less than that."""
+    if not char.isalnum() or unicodedata.category(char) == "Lm":
+        return None
+    digit = unicodedata.decimal(char, None)
+    if digit is not None:
+        return str(digit)
+    folded = unicodedata.normalize("NFKC", char)
+    if len(folded) == 1 and folded.isascii() and folded.isalpha():
+        return folded
+    return None
+
 #: One line TERMINATOR, however many characters it is written with.
 #:
 #: The bound used to count characters, so a single CRLF scored two and a
@@ -211,13 +227,14 @@ def _oracle_cards(text: str) -> "list[tuple[str, str, int, int]]":
     found: "list[tuple[str, str, int, int]]" = []
     length = len(text)
     for start in range(length):
-        if not (text[start].isascii() and text[start].isdigit()):
+        if not (_ascii_of(text[start]) or "").isdigit():
             continue
         digits: list[str] = []
         for index in range(start, min(length, start + ORACLE_WINDOW)):
             char = text[index]
-            if char.isascii() and char.isdigit():
-                digits.append(char)
+            digit = _ascii_of(char)
+            if digit is not None and digit.isdigit():
+                digits.append(digit)
                 if len(digits) > 19:
                     break
                 if len(digits) >= 13:
@@ -226,7 +243,7 @@ def _oracle_cards(text: str) -> "list[tuple[str, str, int, int]]":
                         found.append(
                             (candidate, text[start:index + 1], start, index + 1)
                         )
-            elif char.isalnum():
+            elif char.isalnum() and unicodedata.category(char) != "Lm":
                 break
     return found
 
@@ -236,14 +253,15 @@ def _oracle_ibans(text: str) -> "list[tuple[str, str, int, int]]":
     found: "list[tuple[str, str, int, int]]" = []
     length = len(text)
     for start in range(length):
-        if not (text[start].isascii() and text[start].isalpha()):
+        if not (_ascii_of(text[start]) or "").isalpha():
             continue
         registered = None
         body: list[str] = []
         for index in range(start, min(length, start + ORACLE_WINDOW)):
             char = text[index]
-            if char.isascii() and char.isalnum():
-                body.append(char)
+            folded = _ascii_of(char)
+            if folded is not None:
+                body.append(folded)
                 if len(body) == 2:
                     registered = _IBAN_LENGTHS.get("".join(body).upper())
                     if registered is None:
@@ -255,7 +273,7 @@ def _oracle_ibans(text: str) -> "list[tuple[str, str, int, int]]":
                             (candidate, text[start:index + 1], start, index + 1)
                         )
                     break
-            elif char.isalnum():
+            elif char.isalnum() and unicodedata.category(char) != "Lm":
                 break
     return found
 
@@ -379,7 +397,7 @@ def _without_placeholders(overlay: str) -> str:
 
 
 def _compact(value: str) -> str:
-    return "".join(char for char in value if char.isascii() and char.isalnum())
+    return "".join(_ascii_of(char) or "" for char in value)
 
 
 def _compact_segments(overlay: str) -> "list[str]":
@@ -1124,6 +1142,43 @@ if given is not None:  # pragma: no branch
         )
 
 
+if given is not None:  # pragma: no branch
+    _SCRIPT_ZEROS = [0xFF10, 0x0660, 0x06F0, 0x0966, 0x0E50]
+    _WIDE_JOINERS = ["\u3000", "\uff0d", "\u30fc", "\u30fb", "\u3001", " ", ""]
+
+    def _in_script(value: str, zero: int, wide_letters: bool) -> str:
+        out = []
+        for char in value:
+            if char.isdigit():
+                out.append(chr(zero + int(char)))
+            elif wide_letters and char.isascii() and char.isalpha():
+                out.append(chr(ord(char) + 0xFEE0))
+            else:
+                out.append(char)
+        return "".join(out)
+
+    @settings(max_examples=150, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+    @given(
+        st.lists(_fragment, min_size=1, max_size=6),
+        st.sampled_from(_WIDE_JOINERS),
+        st.sampled_from(_SCRIPT_ZEROS),
+        st.booleans(),
+        st.sampled_from(EGRESS_MODES),
+    )
+    def test_release_gate_property_in_other_digits(fragments, joiner, zero, wide, mode):
+        """The release gate's property, with the digits in another script and
+        the joins in the ones a CJK or Arabic document uses."""
+        text = joiner.join(_in_script(f, zero, wide) for f in fragments)
+        if not text.strip():
+            return
+        document = scan(text, mode=mode, force_text=True).documents[0]
+        leaks = leaks_in(text, document)
+        assert not leaks, (
+            f"mode={mode.value}\ninput={text!r}\noverlay={document.overlay!r}\n"
+            + "; ".join(leaks)
+        )
+
+
 def test_anonymous_json_overlay_is_not_spliced_by_overlapping_spans():
     """The cloud-egress mode had its own, unfixed copy of the overlap bug.
 
@@ -1270,10 +1325,11 @@ def test_a_line_break_is_now_an_inline_separator():
     ships - leaked all sixteen digits of a card with pii_detected False.
 
     The exclusion was justified as "a run must not span a document". What
-    actually bounds a run is the span limit and the interior-group limit, and
+    bounded a run then was the span limit and the interior-group limit, and
     admitting the newline moved neither false-positive budget by a single span:
     eight cards and no IBANs on the realistic corpus, eight on the hostile one,
-    zero on the forty-two German documents.
+    zero on the forty-two German documents. Both limits are gone since; a
+    candidate may now contain at most one line terminator.
     """
     from privacy_shield import identifiers
 
@@ -1457,31 +1513,188 @@ def test_the_oracle_sees_a_widely_spaced_iban_at_the_detectors_limit():
     assert_no_leak("Konto " + spaced)
 
 
+def _in_digits(value: str, zero: int) -> str:
+    return "".join(chr(zero + int(c)) if c.isdigit() else c for c in value)
+
+
+def _full_width(value: str) -> str:
+    return "".join(chr(ord(c) + 0xFEE0) if c.isalnum() else c for c in value)
+
+
+NON_ASCII_DIGITS = [
+    pytest.param(0xFF10, id="fullwidth"),
+    pytest.param(0x0660, id="arabic_indic"),
+    pytest.param(0x06F0, id="extended_arabic_indic"),
+    pytest.param(0x0966, id="devanagari"),
+]
+
+
+@pytest.mark.parametrize("zero", NON_ASCII_DIGITS)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_card_in_non_ascii_digits_is_a_card(zero, mode):
+    """ASCII was the finding rule, and "Karte ４１１１ １１１１ １１１１ １１１１"
+    went out as "Karte [PHONE] １１１１" - a phone pattern claimed part of it by
+    accident and twelve digits stayed, with egress allowed."""
+    card = _in_digits(EXAMPLE_CARD_SPACED, zero)
+    text = f"Karte {card} bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["credit_card"], document.overlay
+    left = _PLACEHOLDER.sub("", document.overlay)
+    assert not any(unicodedata.decimal(c, None) is not None for c in left), left
+
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_full_width_iban_is_an_iban(mode):
+    text = f"IBAN {_full_width(EXAMPLE_IBAN_SPACED)} bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["iban"], document.overlay
+
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_card_of_mixed_widths_is_one_card(mode):
+    groups = EXAMPLE_CARD_SPACED.split(" ")
+    mixed = " ".join(g if i % 2 else _full_width(g) for i, g in enumerate(groups))
+    text = f"Karte {mixed}"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["credit_card"], document.overlay
+
+
+def test_the_gate_sees_full_width_residue():
+    from types import SimpleNamespace
+
+    card = _full_width(EXAMPLE_CARD_SPACED)
+    text = f"Karte {card}"
+    assert any(kind == "credit_card" for kind, _c, _w in validated_identifiers(text))
+    kept = SimpleNamespace(
+        egress_allowed=True, overlay="Karte [PHONE]" + card[4:], spans=[]
+    )
+    assert leaks_in(text, kept)
+
+
+def test_the_gate_sees_full_width_iban_residue():
+    from types import SimpleNamespace
+
+    iban = _full_width(EXAMPLE_IBAN_SPACED)
+    text = f"IBAN {iban}"
+    assert any(kind == "iban" for kind, _c, _w in validated_identifiers(text))
+    kept = SimpleNamespace(
+        egress_allowed=True, overlay="IBAN [IBAN]" + iban[9:], spans=[]
+    )
+    assert leaks_in(text, kept)
+
+
 @pytest.mark.parametrize(
-    "digits, label",
+    "between",
     [
-        ("٤١١١١١١١١١١١١١١١", "arabic_indic"),
-        ("４１１１１１１１１１１１１１１１", "fullwidth"),
+        pytest.param("\u24d0", id="circled_letter"),
+        pytest.param("\U0001f130", id="squared_letter"),
+        pytest.param("\u30fc", id="prolonged_sound_mark"),
+        pytest.param("\u02b0", id="modifier_letter"),
     ],
 )
-def test_non_ascii_digits_are_a_documented_limit_not_a_silent_one(digits, label):
-    """ASCII is shared by the detector and this oracle, and it is a FINDING
-    rule, not a definition - `luhn_ok` accepts these digits happily while
-    neither candidate finder will ever offer them to it.
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_symbol_between_groups_joins_them(between, mode):
+    """Folding by NFKC alone read a circled "a" as the letter a and ended the
+    run mid-card: "4111 1111\u24d01111 1111" went out whole where it had been
+    caught. And the katakana prolonged-sound mark is how a Japanese writer
+    types the dash in a number."""
+    for identifier in (EXAMPLE_CARD_SPACED, EXAMPLE_IBAN_SPACED):
+        groups = identifier.split(" ")
+        text = "Konto " + between.join(groups) + " danke"
+        assert_no_leak(text, mode=mode)
+        document = scan(text, mode=mode, force_text=True).documents[0]
+        assert _PLACEHOLDER.sub("", document.overlay) == "Konto  danke", (
+            document.overlay
+        )
 
-    Disclosed in docs/limits.md, and pinned here so the disclosure cannot
-    quietly stop being true in either direction: if these start being detected,
-    this test says so and the documented limit needs removing.
-    """
+
+#: Letters in the account part, so the card oracle cannot see its digits and
+#: only the IBAN side of the gate stands between a detector drift and a leak.
+LETTERED_IBAN_GROUPS = ["NL91", "ABNA", "0417", "1643", "00"]
+
+
+@pytest.mark.parametrize(
+    "between, drift",
+    [
+        pytest.param("\u30fc", "joiner", id="prolonged_sound_mark"),
+        pytest.param("\u02b0", "joiner", id="modifier_letter"),
+        pytest.param("\u24b6", "fold", id="circled_capital"),
+    ],
+)
+def test_the_gate_sees_a_lettered_iban_the_detector_drops(between, drift, monkeypatch):
+    """The gate must hold its own rule on the IBAN side too: weaken the
+    detector's joiner or its fold, and the gate reports the IBAN it dropped."""
     from privacy_shield import identifiers
 
-    # The validator itself is happy with them...
-    normalised = "".join(str(int(char)) for char in digits)
-    assert identifiers.luhn_ok(normalised), "test vector is not Luhn-valid"
+    if drift == "joiner":
+        monkeypatch.setattr(identifiers, "_is_joiner", lambda char: not char.isalnum())
+    else:
+        real = identifiers._identifier_char
 
-    # ...and neither finder offers them.
-    assert not identifiers.find_cards(digits), label
-    assert not validated_identifiers(digits), label
+        def fold_symbols_too(char):
+            folded = unicodedata.normalize("NFKC", char)
+            if not char.isascii() and len(folded) == 1 and folded.isascii() and folded.isalpha():
+                return folded
+            return real(char)
+
+        monkeypatch.setattr(identifiers, "_identifier_char", fold_symbols_too)
+    text = "IBAN " + between.join(LETTERED_IBAN_GROUPS) + " danke"
+    assert any(kind == "iban" for kind, _c, _w in validated_identifiers(text))
+    document = scan(text, force_text=True).documents[0]
+    assert leaks_in(text, document), document.overlay
+
+
+def test_the_gate_sees_a_prolonged_sound_mark_card_the_detector_drops(monkeypatch):
+    """The gate must not inherit the detector's joiner rule: if the detector
+    stops joining across \u30fc, the gate says so."""
+    from privacy_shield import identifiers
+
+    monkeypatch.setattr(identifiers, "_is_joiner", lambda char: not char.isalnum())
+    text = "Karte " + "\u30fc".join(_in_digits(EXAMPLE_CARD_SPACED, 0xFF10).split(" "))
+    document = scan(text, force_text=True).documents[0]
+    assert leaks_in(text, document), document.overlay
+
+
+@pytest.mark.parametrize(
+    "digits",
+    [
+        pytest.param("\u2463\u2460\u2460\u2460" * 4, id="circled"),
+        pytest.param("\u2074\u00b9\u00b9\u00b9" * 4, id="superscript"),
+        pytest.param("\u56db\u4e00\u4e00\u4e00" * 4, id="hanzi"),
+    ],
+)
+def test_a_digit_is_a_decimal_digit_on_both_sides(digits):
+    """Circled and superscript numerals fold to digits under NFKC but are not
+    decimal digits; neither the detector nor the gate treats them as one, so
+    the two cannot disagree about them."""
+    from privacy_shield import identifiers
+
+    assert identifiers.luhn_ok(EXAMPLE_CARD)
+    assert not identifiers.find_cards(digits)
+    assert not validated_identifiers(digits)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Mail erika\uff20example.com", id="full_width_at"),
+        pytest.param(
+            "Mail " + _full_width("erika@example.com").replace("\uff20", "@"),
+            id="full_width_address",
+        ),
+        pytest.param("IBAN \u0414\u0415" + EXAMPLE_IBAN[2:], id="cyrillic_country_code"),
+    ],
+)
+def test_the_ascii_that_remains_is_a_documented_limit(text):
+    """docs/limits.md: the e-mail finder and IBAN country codes are ASCII. If
+    either starts being found, this fails and the limit comes out."""
+    from privacy_shield import identifiers
+
+    assert not identifiers.find_emails(text)
+    assert not any(kind in ("email", "iban") for kind, _c, _w in validated_identifiers(text))
 
 
 # ---------------------------------------------------------------------------

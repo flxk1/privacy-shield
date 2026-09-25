@@ -108,9 +108,9 @@ MATERIAL_RESIDUE = 8
 
 # THE RULE, in one sentence:
 #
-#   A candidate is any maximal sequence of ASCII alphanumerics joined by single
-#   characters that are not alphanumeric at all and not a line break, carrying
-#   at most one such joiner for every two identifier characters.
+#   A candidate is any maximal sequence of identifier characters joined by runs
+#   of characters that are not alphanumeric at all or are modifier letters,
+#   interrupted by at most one line terminator.
 #
 # Not a list of separators. Twice now a list has been walked around. The first
 # version enumerated " \t-", and a no-break space, a soft hyphen and a
@@ -129,18 +129,26 @@ MATERIAL_RESIDUE = 8
 # is not one. A joiner is defined by what it is NOT, so there is no list left
 # to be short.
 #
-# The bound is what stops prose being assembled into a false positive. Real
-# grouping is sparse - sixteen digits in fours is three joiners, an IBAN in
-# fours is five - while text punctuated down to single characters ("4.1.1.1")
-# is fifteen joiners for sixteen characters. Requiring an identifier's own
-# characters to outnumber its punctuation two to one admits every real grouping
-# and rejects assembled prose.
+# There is no bound on how much punctuation a candidate carries. Text
+# punctuated down to single characters ("4.1.1.1...") is claimed if it
+# validates, because `pdftotext` writes a letter-spaced form field exactly that
+# way and nothing in the text tells the two apart; the over-redaction is in
+# docs/limits.md. The only layout bound is the line-terminator count below.
 #
 # Invisible characters (Unicode Cf - soft hyphen, zero-width space, joiners,
 # BOM) are removed before any of this and count for nothing: they are not
-# there. A line break is never a joiner. A NON-ASCII alphanumeric - an umlaut,
-# a CJK character - is not a joiner either; it ends the run, because it is a
-# letter in a word rather than punctuation between digits.
+# there. A line break joins like any other non-alphanumeric, but a candidate
+# may contain at most one (MAX_LINE_BREAKS). An alphanumeric that is not an
+# identifier character - an umlaut, a CJK character - is not a joiner either;
+# it ends the run, because it is a letter in a word rather than punctuation
+# between digits. A modifier letter (Lm) is the exception and joins: the
+# katakana prolonged-sound mark is typed as the dash in Japanese numbers.
+#
+# An identifier character is judged by what it IS, not by its code point: a
+# decimal digit of any script, or an alphanumeric that is compatibility-equal
+# to one ASCII letter. "４１１１ １１１１ １１１１ １１１１" is a card; ASCII as the
+# finding rule let it through with pii_detected set only because a phone
+# pattern happened to claim part of it, and twelve digits egressed.
 _LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
 # THE LAYOUT BOUNDS: there is exactly ONE, and it is definitional.
@@ -236,11 +244,15 @@ def _is_joiner(char: str) -> bool:
     value wrapping in a narrow column are both ordinary `pdftotext` artefacts
     from the extraction path this package ships; each was handled alone and
     their intersection leaked all sixteen digits with pii_detected False.
-    Keeping it out was justified as "a run must not span a document", but what
-    actually bounds a run is the span and interior-group limits, not the
-    newline - measured below.
+    Keeping it out was justified as "a run must not span a document"; what
+    bounds a candidate is that it may contain at most one line terminator
+    (MAX_LINE_BREAKS), not that a newline ends it.
+
+    A modifier letter (Lm) joins too. The katakana prolonged-sound mark is
+    typed as the dash in Japanese numbers - "４１１１ー１１１１" - and a
+    modifier never ends a number the way a word letter does.
     """
-    return not char.isalnum()
+    return not char.isalnum() or unicodedata.category(char) == "Lm"
 
 #: Characters a local part may contain. Non-ASCII letters included, because
 #: RFC 6531 addresses exist and "mueller" is spelt with an umlaut in Germany.
@@ -256,6 +268,26 @@ def _is_joiner(char: str) -> bool:
 #: or a word run into it - so the address is claimed WHOLE. Where that absorbs
 #: a glued word it over-redacts, which is the safe direction.
 _LOCAL_PART_CHARS = None  # see _is_local_part_char
+
+
+def _identifier_char(char: str) -> Optional[str]:
+    """The ASCII character *char* stands for in an identifier, else None.
+
+    One character in, one out, so a run's offsets still index the text.
+    """
+    if char.isascii():
+        return char if char.isalnum() else None
+    # A symbol is not a letter because NFKC spells it as one: a circled "a" is
+    # punctuation between two groups, and folding it ended the run mid-card.
+    if not char.isalnum() or unicodedata.category(char) == "Lm":
+        return None
+    digit = unicodedata.decimal(char, None)
+    if digit is not None:
+        return str(digit)
+    folded = unicodedata.normalize("NFKC", char)
+    if len(folded) == 1 and folded.isascii() and folded.isalpha():
+        return folded
+    return None
 
 
 def _is_local_part_char(char: str) -> bool:
@@ -324,14 +356,16 @@ def email_ok(value: str) -> bool:
 def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
     """Every maximal run of identifier characters, compacted to alphanumerics.
 
-    A run grows over ASCII alphanumerics and over a SINGLE space, tab or hyphen
-    that is itself followed by an alphanumeric - the way a human writes an IBAN
-    in groups of four. It ends at anything else, a newline included. Yields
+    A run grows over identifier characters and over joiners that are followed
+    by one - the way a human writes an IBAN in groups of four. It ends at
+    anything else. Yields
     ``(compact, offsets)`` where ``offsets[i]`` is the index in *text* of
     ``compact[i]``, so a claimed span maps back exactly, separators and all.
 
-    Non-ASCII letters end a run: an IBAN is ASCII, and letting an umlaut
-    continue the run would only glue unrelated words to it.
+    Characters are folded by `_identifier_char`: a full-width or
+    Arabic-Indic digit continues the run as the digit it is. Other letters end
+    it: letting an umlaut continue the run would only glue unrelated words to
+    it.
     """
     # Invisible characters are dropped first, so nothing downstream has to know
     # they exist. The offsets still point into the ORIGINAL text, so a claimed
@@ -348,8 +382,9 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
     count = len(visible)
     while position < count:
         char, origin = visible[position]
-        if char.isascii() and char.isalnum():
-            compact.append(char)
+        folded = _identifier_char(char)
+        if folded is not None:
+            compact.append(folded)
             offsets.append(origin)
             position += 1
             continue
@@ -361,13 +396,12 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
             # is the most ordinary text-extraction artefact there is - a
             # `pdftotext` column gap, fixed-width padding, a dot leader, a
             # monospaced table pipe - and requiring exactly one ended the
-            # candidate before the validator ever saw it. How much punctuation
-            # a candidate may carry in total is decided at claim time by the
-            # span budget, which is a bound on the whole identifier rather than
-            # a hard limit of one on each gap.
+            # candidate before the validator ever saw it. Nothing bounds the
+            # punctuation a candidate carries; at claim time only its line
+            # terminators are counted.
             if ahead < count:
                 following = visible[ahead][0]
-                if following.isascii() and following.isalnum():
+                if _identifier_char(following) is not None:
                     position = ahead
                     continue
         if compact:
