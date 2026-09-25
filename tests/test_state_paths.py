@@ -1,9 +1,10 @@
 """Runtime state lands outside the installed package.
 
-Four surfaces — the standalone audit trail (``privacy_shield.audit_log``), the privacy
+Five surfaces — the standalone audit trail (``privacy_shield.audit_log``), the privacy
 skill KG (``privacy_shield.privacy_skill_kg``), the GDPR Art. 33(2) breach log
-(``privacy_shield.breach``) and the pseudonymisation session store
-(``privacy_shield.anonymisation_skill``) — resolve their paths at call time, default
+(``privacy_shield.breach``), the pseudonymisation session store
+(``privacy_shield.anonymisation_skill``) and the context-embeddings cache
+(``privacy_shield.privacy_shield_embeddings``) — resolve their paths at call time, default
 to the platform user-state directory, honour an environment override verbatim, and create
 the directory on demand. ``tests/conftest.py`` points the user-state home at ``tmp_path``.
 
@@ -14,6 +15,9 @@ re-identification map, pseudonym back to the real email address — into
 """
 
 import json
+import os
+import shutil
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -26,6 +30,11 @@ from privacy_shield.anonymisation_skill import SESSION_STORE_ENV, Pseudonymisati
 from privacy_shield.audit_log import AuditEvent, audit_log_path, get_recent_audit_events, log_audit_event
 from privacy_shield.breach import BREACH_LOG_DIR_ENV, BreachDetector, breach_log_dir
 from privacy_shield.scanner import PIIType
+from privacy_shield.privacy_shield_embeddings import (
+    CONTEXT_EMBEDDINGS_ENV,
+    PIIContextMatcher,
+    context_embeddings_path,
+)
 
 PKG_ROOT = Path(audit_log.__file__).resolve().parent
 AUDIT_ENV = "PRIVACY_SHIELD_AUDIT_LOG"
@@ -302,3 +311,82 @@ def test_the_docstring_does_not_claim_encryption_it_does_not_do(tmp_path):
     assert "erika.mustermann@example.com" in on_disk, (
         "the file is plaintext; if that changed, the docstring must change too"
     )
+
+
+# ---------------------------------------------------------------- context embeddings
+
+
+def test_context_embeddings_default_resolves_outside_the_installed_package(tmp_path):
+    resolved = context_embeddings_path()
+    assert _outside_package(resolved)
+    assert tmp_path in resolved.parents
+    assert PKG_ROOT not in PIIContextMatcher().embeddings_path.parents
+
+
+def test_context_embeddings_env_override_wins_verbatim(tmp_path, monkeypatch):
+    target = tmp_path / "override" / "ctx.json"
+    monkeypatch.setenv(CONTEXT_EMBEDDINGS_ENV, str(target))
+    assert context_embeddings_path() == target
+    assert PIIContextMatcher().embeddings_path == target
+
+
+def test_context_embeddings_explicit_path_beats_the_override(tmp_path, monkeypatch):
+    monkeypatch.setenv(CONTEXT_EMBEDDINGS_ENV, str(tmp_path / "env.json"))
+    explicit = tmp_path / "explicit.json"
+    assert PIIContextMatcher(embeddings_path=explicit).embeddings_path == explicit
+
+
+def test_context_embeddings_setup_writes_to_the_user_state_home(tmp_path):
+    matcher = PIIContextMatcher()
+    matcher._embed = lambda text: [0.1, 0.2, 0.3]
+    assert matcher.embed_pii_contexts({"name": ["employee named"]}) == 1
+    written = context_embeddings_path()
+    assert written.exists() and _outside_package(written)
+    assert tmp_path in written.parents
+    assert PIIContextMatcher().is_ready
+
+
+@pytest.mark.parametrize("write", [
+    lambda p: p.write_text("{}", encoding="utf-8"),
+    lambda p: os.close(os.open(p, os.O_CREAT | os.O_WRONLY)),
+    lambda p: os.link(__file__, p),
+    lambda p: os.symlink(__file__, p),
+    lambda p: sqlite3.connect(p),
+    lambda p: (p.parent / "__pycache__" / p.name).write_text("{}", encoding="utf-8"),
+    lambda p: (p.parent / "__pycache__" / "leak.pyc.json").write_text("{}", encoding="utf-8"),
+    lambda p: shutil.copyfile(__file__, p),
+], ids=["open", "os.open", "link", "symlink", "sqlite", "pycache-non-pyc", "pycache-pyc-prefix",
+        "shutil-copy"])
+def test_a_write_into_the_package_tree_is_refused_and_recorded(write):
+    import conftest
+
+    probe = PKG_ROOT / "guard_probe"
+    with pytest.raises(PermissionError):
+        write(probe)
+    assert conftest.GUARD_HITS
+    conftest.GUARD_HITS.clear()
+    assert not probe.exists() and not probe.is_symlink()
+    assert not (PKG_ROOT / "__pycache__" / probe.name).exists()
+    assert not (PKG_ROOT / "__pycache__" / "leak.pyc.json").exists()
+
+
+def test_reading_or_copying_out_of_the_package_tree_is_not_flagged(tmp_path):
+    import conftest
+
+    shutil.copy(PKG_ROOT / "__init__.py", tmp_path / "init_copy.py")
+    shutil.copytree(PKG_ROOT / "utils", tmp_path / "utils")
+    os.link(PKG_ROOT / "__init__.py", tmp_path / "init_link.py")
+    assert not conftest.GUARD_HITS
+
+
+def test_a_cache_left_in_the_package_is_named_not_read(tmp_path, monkeypatch, caplog):
+    import privacy_shield.privacy_shield_embeddings as emb
+
+    legacy = tmp_path / "pkg" / "pii_context_embeddings.json"
+    legacy.parent.mkdir()
+    legacy.write_text(json.dumps({"name": [{"phrase": "x", "embedding": [1.0]}]}))
+    monkeypatch.setattr(emb, "_LEGACY_PACKAGE_FILE", legacy)
+    with caplog.at_level("WARNING", logger=emb.__name__):
+        matcher = PIIContextMatcher()
+    assert not matcher.is_ready
+    assert str(legacy) in caplog.text and str(matcher.embeddings_path) in caplog.text

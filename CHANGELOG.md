@@ -109,6 +109,24 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **The context-embeddings cache left the package tree.** It was a fifth
+  runtime store the 2.0.0 state-root move missed: `embed_pii_contexts()` wrote
+  `<package>/data/privacy_shield/pii_context_embeddings.json`, and the test
+  suite rewrote that file on every run. It now resolves under the user-state
+  directory next to the other four stores; `PRIVACY_SHIELD_CONTEXT_EMBEDDINGS`
+  overrides it verbatim and `PIIContextMatcher(embeddings_path=...)` beats
+  both. A cache left in the package by an earlier setup is named in a warning
+  and not read - re-run `embed_pii_contexts()` to rebuild it. The test suite
+  now refuses and fails an in-process write into the package tree (open,
+  mkdir, remove, rename, link, symlink, sqlite, shutil; `.pyc` bytecode
+  excepted). Child processes and `dir_fd`-relative opens are not seen. Tested:
+  `tests/test_state_paths.py::test_context_embeddings_default_resolves_outside_the_installed_package`,
+  `::test_context_embeddings_env_override_wins_verbatim`,
+  `::test_context_embeddings_explicit_path_beats_the_override`,
+  `::test_context_embeddings_setup_writes_to_the_user_state_home`,
+  `::test_a_cache_left_in_the_package_is_named_not_read`,
+  `::test_a_write_into_the_package_tree_is_refused_and_recorded`.
+
 - **An e-mail address written with a full-width `＠` or full-width letters is
   detected.** `erika＠example.com` went out whole with pii_detected False in
   every egress mode: the finder expanded only around an ASCII `@`. It now

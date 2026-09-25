@@ -279,10 +279,11 @@ class TestEmbeddingEgressGuard:
         }))
         monkeypatch.setenv("OPENAI_BASE_URL", base_url)
         monkeypatch.setenv("OPENAI_API_KEY", "not-a-real-key")
-        with patch("privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE",
-                   embeddings_file):
-            from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
-            return PIIContextMatcher()
+        monkeypatch.setattr(
+            "privacy_shield.privacy_shield_embeddings._CONTEXT_EMBEDDINGS_FILE", embeddings_file
+        )
+        from privacy_shield.privacy_shield_embeddings import PIIContextMatcher
+        return PIIContextMatcher()
 
     @pytest.mark.parametrize("base_url", [
         "https://api.openai.com/v1",

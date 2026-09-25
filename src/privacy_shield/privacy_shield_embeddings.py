@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .audit_log import _STATE_APP_DIR, _user_state_home
 from .utils.network import (
     is_loopback_or_unix_endpoint,
     no_proxy_http_client,
@@ -41,8 +42,23 @@ def _configured_base_url() -> str:
         or DEFAULT_EMBEDDING_BASE_URL
     ).strip()
 
-_DATA_DIR = Path(__file__).resolve().parent / "data" / "privacy_shield"
-_CONTEXT_EMBEDDINGS_FILE = _DATA_DIR / "pii_context_embeddings.json"
+CONTEXT_EMBEDDINGS_ENV = "PRIVACY_SHIELD_CONTEXT_EMBEDDINGS"
+_CONTEXT_EMBEDDINGS_FILE: Optional[Path] = None
+_LEGACY_PACKAGE_FILE = (
+    Path(__file__).resolve().parent / "data" / "privacy_shield" / "pii_context_embeddings.json"
+)
+
+
+def context_embeddings_path() -> Path:
+    """The context-embeddings cache, resolved at call time, outside the package."""
+    override = str(os.environ.get(CONTEXT_EMBEDDINGS_ENV, "")).strip()
+    if override:
+        return Path(override)
+    return _user_state_home() / _STATE_APP_DIR / "pii_context_embeddings.json"
+
+
+def _resolved_context_embeddings_path() -> Path:
+    return Path(_CONTEXT_EMBEDDINGS_FILE) if _CONTEXT_EMBEDDINGS_FILE else context_embeddings_path()
 
 
 # ---- Pre-defined PII context patterns ----
@@ -204,8 +220,15 @@ class PIIContextMatcher:
     text by comparing chunk embeddings against those patterns.
     """
 
-    def __init__(self, model: str = "text-embedding-3-small") -> None:
+    def __init__(
+        self,
+        model: str = "text-embedding-3-small",
+        embeddings_path: Optional[str | Path] = None,
+    ) -> None:
         self.model = model
+        self.embeddings_path = (
+            Path(embeddings_path) if embeddings_path else _resolved_context_embeddings_path()
+        )
         self._client = None
         self._refused_remote_endpoint = False
         self._context_embeddings: Dict[str, List[Dict[str, Any]]] = {}
@@ -288,18 +311,26 @@ class PIIContextMatcher:
 
     def _load_context_embeddings(self) -> None:
         """Load pre-computed PII context embeddings from disk."""
-        if _CONTEXT_EMBEDDINGS_FILE.exists():
+        if self.embeddings_path.exists():
             try:
                 self._context_embeddings = json.loads(
-                    _CONTEXT_EMBEDDINGS_FILE.read_text(encoding="utf-8")
+                    self.embeddings_path.read_text(encoding="utf-8")
                 )
             except Exception:
                 self._context_embeddings = {}
+        elif _LEGACY_PACKAGE_FILE.exists():
+            # 2.0.0 and earlier wrote the cache here; it is no longer read.
+            logger.warning(
+                "ignoring context embeddings inside the package at %s; the cache now "
+                "lives at %s - re-run embed_pii_contexts() to rebuild it there",
+                _LEGACY_PACKAGE_FILE,
+                self.embeddings_path,
+            )
 
     def _save_context_embeddings(self) -> None:
         """Persist PII context embeddings to disk."""
-        _CONTEXT_EMBEDDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _CONTEXT_EMBEDDINGS_FILE.write_text(
+        self.embeddings_path.parent.mkdir(parents=True, exist_ok=True)
+        self.embeddings_path.write_text(
             json.dumps(self._context_embeddings, ensure_ascii=False),
             encoding="utf-8",
         )
