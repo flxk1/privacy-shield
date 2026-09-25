@@ -240,6 +240,62 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   repository's own corpus, and keeps every existing measurement unchanged.
   See commit `a4c28fd` for the full 30-input list and both options' numbers.
 
+- **`PrivacyGate.check()` and `runner.scan()` no longer write to disk by
+  default — this changes a default; callers relying on the implicit audit
+  trail must configure it explicitly.** `PrivacyGate.check()` recorded every
+  decision to the real, unbounded user-state audit log
+  (`~/Library/Application Support/privacy-shield/logs/audit.jsonl` /
+  `~/.local/state/privacy-shield/...`) and notified the module
+  `breach_detector` on every block, unconditionally, regardless of caller,
+  including `runner.scan()`'s "read-only" folder walk; `_decide_local`'s own
+  docstring claimed "no audit side effects" while `_on_blocked`, which it
+  calls on every block, wrote to the breach log. `PrivacyGate` now takes
+  keyword-only `audit_log` (a path, or the standard path via
+  `audit_log_path()`) and `breach_detector` (e.g. the module
+  `breach_detector`), both `None` (no write, no escalation) by default; the
+  module `privacy_gate` singleton and `require_privacy_check` follow the same
+  default and gain `PrivacyGate.configure_audit()` to opt in.
+  `PRIVACY_SHIELD_AUDIT_LOG`, when set, is itself an explicit opt-in to that
+  path (deployment-level config), resolved per call so it applies to the
+  singleton too. `runner.scan(audit_log_path=...)` now actually routes the
+  gate's decisions there too — previously it reached only `PrivacyShield`'s
+  own per-document audit, while the gate silently wrote to the default path
+  regardless; with no `audit_log_path`, `scan()` now writes nothing anywhere,
+  and never escalates to the global breach detector. The `_decide_local`
+  docstring is corrected. Tested:
+  `tests/test_privacy_gate_external_enforcement.py::test_default_unsafe_egress_blocks_and_writes_nothing`,
+  `::test_default_safe_egress_passes_and_writes_nothing`,
+  `::test_default_blocks_do_not_reach_a_breach_detector`,
+  `::test_default_require_privacy_check_raises_without_sink`,
+  `::test_attached_sink_receives_decision_writes_nothing_without_audit_log`,
+  `::test_faulty_sink_never_breaks_core_or_configured_audit`,
+  `::test_audit_log_path_records_decisions`,
+  `::test_injected_breach_detector_receives_escalations`,
+  `::test_real_breach_detector_escalates_when_injected`,
+  `::test_env_var_is_itself_opt_in_to_the_standard_path`,
+  `::test_configure_audit_turns_on_recording_for_an_existing_gate`,
+  `::test_sink_and_audit_log_both_fire_when_both_configured`,
+  `tests/test_privacy_shield_runner.py::test_scan_writes_nothing_without_audit_log_path`,
+  `::test_scan_folder_redacts_pii_span_by_span`,
+  `tests/test_legacy_env.py::test_neither_name_set_uses_the_default`,
+  `::test_neither_name_set_still_resolves_default_when_opted_in`,
+  `::test_replacement_names_are_honoured`,
+  `tests/test_breach_gate_isolation.py::test_broken_breach_log_dir_does_not_break_the_gate_decision`,
+  `::test_broken_breach_log_dir_logs_at_error_not_debug`.
+
+- **The test suite could silently write into the real
+  `~/Library/Application Support/privacy-shield` / `~/.local/state/privacy-shield`
+  trees** if a default regressed, since the isolation fixture only pointed
+  `HOME`/`XDG_STATE_HOME`/`LOCALAPPDATA`/`USERPROFILE` at `tmp_path` without
+  verifying nothing escaped it. `tests/conftest.py` now resolves the real
+  home from the OS account (`pwd.getpwuid`, not `$HOME`) and installs a
+  `sys.addaudithook` that refuses (raises `PermissionError`, so the write
+  never happens) any open-for-write, `mkdir`, `rename`/`replace`, `remove` or
+  `shutil.*` call targeting those real roots, recording hits so a swallowed
+  exception in the code under test still fails the test. Tested:
+  `tests/test_hermetic_write_guard.py::test_guard_refuses_a_write_under_the_real_root`,
+  `::test_guard_refuses_mkdir_under_the_real_root`.
+
 ### Found, not fixed
 
 - **The local-model layer's spans have made-up offsets.** `scanner.py` gives a
