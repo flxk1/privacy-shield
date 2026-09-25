@@ -80,6 +80,19 @@ from privacy_shield.identifiers import IBAN_LENGTHS as _IBAN_LENGTHS
 
 _ORACLE_LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
+
+def _ascii_of(char: str) -> "str | None":
+    """What an identifier character IS: a decimal digit of any script, or a
+    letter compatibility-equal to one ASCII letter. A card in full-width
+    digits is a card; the oracle cannot find less than that."""
+    digit = unicodedata.decimal(char, None)
+    if digit is not None:
+        return str(digit)
+    folded = unicodedata.normalize("NFKC", char)
+    if len(folded) == 1 and folded.isascii() and folded.isalpha():
+        return folded
+    return None
+
 #: One line TERMINATOR, however many characters it is written with.
 #:
 #: The bound used to count characters, so a single CRLF scored two and a
@@ -211,13 +224,14 @@ def _oracle_cards(text: str) -> "list[tuple[str, str, int, int]]":
     found: "list[tuple[str, str, int, int]]" = []
     length = len(text)
     for start in range(length):
-        if not (text[start].isascii() and text[start].isdigit()):
+        if not (_ascii_of(text[start]) or "").isdigit():
             continue
         digits: list[str] = []
         for index in range(start, min(length, start + ORACLE_WINDOW)):
             char = text[index]
-            if char.isascii() and char.isdigit():
-                digits.append(char)
+            digit = _ascii_of(char)
+            if digit is not None and digit.isdigit():
+                digits.append(digit)
                 if len(digits) > 19:
                     break
                 if len(digits) >= 13:
@@ -236,14 +250,15 @@ def _oracle_ibans(text: str) -> "list[tuple[str, str, int, int]]":
     found: "list[tuple[str, str, int, int]]" = []
     length = len(text)
     for start in range(length):
-        if not (text[start].isascii() and text[start].isalpha()):
+        if not (_ascii_of(text[start]) or "").isalpha():
             continue
         registered = None
         body: list[str] = []
         for index in range(start, min(length, start + ORACLE_WINDOW)):
             char = text[index]
-            if char.isascii() and char.isalnum():
-                body.append(char)
+            folded = _ascii_of(char)
+            if folded is not None:
+                body.append(folded)
                 if len(body) == 2:
                     registered = _IBAN_LENGTHS.get("".join(body).upper())
                     if registered is None:
@@ -379,7 +394,7 @@ def _without_placeholders(overlay: str) -> str:
 
 
 def _compact(value: str) -> str:
-    return "".join(char for char in value if char.isascii() and char.isalnum())
+    return "".join(_ascii_of(char) or "" for char in value)
 
 
 def _compact_segments(overlay: str) -> "list[str]":
@@ -1457,31 +1472,83 @@ def test_the_oracle_sees_a_widely_spaced_iban_at_the_detectors_limit():
     assert_no_leak("Konto " + spaced)
 
 
+def _in_digits(value: str, zero: int) -> str:
+    return "".join(chr(zero + int(c)) if c.isdigit() else c for c in value)
+
+
+def _full_width(value: str) -> str:
+    return "".join(chr(ord(c) + 0xFEE0) if c.isalnum() else c for c in value)
+
+
+NON_ASCII_DIGITS = [
+    pytest.param(0xFF10, id="fullwidth"),
+    pytest.param(0x0660, id="arabic_indic"),
+    pytest.param(0x06F0, id="extended_arabic_indic"),
+    pytest.param(0x0966, id="devanagari"),
+]
+
+
+@pytest.mark.parametrize("zero", NON_ASCII_DIGITS)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_card_in_non_ascii_digits_is_a_card(zero, mode):
+    """ASCII was the finding rule, and "Karte ４１１１ １１１１ １１１１ １１１１"
+    went out as "Karte [PHONE] １１１１" - a phone pattern claimed part of it by
+    accident and twelve digits stayed, with egress allowed."""
+    card = _in_digits(EXAMPLE_CARD_SPACED, zero)
+    text = f"Karte {card} bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["credit_card"], document.overlay
+    left = _PLACEHOLDER.sub("", document.overlay)
+    assert not any(unicodedata.decimal(c, None) is not None for c in left), left
+
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_full_width_iban_is_an_iban(mode):
+    text = f"IBAN {_full_width(EXAMPLE_IBAN_SPACED)} bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["iban"], document.overlay
+
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_card_of_mixed_widths_is_one_card(mode):
+    groups = EXAMPLE_CARD_SPACED.split(" ")
+    mixed = " ".join(g if i % 2 else _full_width(g) for i, g in enumerate(groups))
+    text = f"Karte {mixed}"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["credit_card"], document.overlay
+
+
+def test_the_gate_sees_full_width_residue():
+    from types import SimpleNamespace
+
+    card = _full_width(EXAMPLE_CARD_SPACED)
+    text = f"Karte {card}"
+    assert any(kind == "credit_card" for kind, _c, _w in validated_identifiers(text))
+    kept = SimpleNamespace(
+        egress_allowed=True, overlay="Karte [PHONE]" + card[4:], spans=[]
+    )
+    assert leaks_in(text, kept)
+
+
 @pytest.mark.parametrize(
-    "digits, label",
+    "digits",
     [
-        ("٤١١١١١١١١١١١١١١١", "arabic_indic"),
-        ("４１１１１１１１１１１１１１１１", "fullwidth"),
+        pytest.param("\u2463\u2460\u2460\u2460" * 4, id="circled"),
+        pytest.param("\u2074\u00b9\u00b9\u00b9" * 4, id="superscript"),
     ],
 )
-def test_non_ascii_digits_are_a_documented_limit_not_a_silent_one(digits, label):
-    """ASCII is shared by the detector and this oracle, and it is a FINDING
-    rule, not a definition - `luhn_ok` accepts these digits happily while
-    neither candidate finder will ever offer them to it.
-
-    Disclosed in docs/limits.md, and pinned here so the disclosure cannot
-    quietly stop being true in either direction: if these start being detected,
-    this test says so and the documented limit needs removing.
-    """
+def test_a_digit_is_a_decimal_digit_on_both_sides(digits):
+    """Circled and superscript numerals fold to digits under NFKC but are not
+    decimal digits; neither the detector nor the gate treats them as one, so
+    the two cannot disagree about them."""
     from privacy_shield import identifiers
 
-    # The validator itself is happy with them...
-    normalised = "".join(str(int(char)) for char in digits)
-    assert identifiers.luhn_ok(normalised), "test vector is not Luhn-valid"
-
-    # ...and neither finder offers them.
-    assert not identifiers.find_cards(digits), label
-    assert not validated_identifiers(digits), label
+    assert identifiers.luhn_ok(EXAMPLE_CARD)
+    assert not identifiers.find_cards(digits)
+    assert not validated_identifiers(digits)
 
 
 # ---------------------------------------------------------------------------

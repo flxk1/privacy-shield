@@ -275,8 +275,9 @@ def test_the_validated_layer_does_not_care_what_script_surrounds_it(
     prose exactly as in German.
 
     This is the half of the multilingual problem that is already solved: the
-    identifier is ASCII, the checksum is arithmetic, and the surrounding
-    language contributes nothing. The name layer is where the twenty-four
+    identifier's characters are digits and Latin letters in any width or
+    script, the checksum is arithmetic, and the surrounding language
+    contributes nothing. The name layer is where the twenty-four
     languages actually are.
     """
     iban = _iban_for("DE")
@@ -287,14 +288,16 @@ def test_the_validated_layer_does_not_care_what_script_surrounds_it(
     assert [v for _s, _e, v in find_emails(sentence % email)] == [email], script
 
 
-def test_a_non_ascii_digit_account_number_is_a_known_gap_in_every_language():
-    """Stated in `docs/limits.md` as an ASCII limit; pinned here as a
-    per-language one, because "the validated layer is language-independent"
-    is only true for languages written with ASCII digits."""
-    arabic_indic = "٤١١١١١١١١١١١١١١١"
-    assert find_cards(f"Payment {arabic_indic} please.") == []
-    full_width = "４１１１１１１１１１１１１１１１"
-    assert find_cards(f"Payment {full_width} please.") == []
+def test_a_non_ascii_digit_account_number_is_found_in_every_language():
+    """Written as a pin on a known gap - "the validated layer is
+    language-independent" was only true for languages written with ASCII
+    digits - and kept, under its new name, as the guarantee that closed it."""
+    for card in ("٤١١١١١١١١١١١١١١١", "４１１１１１１１１１１１１１１１"):
+        sentence = f"Payment {card} please."
+        start = sentence.index(card)
+        assert [(s, e) for s, e, _v in find_cards(sentence)] == [
+            (start, start + len(card))
+        ], card
 
 
 # ---------------------------------------------------------------------------

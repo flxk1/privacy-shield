@@ -108,7 +108,7 @@ MATERIAL_RESIDUE = 8
 
 # THE RULE, in one sentence:
 #
-#   A candidate is any maximal sequence of ASCII alphanumerics joined by single
+#   A candidate is any maximal sequence of identifier characters joined by single
 #   characters that are not alphanumeric at all and not a line break, carrying
 #   at most one such joiner for every two identifier characters.
 #
@@ -138,9 +138,16 @@ MATERIAL_RESIDUE = 8
 #
 # Invisible characters (Unicode Cf - soft hyphen, zero-width space, joiners,
 # BOM) are removed before any of this and count for nothing: they are not
-# there. A line break is never a joiner. A NON-ASCII alphanumeric - an umlaut,
-# a CJK character - is not a joiner either; it ends the run, because it is a
-# letter in a word rather than punctuation between digits.
+# there. A line break is never a joiner. An alphanumeric that is not an
+# identifier character - an umlaut, a CJK character - is not a joiner either;
+# it ends the run, because it is a letter in a word rather than punctuation
+# between digits.
+#
+# An identifier character is judged by what it IS, not by its code point: a
+# decimal digit of any script, or a letter that is compatibility-equal to one
+# ASCII letter. "４１１１ １１１１ １１１１ １１１１" is a card; ASCII as the
+# finding rule let it through with pii_detected set only because a phone
+# pattern happened to claim part of it, and twelve digits egressed.
 _LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
 
 # THE LAYOUT BOUNDS: there is exactly ONE, and it is definitional.
@@ -258,6 +265,22 @@ def _is_joiner(char: str) -> bool:
 _LOCAL_PART_CHARS = None  # see _is_local_part_char
 
 
+def _identifier_char(char: str) -> Optional[str]:
+    """The ASCII character *char* stands for in an identifier, else None.
+
+    One character in, one out, so a run's offsets still index the text.
+    """
+    if char.isascii():
+        return char if char.isalnum() else None
+    digit = unicodedata.decimal(char, None)
+    if digit is not None:
+        return str(digit)
+    folded = unicodedata.normalize("NFKC", char)
+    if len(folded) == 1 and folded.isascii() and folded.isalpha():
+        return folded
+    return None
+
+
 def _is_local_part_char(char: str) -> bool:
     if char in "._%+-":
         return True
@@ -330,8 +353,10 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
     ``(compact, offsets)`` where ``offsets[i]`` is the index in *text* of
     ``compact[i]``, so a claimed span maps back exactly, separators and all.
 
-    Non-ASCII letters end a run: an IBAN is ASCII, and letting an umlaut
-    continue the run would only glue unrelated words to it.
+    Characters are folded by `_identifier_char`: a full-width or
+    Arabic-Indic digit continues the run as the digit it is. Other letters end
+    it: an IBAN is ASCII, and letting an umlaut continue the run would only
+    glue unrelated words to it.
     """
     # Invisible characters are dropped first, so nothing downstream has to know
     # they exist. The offsets still point into the ORIGINAL text, so a claimed
@@ -348,8 +373,9 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
     count = len(visible)
     while position < count:
         char, origin = visible[position]
-        if char.isascii() and char.isalnum():
-            compact.append(char)
+        folded = _identifier_char(char)
+        if folded is not None:
+            compact.append(folded)
             offsets.append(origin)
             position += 1
             continue
@@ -367,7 +393,7 @@ def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
             # a hard limit of one on each gap.
             if ahead < count:
                 following = visible[ahead][0]
-                if following.isascii() and following.isalnum():
+                if _identifier_char(following) is not None:
                     position = ahead
                     continue
         if compact:

@@ -62,7 +62,7 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   digits, and nothing in the text distinguishes that from a fifteen-digit card
   written with a hyphen and a space, so it is redacted.
 - **What counts as one identifier, in one sentence:** *a candidate is any
-  maximal sequence of ASCII alphanumerics joined by runs of characters that are
+  maximal sequence of identifier characters joined by runs of characters that are
   not alphanumeric at all, interrupted by at most one line terminator.* That is
   the whole rule. There is deliberately no bound on the NUMBER of groups, on
   the WIDTH of a gap, on the SPAN of the candidate, or on how long a group
@@ -843,14 +843,22 @@ next round starts from this rather than rediscovering it:
   `tests/test_iban_registry.py` compares it against `schwifty`, a maintained
   external implementation, and fails on any drift. Without that dependency
   installed the check skips loudly rather than passing.
-- **Detection is ASCII for the validated types.** Identifier runs are built
-  from ASCII alphanumerics; an account number written in full-width or
-  Arabic-Indic digits is not offered to the validators. Invisible characters
-  (Unicode `Cf` — soft hyphen, zero-width space, BOM) are removed first and
-  never break a run. ASCII is a FINDING rule and not a definition here:
-  `luhn_ok` accepts Arabic-Indic and full-width digits that neither the
-  detector nor the gate's oracle will ever offer it. Pinned by
-  `tests/test_leak_invariant.py::test_non_ascii_digits_are_a_documented_limit_not_a_silent_one`.
+- **An identifier character is a decimal digit of any script or a letter
+  compatibility-equal to one ASCII letter.** ASCII used to be the finding
+  rule, and `Karte ４１１１ １１１１ １１１１ １１１１` went out as
+  `Karte [PHONE] １１１１` in all three egress modes, egress allowed. Runs now
+  fold each character to the ASCII one it stands for, one for one, so offsets
+  still index the text: full-width, Arabic-Indic, Devanagari and every other
+  Unicode `Nd` digit, full-width Latin letters, and a card of mixed widths.
+  Circled and superscript numerals are not decimal digits and are not folded,
+  by the detector or the gate. Invisible characters (Unicode `Cf` — soft
+  hyphen, zero-width space, BOM) are removed first and never break a run.
+  E-mail domains stay ASCII. Tested:
+  `tests/test_leak_invariant.py::test_a_card_in_non_ascii_digits_is_a_card`,
+  `::test_a_full_width_iban_is_an_iban`,
+  `::test_a_card_of_mixed_widths_is_one_card`,
+  `::test_the_gate_sees_full_width_residue`,
+  `::test_a_digit_is_a_decimal_digit_on_both_sides`.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.

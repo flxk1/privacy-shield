@@ -109,6 +109,16 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **A card or IBAN written in full-width or non-Latin digits is detected.**
+  Identifier runs were built from ASCII alphanumerics, so
+  `Karte ４１１１ １１１１ １１１１ １１１１` went out as `Karte [PHONE] １１１１`
+  in every egress mode with egress allowed. A run now takes any Unicode
+  decimal digit and any letter compatibility-equal to one ASCII letter, as
+  the character it stands for. Tested:
+  `tests/test_leak_invariant.py::test_a_card_in_non_ascii_digits_is_a_card`,
+  `::test_a_full_width_iban_is_an_iban`,
+  `::test_a_card_of_mixed_widths_is_one_card`.
+
 - **One occurrence no longer comes back as two findings.** When two patterns
   of the same type reached into a checksum-validated span, both were trimmed
   back to the same interval and both were reported: `001 4111 1111 1111 1111`
