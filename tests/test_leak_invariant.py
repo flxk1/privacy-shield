@@ -2121,3 +2121,30 @@ def test_a_twice_claimed_occurrence_that_survives_is_still_a_leak():
         spans=document.spans,
     )
     assert leaks_in(DOUBLE_CLAIM_INPUT, kept)
+
+
+def test_the_same_value_detected_twice_is_two_claims():
+    from types import SimpleNamespace
+
+    text = "Tel 0170 1234567 und 0170 1234567"
+    document = scan(text, force_text=True).documents[0]
+    assert len({s.start for s in document.spans if s.pii_type == "phone"}) == 2
+    kept = SimpleNamespace(
+        egress_allowed=True,
+        overlay="Tel [PHONE] und 0170 1234567",
+        spans=document.spans,
+    )
+    assert leaks_in(text, kept)
+
+
+def test_a_hint_that_is_not_the_source_counts_per_finding():
+    from types import SimpleNamespace
+
+    text = "Max und Max"
+    hint = SimpleNamespace(start=5, end=15, value="Max")
+    kept = SimpleNamespace(
+        egress_allowed=True,
+        overlay="Max und [NAME]",
+        spans=[hint, hint],
+    )
+    assert leaks_in(text, kept)
