@@ -1164,8 +1164,10 @@ all one shape:
   adversarially generated, not corpus-measured - see commit `a4c28fd` for the
   full list and the numbers behind both options.
 
-**The residue this branch reported against `521fec2` was already closed on
-main.** In STANDARD mode at `521fec2`:
+### Recorded as open, already closed
+
+**The Luhn-window residue the name-layer change reported against `521fec2`
+was already closed on main.** In STANDARD mode at `521fec2`:
 
 ```
 input   'UUID 550e8400-e29b-41d4-a716-446655440000 DE89370400440532013000 00 00 7'
@@ -1174,14 +1176,14 @@ leak    validated credit_card left 8 of 15 characters of residue in overlay
 ```
 
 The overlay is the same on main today and the gate is clean. The "residue" was
-the gate compacting the overlay across the placeholder, which joined the UUID's
-trailing `0000` to the `00 00 7` after `[IBAN]`; no eight characters of the
-window stand together in the overlay. Main closed it in 2.0.0, before this
-branch merged: `d79dc72` silenced it by having the gate refuse windows that
-overlap another identifier, a refusal that hid a genuine card and was removed;
-`b652788` closed it for good, since the gate never compacts across a
-placeholder. The input is pinned in all three egress modes, and restoring
-whole-overlay compaction fails it in each:
+the gate compacting the overlay across the placeholder, which joined three of
+the UUID's trailing zeros to the `00 00 7` after `[IBAN]` as `00000007`; no
+eight characters of the window stand together in the overlay. Main closed it in
+2.0.0, before the name-layer change merged: `d79dc72` silenced it by having the
+gate refuse windows that overlap another identifier, a refusal that hid a
+genuine card and was removed in `52a3b25`; `b652788` closed it for good, since
+the gate never compacts across a placeholder. The input is pinned in all three
+egress modes, and restoring whole-overlay compaction fails it in each:
 `tests/test_leak_invariant.py::test_a_card_is_not_LABELLED_out_of_another_identifiers_digits`
 (`uuid_then_iban_then_trailing_digits`).
 
