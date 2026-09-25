@@ -1609,6 +1609,42 @@ def test_a_symbol_between_groups_joins_them(between, mode):
         )
 
 
+#: Letters in the account part, so the card oracle cannot see its digits and
+#: only the IBAN side of the gate stands between a detector drift and a leak.
+LETTERED_IBAN_GROUPS = ["NL91", "ABNA", "0417", "1643", "00"]
+
+
+@pytest.mark.parametrize(
+    "between, drift",
+    [
+        pytest.param("\u30fc", "joiner", id="prolonged_sound_mark"),
+        pytest.param("\u02b0", "joiner", id="modifier_letter"),
+        pytest.param("\u24b6", "fold", id="circled_capital"),
+    ],
+)
+def test_the_gate_sees_a_lettered_iban_the_detector_drops(between, drift, monkeypatch):
+    """The gate must hold its own rule on the IBAN side too: weaken the
+    detector's joiner or its fold, and the gate reports the IBAN it dropped."""
+    from privacy_shield import identifiers
+
+    if drift == "joiner":
+        monkeypatch.setattr(identifiers, "_is_joiner", lambda char: not char.isalnum())
+    else:
+        real = identifiers._identifier_char
+
+        def fold_symbols_too(char):
+            folded = unicodedata.normalize("NFKC", char)
+            if not char.isascii() and len(folded) == 1 and folded.isascii() and folded.isalpha():
+                return folded
+            return real(char)
+
+        monkeypatch.setattr(identifiers, "_identifier_char", fold_symbols_too)
+    text = "IBAN " + between.join(LETTERED_IBAN_GROUPS) + " danke"
+    assert any(kind == "iban" for kind, _c, _w in validated_identifiers(text))
+    document = scan(text, force_text=True).documents[0]
+    assert leaks_in(text, document), document.overlay
+
+
 def test_the_gate_sees_a_prolonged_sound_mark_card_the_detector_drops(monkeypatch):
     """The gate must not inherit the detector's joiner rule: if the detector
     stops joining across \u30fc, the gate says so."""

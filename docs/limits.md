@@ -63,7 +63,8 @@ Moved out of the README (README canon, `repo-standards/STANDARDS.md` § README c
   written with a hyphen and a space, so it is redacted.
 - **What counts as one identifier, in one sentence:** *a candidate is any
   maximal sequence of identifier characters joined by runs of characters that are
-  not alphanumeric at all, interrupted by at most one line terminator.* That is
+  not alphanumeric at all or are modifier letters, interrupted by at most one
+  line terminator.* That is
   the whole rule. There is deliberately no bound on the NUMBER of groups, on
   the WIDTH of a gap, on the SPAN of the candidate, or on how long a group
   inside it may be. Joiners are defined by exclusion rather than listed,

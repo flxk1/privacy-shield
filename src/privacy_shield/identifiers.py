@@ -144,8 +144,8 @@ MATERIAL_RESIDUE = 8
 # between digits.
 #
 # An identifier character is judged by what it IS, not by its code point: a
-# decimal digit of any script, or a letter that is compatibility-equal to one
-# ASCII letter. "４１１１ １１１１ １１１１ １１１１" is a card; ASCII as the
+# decimal digit of any script, or an alphanumeric that is compatibility-equal
+# to one ASCII letter. "４１１１ １１１１ １１１１ １１１１" is a card; ASCII as the
 # finding rule let it through with pii_detected set only because a phone
 # pattern happened to claim part of it, and twelve digits egressed.
 _LINE_BREAKS = "\n\r\v\f\u0085\u2028\u2029"
