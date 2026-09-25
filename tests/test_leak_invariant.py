@@ -2096,31 +2096,40 @@ DOUBLE_CLAIM_INPUT = "001 4111 1111 1111 1111 A001"
 
 
 @pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
-def test_one_occurrence_claimed_twice_is_one_claim(mode):
+def test_one_occurrence_trimmed_twice_is_one_finding(mode):
     """Found by test_release_gate_property; the redaction was right all along.
 
     Both phone patterns match from offset 0 into the card and both are trimmed
-    back to (0, 4), so "001 " arrives as two findings. Counted per finding, the
-    input's two "001"s were both claimed and the undetected one in "A001" read
-    as a survivor.
+    back to (0, 4). That used to arrive as two findings, and the oracle,
+    counting per finding, claimed both of the input's "001"s and read the
+    undetected one in "A001" as a survivor.
     """
     document = scan(DOUBLE_CLAIM_INPUT, mode=mode, force_text=True).documents[0]
     phones = [(s.start, s.end) for s in document.spans if s.pii_type == "phone"]
-    assert phones and set(phones) == {(0, 4)}, phones
+    assert phones == [(0, 4)], phones
     assert not document.overlay.startswith("001"), document.overlay
     assert not leaks_in(DOUBLE_CLAIM_INPUT, document), document.overlay
 
 
-def test_a_twice_claimed_occurrence_that_survives_is_still_a_leak():
+def _with_phone_twice(document, overlay):
     from types import SimpleNamespace
 
-    document = scan(DOUBLE_CLAIM_INPUT, force_text=True).documents[0]
-    kept = SimpleNamespace(
-        egress_allowed=True,
-        overlay="001 [CREDIT_CARD] A001",
-        spans=document.spans,
+    phone = next(s for s in document.spans if s.pii_type == "phone")
+    return SimpleNamespace(
+        egress_allowed=True, overlay=overlay, spans=[phone, *document.spans]
     )
-    assert leaks_in(DOUBLE_CLAIM_INPUT, kept)
+
+
+def test_one_occurrence_claimed_twice_is_one_claim():
+    document = scan(DOUBLE_CLAIM_INPUT, force_text=True).documents[0]
+    twice = _with_phone_twice(document, document.overlay)
+    assert not leaks_in(DOUBLE_CLAIM_INPUT, twice), document.overlay
+
+
+def test_a_twice_claimed_occurrence_that_survives_is_still_a_leak():
+    document = scan(DOUBLE_CLAIM_INPUT, force_text=True).documents[0]
+    twice = _with_phone_twice(document, "001 [CREDIT_CARD] A001")
+    assert leaks_in(DOUBLE_CLAIM_INPUT, twice)
 
 
 def test_the_same_value_detected_twice_is_two_claims():
