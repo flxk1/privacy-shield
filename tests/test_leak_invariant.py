@@ -457,11 +457,25 @@ def leaks_in(text: str, document) -> list[str]:
     def _residual_count(value: str) -> int:
         return sum(segment.count(value) for segment in residual_segments)
 
+    # A claim is an OCCURRENCE, not a finding. Two phone patterns both matched
+    # "001 4111 ..." and both were trimmed back to (0, 4) where the card
+    # begins; the one "001 " was claimed twice, so "001" inside "A001" - never
+    # detected - read as a survivor. Findings on the same verified occurrence
+    # count once; a value that is not the source at its offsets (a layer-5
+    # hint) still counts per finding, as before.
     counted: dict[str, int] = {}
+    occurrences: set[tuple[str, int]] = set()
     for span in document.spans:
-        value = (span.value or "").strip()
-        if value:
-            counted[value] = counted.get(value, 0) + 1
+        raw = span.value or ""
+        value = raw.strip()
+        if not value:
+            continue
+        at = span.start + len(raw) - len(raw.lstrip())
+        if text[at:at + len(value)] == value:
+            if (value, at) in occurrences:
+                continue
+            occurrences.add((value, at))
+        counted[value] = counted.get(value, 0) + 1
     for value, claimed in counted.items():
         allowed = max(0, text.count(value) - claimed)
         if _residual_count(value) > allowed:
@@ -2072,3 +2086,38 @@ def test_a_grouped_card_under_a_coincidental_iban_claim(mode):
     assert_no_leak(
         "Beleg BE84 6613 1860    4526    0181    5908    3012    Ende", mode=mode
     )
+
+
+# ---------------------------------------------------------------------------
+# One occurrence claimed by two findings
+# ---------------------------------------------------------------------------
+
+DOUBLE_CLAIM_INPUT = "001 4111 1111 1111 1111 A001"
+
+
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_one_occurrence_claimed_twice_is_one_claim(mode):
+    """Found by test_release_gate_property; the redaction was right all along.
+
+    Both phone patterns match from offset 0 into the card and both are trimmed
+    back to (0, 4), so "001 " arrives as two findings. Counted per finding, the
+    input's two "001"s were both claimed and the undetected one in "A001" read
+    as a survivor.
+    """
+    document = scan(DOUBLE_CLAIM_INPUT, mode=mode, force_text=True).documents[0]
+    phones = [(s.start, s.end) for s in document.spans if s.pii_type == "phone"]
+    assert phones and set(phones) == {(0, 4)}, phones
+    assert not document.overlay.startswith("001"), document.overlay
+    assert not leaks_in(DOUBLE_CLAIM_INPUT, document), document.overlay
+
+
+def test_a_twice_claimed_occurrence_that_survives_is_still_a_leak():
+    from types import SimpleNamespace
+
+    document = scan(DOUBLE_CLAIM_INPUT, force_text=True).documents[0]
+    kept = SimpleNamespace(
+        egress_allowed=True,
+        overlay="001 [CREDIT_CARD] A001",
+        spans=document.spans,
+    )
+    assert leaks_in(DOUBLE_CLAIM_INPUT, kept)
