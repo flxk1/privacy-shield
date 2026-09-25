@@ -878,12 +878,16 @@ next round starts from this rather than rediscovering it:
   when the finder expanded only around an ASCII `@`. Digits and letters fold
   as in a run; every character NFKC reads as `@ . _ % + -` reads as that; and
   the ideographic full stops `。` and `｡`, which RFC 3490 accepts as label
-  dots, read as `.`. A letter with no ASCII form - an umlaut in a local part -
+  dots, read as `.` - but only right of the `@`, and only when the domain has
+  no reading without them, because `。` is also how a Japanese or Chinese
+  sentence ends. Read everywhere, it claimed the sentence before an address as
+  its local part and `。Thanks` after it as a top-level domain. A letter with no ASCII form - an umlaut in a local part -
   stays itself, as RFC 6531 allows. A `＠` alone does not make an address
   (`5＠3.50`, `りんご3個＠100円`). The validators read the same fold, so a
   finding is never rejected by its own validator for its width. Tested:
   `tests/test_leak_invariant.py::test_an_address_written_in_full_width_is_an_address`,
   `::test_the_at_signs_are_every_character_nfkc_reads_as_at`,
+  `::test_a_sentence_ending_before_or_after_an_address_stays`,
   `::test_an_address_is_reported_as_it_was_written`,
   `::test_the_gate_sees_a_full_width_address`,
   `::test_the_gate_sees_a_full_width_local_part_left_behind`,
@@ -892,13 +896,15 @@ next round starts from this rather than rediscovering it:
   `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
 - **Addresses not found, in any width.** An internationalised domain written
   in its own script (`erika@müller.de` rather than its punycode); a local part
-  in decomposed Unicode (NFD `josé@…` goes out whole, `René.Müller＠…` keeps
-  `René.Mü`), since a combining mark ends the local part; a zero-width space
-  or soft hyphen before the `@` or inside a local part; a local part in
-  circled letters; an address wrapped across a line. The gate shares these
-  blind spots, and it reports a left-behind local part only when the whole
-  local part survives. Pinned by
-  `tests/test_leak_invariant.py::test_an_address_the_finder_cannot_read_is_a_documented_limit`.
+  in decomposed Unicode, since a combining mark ends it (NFD `josé@…` goes out
+  whole, NFD `René.Müller＠…` is claimed from after the last combining mark);
+  a zero-width space before the `@`; a local part in circled letters; an
+  address wrapped across a line. The gate shares these blind spots, and it
+  reports a left-behind local part only when the whole local part survives.
+  Pinned by
+  `tests/test_leak_invariant.py::test_an_address_the_finder_cannot_read_is_a_documented_limit`,
+  `::test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark`,
+  `::test_the_gate_misses_a_partly_surviving_local_part`.
 - **Not found: an IBAN whose country code is in look-alike Cyrillic letters
   (`ДЕ89…`).** A country code is two Latin letters; `Д` is not one in any
   width. Pinned by

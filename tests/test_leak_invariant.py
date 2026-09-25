@@ -291,8 +291,6 @@ def _read(value: str) -> str:
     out = []
     for char in value:
         folded = _ascii_of(char)
-        if char in "\u3002\uff61":
-            folded = "."
         if folded is None and not char.isascii():
             compat = unicodedata.normalize("NFKC", char)
             if len(compat) == 1 and compat in "@._%+-":
@@ -316,13 +314,20 @@ def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
         low = max(0, at - ORACLE_EMAIL_SPAN)
         high = min(len(text), at + ORACLE_EMAIL_SPAN)
         best = None
-        for begin in range(low, at):
-            for finish in range(high, at + 1, -1):
-                candidate = text[begin:finish]
-                if len(candidate) <= 254 and _ORACLE_EMAIL_SHAPE.match(candidate):
-                    if best is None or len(candidate) > len(best[0]):
-                        best = (candidate, begin, finish)
-                    break
+        # An ideographic full stop is a label dot (RFC 3490) and a sentence
+        # end; it is read as "." only right of the "@", and only when the
+        # address has no reading without it.
+        dotted = text[:at + 1] + text[at + 1:].replace("\u3002", ".").replace("\uff61", ".")
+        for view in (text, dotted):
+            for begin in range(low, at):
+                for finish in range(high, at + 1, -1):
+                    candidate = view[begin:finish]
+                    if len(candidate) <= 254 and _ORACLE_EMAIL_SHAPE.match(candidate):
+                        if best is None or len(candidate) > len(best[0]):
+                            best = (candidate, begin, finish)
+                        break
+            if best:
+                break
         if best:
             found.append((best[0], original[best[1]:best[2]], best[1], best[2]))
     return found
@@ -1772,6 +1777,24 @@ def test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out():
         assert leaks_in(f"Daten {source}", kept), source
 
 
+@pytest.mark.parametrize(
+    "address", ["erika@example.com", "\uff45\uff52\uff49\uff4b\uff41\uff20example\uff0ecom"]
+)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_a_sentence_ending_before_or_after_an_address_stays(address, mode):
+    """Reading "。" as a dot everywhere claimed the sentence before an address
+    as its local part, and "。Thanks" after it as a top-level domain."""
+    before = "\u672c\u65e5\u306f\u3042\u308a\u304c\u3068\u3046\u3002"
+    after = "\u3002Thanks"
+    text = before + address + after
+    assert [c for k, c, _w in validated_identifiers(text) if k == "email"] == [
+        "erika@example.com"
+    ]
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert _PLACEHOLDER.sub("", document.overlay) == before + after, document.overlay
+
+
 def test_the_at_signs_are_every_character_nfkc_reads_as_at():
     import sys
 
@@ -1812,6 +1835,25 @@ def test_an_address_the_finder_cannot_read_is_a_documented_limit(text):
     from privacy_shield import identifiers
 
     assert not identifiers.find_emails(text)
+
+
+def test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark():
+    """docs/limits.md, "Addresses not found"."""
+    from privacy_shield import identifiers
+
+    address = unicodedata.normalize("NFD", "Ren\u00e9.M\u00fcller") + "\uff20kanzlei.de"
+    text = f"Mail {address}"
+    after_mark = text.rindex("\u0308") + 1
+    assert [(s, e) for s, e, _v in identifiers.find_emails(text)] == [(after_mark, len(text))]
+
+
+def test_the_gate_misses_a_partly_surviving_local_part():
+    """docs/limits.md: the gate reports a left-behind local part only whole."""
+    from types import SimpleNamespace
+
+    text = "Mail erika.mustermann@example.com"
+    kept = SimpleNamespace(egress_allowed=True, overlay="Mail erika.[EMAIL]", spans=[])
+    assert not leaks_in(text, kept)
 
 
 @pytest.mark.parametrize(

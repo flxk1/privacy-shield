@@ -298,8 +298,12 @@ _EMAIL_PUNCTUATION = frozenset("@._%+-")
 AT_SIGNS = "@\uff20\ufe6b"
 
 #: The ideographic full stops RFC 3490 accepts as label dots alongside the
-#: full-width one; NFKC maps neither to ".".
-_IDNA_DOTS = frozenset("\u3002\uff61")
+#: full-width one; NFKC maps neither to ".". They are also how a Japanese or
+#: Chinese sentence ends, so they are read as dots only in a domain, and only
+#: where the domain has no reading without them: read anywhere, a sentence
+#: ending in "。" before an address was claimed as part of its local part, and
+#: the paragraph before it went with it.
+_IDNA_DOTS = str.maketrans({"\u3002": ".", "\uff61": "."})
 
 
 def _email_char(char: str) -> str:
@@ -313,8 +317,6 @@ def _email_char(char: str) -> str:
     folded = _identifier_char(char)
     if folded is not None:
         return folded
-    if char in _IDNA_DOTS:
-        return "."
     if not char.isascii():
         compat = unicodedata.normalize("NFKC", char)
         if compat in _EMAIL_PUNCTUATION:
@@ -388,7 +390,13 @@ RFC_EMAIL = re.compile(
 
 
 def email_ok(value: str) -> bool:
-    return bool(RFC_EMAIL.match(fold(value).strip())) and len(value) <= 254
+    if len(value) > 254:
+        return False
+    read = fold(value).strip()
+    if RFC_EMAIL.match(read):
+        return True
+    local, at, domain = read.partition("@")
+    return bool(at) and bool(RFC_EMAIL.match(local + at + domain.translate(_IDNA_DOTS)))
 
 
 def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
@@ -752,6 +760,7 @@ def find_emails(text: str) -> List[Span]:
     # Searched on the folded text, which has the same length, so every offset
     # found there is an offset into *text*.
     original, text = text, fold(text)
+    dotted = text.translate(_IDNA_DOTS)
     spans: List[Span] = []
     claimed_to = 0
     for at in (index for index, char in enumerate(text) if char == "@"):
@@ -775,8 +784,13 @@ def find_emails(text: str) -> List[Span]:
         # address, not a way to decide where one ends.
         domain = _DOMAIN_AFTER_AT.match(text, at + 1, right)
         if domain is None:
+            right = at + 1
+            while right < len(dotted) and dotted[right] in _DOMAIN_CHARS:
+                right += 1
+            domain = _DOMAIN_AFTER_AT.match(dotted, at + 1, right)
+        if domain is None:
             continue
-        candidate = text[left:domain.end()]
+        candidate = text[left:at + 1] + dotted[at + 1:domain.end()]
         if not RFC_EMAIL.match(candidate):
             continue
         spans.append((left, domain.end(), original[left:domain.end()]))

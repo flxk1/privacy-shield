@@ -184,6 +184,7 @@ def test_no_finding_of_a_validated_type_fails_its_own_validator():
         "Karte \u0664\u0661\u0661\u0661 \u0661\u0661\u0661\u0661 "
         "\u0661\u0661\u0661\u0661 \u0661\u0661\u0661\u0661",
         "Mail \uff45\uff52\uff49\uff4b\uff41\uff20example\uff0ecom",
+        "Mail erika@example\u3002com",
     ]
     for text in documents:
         for finding in scanner.scan(text).findings:
