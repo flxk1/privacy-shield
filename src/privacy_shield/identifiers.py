@@ -109,8 +109,9 @@ MATERIAL_RESIDUE = 8
 # THE RULE, in one sentence:
 #
 #   A candidate is any maximal sequence of identifier characters joined by single
-#   characters that are not alphanumeric at all and not a line break, carrying
-#   at most one such joiner for every two identifier characters.
+#   characters that are not alphanumeric at all, or are modifier letters, and
+#   not a line break, carrying at most one such joiner for every two identifier
+#   characters.
 #
 # Not a list of separators. Twice now a list has been walked around. The first
 # version enumerated " \t-", and a no-break space, a soft hyphen and a
@@ -141,7 +142,8 @@ MATERIAL_RESIDUE = 8
 # there. A line break is never a joiner. An alphanumeric that is not an
 # identifier character - an umlaut, a CJK character - is not a joiner either;
 # it ends the run, because it is a letter in a word rather than punctuation
-# between digits.
+# between digits. A modifier letter (Lm) is the exception and joins: the
+# katakana prolonged-sound mark is typed as the dash in Japanese numbers.
 #
 # An identifier character is judged by what it IS, not by its code point: a
 # decimal digit of any script, or an alphanumeric that is compatibility-equal
