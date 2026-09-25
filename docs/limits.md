@@ -872,11 +872,24 @@ next round starts from this rather than rediscovering it:
   lines: postcodes, phone numbers, prices and prose 0%; date ranges such as
   `２００５/９/２２～２０２２/３/１５` about 25%, as they are when written in
   ASCII.
-- **Not found in any width: an e-mail written with a full-width `＠` or
-  full-width letters, and an IBAN whose country code is in look-alike
-  Cyrillic letters (`ДЕ89…`).** The e-mail finder and IBAN country codes are
-  ASCII. Pinned by
-  `tests/test_leak_invariant.py::test_the_ascii_that_remains_is_a_documented_limit`.
+- **An e-mail address is read through the same fold, plus its punctuation.**
+  `erika＠example.com`, a fully full-width address, a full-width domain or dot,
+  and the small `﹫` are all addresses; each went out with pii_detected False
+  when the finder expanded only around an ASCII `@`. `＠ ﹫ ． ＿ ％ ＋ －` read
+  as their ASCII forms by NFKC; a non-ASCII letter in a local part stays
+  itself, as RFC 6531 allows. A `＠` alone does not make an address
+  (`5＠3.50`). The validators read the same fold, so a finding is never
+  rejected by its own validator for its width. Tested:
+  `tests/test_leak_invariant.py::test_an_address_written_in_full_width_is_an_address`,
+  `::test_the_gate_sees_a_full_width_address`,
+  `::test_the_gate_sees_a_full_width_local_part_left_behind`,
+  `::test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out`,
+  `::test_a_full_width_at_is_not_an_address_by_itself`,
+  `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+- **Not found: an IBAN whose country code is in look-alike Cyrillic letters
+  (`ДЕ89…`).** A country code is two Latin letters; `Д` is not one in any
+  width. Pinned by
+  `tests/test_leak_invariant.py::test_a_cyrillic_country_code_is_a_documented_limit`.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.

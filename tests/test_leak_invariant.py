@@ -284,6 +284,21 @@ _ORACLE_EMAIL_SHAPE = re.compile(
 )
 
 
+def _read(value: str) -> str:
+    """*value* as an address or identifier reads: identifier characters by
+    `_ascii_of`, and address punctuation - "＠", "．", "﹫" - by what NFKC
+    says it is. Same length, so an offset in one is an offset in the other."""
+    out = []
+    for char in value:
+        folded = _ascii_of(char)
+        if folded is None and not char.isascii():
+            compat = unicodedata.normalize("NFKC", char)
+            if len(compat) == 1 and compat in "@._%+-":
+                folded = compat
+        out.append(folded or char)
+    return "".join(out)
+
+
 def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
     """Every RFC-shaped address, by trying every substring around each "@".
 
@@ -292,6 +307,7 @@ def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
     shape, and the longest that matches is taken.
     """
     found: "list[tuple[str, str, int, int]]" = []
+    original, text = text, _read(text)
     for at, char in enumerate(text):
         if char != "@":
             continue
@@ -306,7 +322,7 @@ def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
                         best = (candidate, begin, finish)
                     break
         if best:
-            found.append((best[0], best[0], best[1], best[2]))
+            found.append((best[0], original[best[1]:best[2]], best[1], best[2]))
     return found
 
 
@@ -502,13 +518,15 @@ def leaks_in(text: str, document) -> list[str]:
                 f"{_residual_count(value)} copies, at most {allowed} expected"
             )
 
+    # Read as the finders read, so a full-width local part is still one.
+    read_overlay = _read(overlay)
     for kind, canonical, as_written in validated_identifiers(text):
         if canonical in overlay or as_written in overlay:
             leaks.append(f"validated {kind} survived whole in overlay")
             continue
         if kind == "email":
             local = canonical.split("@", 1)[0]
-            if len(local) >= 4 and local in overlay:
+            if len(local) >= 4 and local in read_overlay:
                 leaks.append(f"validated {kind} local part survived in overlay")
             continue
         # RESIDUE is reported only for candidates that sit on one line.
@@ -1677,24 +1695,76 @@ def test_a_digit_is_a_decimal_digit_on_both_sides(digits):
     assert not validated_identifiers(digits)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        pytest.param("Mail erika\uff20example.com", id="full_width_at"),
-        pytest.param(
-            "Mail " + _full_width("erika@example.com").replace("\uff20", "@"),
-            id="full_width_address",
-        ),
-        pytest.param("IBAN \u0414\u0415" + EXAMPLE_IBAN[2:], id="cyrillic_country_code"),
-    ],
-)
-def test_the_ascii_that_remains_is_a_documented_limit(text):
-    """docs/limits.md: the e-mail finder and IBAN country codes are ASCII. If
-    either starts being found, this fails and the limit comes out."""
-    from privacy_shield import identifiers
+def test_a_cyrillic_country_code_is_a_documented_limit():
+    """docs/limits.md: IBAN country codes are ASCII. "ДЕ" is two Cyrillic
+    letters that look like "DE"; if it starts being found, the limit comes
+    out."""
+    text = "IBAN \u0414\u0415" + EXAMPLE_IBAN[2:]
+    assert not any(kind == "iban" for kind, _c, _w in validated_identifiers(text))
 
-    assert not identifiers.find_emails(text)
-    assert not any(kind in ("email", "iban") for kind, _c, _w in validated_identifiers(text))
+
+FULL_WIDTH_ADDRESSES = [
+    pytest.param("erika\uff20example.com", id="full_width_at"),
+    pytest.param("\uff45\uff52\uff49\uff4b\uff41\uff20\uff45\uff58\uff41\uff4d"
+                 "\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d", id="full_width_address"),
+    pytest.param("erika@\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45.com", id="full_width_domain"),
+    pytest.param("erika@example\uff0ecom", id="full_width_dot"),
+    pytest.param("erika\ufe6bexample.com", id="small_commercial_at"),
+    pytest.param("m\u00fcller\uff20kanzlei.de", id="umlaut_local_part"),
+]
+
+
+@pytest.mark.parametrize("address", FULL_WIDTH_ADDRESSES)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_an_address_written_in_full_width_is_an_address(address, mode):
+    """"erika＠example.com" went out whole with pii_detected False: the finder
+    only expanded around an ASCII "@"."""
+    text = f"Mail {address} bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["email"], document.overlay
+    assert _PLACEHOLDER.sub("", document.overlay) == "Mail  bitte", document.overlay
+
+
+@pytest.mark.parametrize("address", FULL_WIDTH_ADDRESSES)
+def test_the_gate_sees_a_full_width_address(address):
+    from types import SimpleNamespace
+
+    text = f"Mail {address} bitte"
+    assert any(kind == "email" for kind, _c, _w in validated_identifiers(text))
+    untouched = SimpleNamespace(egress_allowed=True, overlay=text, spans=[])
+    assert leaks_in(text, untouched)
+
+
+def test_the_gate_sees_a_full_width_local_part_left_behind():
+    from types import SimpleNamespace
+
+    local = "\uff45\uff52\uff49\uff4b\uff41"
+    text = f"Mail {local}\uff20example.com"
+    kept = SimpleNamespace(egress_allowed=True, overlay=f"Mail {local}[EMAIL]", spans=[])
+    assert leaks_in(text, kept)
+
+
+def test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out():
+    """A copy is a copy in any width: an overlay that carries the ASCII form
+    of a full-width source - anything that normalises text on the way out
+    produces one - still leaks the identifier."""
+    from types import SimpleNamespace
+
+    for source, egressed in (
+        ("\uff45\uff52\uff49\uff4b\uff41\uff20example.com", "erika@example.com"),
+        (_full_width(EXAMPLE_CARD_SPACED), EXAMPLE_CARD_SPACED),
+    ):
+        kept = SimpleNamespace(
+            egress_allowed=True, overlay=f"Daten {egressed}", spans=[]
+        )
+        assert leaks_in(f"Daten {source}", kept), source
+
+
+@pytest.mark.parametrize("text", ["Preis 5\uff203.50 EUR", "Mail a\uff20b bitte"])
+def test_a_full_width_at_is_not_an_address_by_itself(text):
+    document = scan(text, force_text=True).documents[0]
+    assert document.overlay == text
 
 
 # ---------------------------------------------------------------------------

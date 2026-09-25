@@ -177,6 +177,13 @@ def test_no_finding_of_a_validated_type_fails_its_own_validator():
         "Mail nicht-ganz@@example.com",
         "Steuernummer 12 345 678 901",
         "IBAN DE89 3704 0044 0532 0130 00 und Karte 4111 1111 1111 1111",
+        # What a finder reads through a fold, its validator must read too.
+        "IBAN \uff24\uff25\uff18\uff19 \uff13\uff17\uff10\uff14 "
+        "\uff10\uff10\uff14\uff14 \uff10\uff15\uff13\uff12 "
+        "\uff10\uff11\uff13\uff10 \uff10\uff10",
+        "Karte \u0664\u0661\u0661\u0661 \u0661\u0661\u0661\u0661 "
+        "\u0661\u0661\u0661\u0661 \u0661\u0661\u0661\u0661",
+        "Mail \uff45\uff52\uff49\uff4b\uff41\uff20example\uff0ecom",
     ]
     for text in documents:
         for finding in scanner.scan(text).findings:

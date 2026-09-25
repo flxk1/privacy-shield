@@ -109,6 +109,16 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **An e-mail address written with a full-width `＠` or full-width letters is
+  detected.** `erika＠example.com` went out whole with pii_detected False in
+  every egress mode: the finder expanded only around an ASCII `@`. It now
+  reads identifier characters as a run does and `＠ ﹫ ． ＿ ％ ＋ －` as
+  their ASCII forms, and `iban_ok` and `email_ok` read the same fold, so a
+  full-width IBAN or address is no longer rejected by its own validator.
+  Tested:
+  `tests/test_leak_invariant.py::test_an_address_written_in_full_width_is_an_address`,
+  `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+
 - **A card or IBAN written in full-width or non-Latin digits is detected.**
   Identifier runs were built from ASCII alphanumerics, so
   `Karte ４１１１ １１１１ １１１１ １１１１` went out as `Karte [PHONE] １１１１`

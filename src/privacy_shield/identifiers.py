@@ -290,6 +290,33 @@ def _identifier_char(char: str) -> Optional[str]:
     return None
 
 
+#: Address punctuation, which NFKC maps from its full-width and small forms.
+_EMAIL_PUNCTUATION = frozenset("@._%+-")
+
+
+def _email_char(char: str) -> str:
+    """*char* as the e-mail finder reads it; one character in, one out.
+
+    Identifier characters fold as in a run, and so does address punctuation:
+    "ｅｒｉｋａ＠ｅｘａｍｐｌｅ．ｃｏｍ" is an address, and reading "＠" as
+    anything but "@" sent it out with pii_detected False. Anything else,
+    an umlaut in a local part included, stays itself.
+    """
+    folded = _identifier_char(char)
+    if folded is not None:
+        return folded
+    if not char.isascii():
+        compat = unicodedata.normalize("NFKC", char)
+        if compat in _EMAIL_PUNCTUATION:
+            return compat
+    return char
+
+
+def fold(value: str) -> str:
+    """*value* with every character read as the finders read it."""
+    return "".join(_email_char(char) for char in value)
+
+
 def _is_local_part_char(char: str) -> bool:
     if char in "._%+-":
         return True
@@ -319,7 +346,7 @@ def luhn_ok(value: str) -> bool:
 
 
 def iban_ok(value: str) -> bool:
-    compact = re.sub(r"\s", "", value).upper()
+    compact = re.sub(r"\s", "", fold(value)).upper()
     if not MIN_IBAN_LENGTH <= len(compact) <= MAX_IBAN_LENGTH:
         return False
     if not (compact[:2].isalpha() and compact[2:4].isdigit() and compact[4:].isalnum()):
@@ -350,7 +377,7 @@ RFC_EMAIL = re.compile(
 
 
 def email_ok(value: str) -> bool:
-    return bool(RFC_EMAIL.match(value.strip())) and len(value) <= 254
+    return bool(RFC_EMAIL.match(fold(value).strip())) and len(value) <= 254
 
 
 def identifier_runs(text: str) -> Iterator[Tuple[str, List[int]]]:
@@ -709,6 +736,9 @@ def find_emails(text: str) -> List[Span]:
     join and left "abcdef1234@" standing in the overlay. The mailbox name of a
     real address, which is usually the person's name.
     """
+    # Searched on the folded text, which has the same length, so every offset
+    # found there is an offset into *text*.
+    original, text = text, fold(text)
     spans: List[Span] = []
     claimed_to = 0
     for at in (index for index, char in enumerate(text) if char == "@"):
@@ -736,6 +766,6 @@ def find_emails(text: str) -> List[Span]:
         candidate = text[left:domain.end()]
         if not RFC_EMAIL.match(candidate):
             continue
-        spans.append((left, domain.end(), candidate))
+        spans.append((left, domain.end(), original[left:domain.end()]))
         claimed_to = domain.end()
     return spans
