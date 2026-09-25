@@ -25,11 +25,14 @@ does not move the exit code). See ``ScanReport.all_allowed``.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
-import sys
-from pathlib import Path
 import os
-from typing import List, Optional
+import sys
+import tempfile
+import unicodedata
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 from ._legacy_env import reject_legacy_env
 from .redactor import RedactionMode
@@ -73,18 +76,127 @@ def _parse_extensions(value: str) -> frozenset:
     return frozenset(result)
 
 
-def _write_overlays(report: ScanReport, out_dir: Path) -> List[Path]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    written: List[Path] = []
+class OverlayConflict(Exception):
+    """An overlay would replace a file it must not; nothing was written."""
+
+    def __init__(self, problems: List[str]):
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+class OverlayWriteError(Exception):
+    """Writing failed part-way; `replaced` lists overlays already replaced
+    under --overwrite, which cannot be rolled back. Nothing else is left."""
+
+    def __init__(self, cause: OSError, replaced: List[Path]):
+        super().__init__(str(cause))
+        self.replaced = replaced
+
+
+def _file_id(path: Path) -> Tuple[int, int]:
+    st = path.stat()
+    return st.st_dev, st.st_ino
+
+
+def _name_key(name: str) -> str:
+    # APFS and HFS+ are case- and normalisation-insensitive: one file, two spellings
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", name).casefold())
+
+
+def _plan_overlays(report: ScanReport, out_dir: Path, overwrite: bool) -> List[Tuple[Path, str]]:
+    # Every target is checked before anything is written. A scanned source is
+    # matched by device and inode, so a hard link or a path spelled another way
+    # is still the source; `--overwrite` never extends to it.
+    sources = set()
+    for doc in report.documents:
+        path = Path(doc.source)
+        if doc.source != "text_input" and path.is_file():
+            sources.add(_file_id(path))
+
+    plan: List[Tuple[Path, str]] = []
+    claimed: dict = {}
+    problems: List[str] = []
     for doc in report.documents:
         # a file named .overlay.txt is read as cleaned; one a detected value is
         # still in (detect_only, block) is not written, as to_dict withholds it.
         if doc.overlay_residual:
             continue
         dest = out_dir / f"{_safe_name(doc.source)}.overlay.txt"
-        dest.write_text(doc.overlay, encoding="utf-8")
-        written.append(dest)
-    return written
+        key = _name_key(dest.name)
+        if key in claimed:
+            problems.append(f"{claimed[key]} and {doc.source} would both write {dest}")
+        claimed[key] = doc.source
+        if dest.is_symlink():
+            problems.append(f"{dest} is a symbolic link")
+        elif dest.is_dir():
+            problems.append(f"{dest} is a directory")
+        elif dest.exists():
+            if _file_id(dest) in sources:
+                problems.append(f"{dest} is one of the scanned files")
+            elif not overwrite:
+                problems.append(f"{dest} already exists")
+        plan.append((dest, doc.overlay))
+    if problems:
+        raise OverlayConflict(problems)
+    return plan
+
+
+#: a filesystem without hard links (exFAT, some network shares) reports these
+_NO_HARD_LINKS = {
+    code for code in (
+        getattr(errno, "EPERM", None), getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None), getattr(errno, "ENOSYS", None),
+    ) if code is not None
+}
+
+
+def _write_overlays(report: ScanReport, out_dir: Path, overwrite: bool = False) -> List[Path]:
+    plan = _plan_overlays(report, out_dir, overwrite)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stage every overlay first, so a failure there leaves nothing behind.
+    staged: List[Tuple[Path, str, str]] = []
+    try:
+        for dest, overlay in plan:
+            fd, tmp = tempfile.mkstemp(dir=out_dir, prefix=".overlay-", suffix=".tmp")
+            staged.append((dest, tmp, overlay))
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(overlay)
+    except BaseException as exc:
+        for _, tmp, _ in staged:
+            Path(tmp).unlink(missing_ok=True)
+        if isinstance(exc, OSError):
+            raise OverlayWriteError(exc, []) from exc
+        raise
+
+    created: List[Path] = []
+    replaced: List[Path] = []
+    try:
+        for dest, tmp, overlay in staged:
+            if overwrite and os.path.lexists(dest):
+                # a rename replaces the directory entry, never writes through it
+                os.replace(tmp, dest)
+                replaced.append(dest)
+                continue
+            try:
+                # a hard link fails if anything appeared at dest since the plan
+                os.link(tmp, dest, follow_symlinks=False)
+                created.append(dest)
+            except OSError as exc:
+                if exc.errno not in _NO_HARD_LINKS:
+                    raise
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0))
+                created.append(dest)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(overlay)
+            os.unlink(tmp)
+    except OSError as exc:
+        for dest in created:
+            dest.unlink(missing_ok=True)
+        for _, tmp, _ in staged:
+            Path(tmp).unlink(missing_ok=True)
+        raise OverlayWriteError(exc, replaced) from exc
+    return [dest for dest, _, _ in staged]
 
 
 def _print_human(report: ScanReport, written: Optional[List[Path]]) -> None:
@@ -246,7 +358,27 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         **scan_kwargs,
     )
 
-    written = _write_overlays(report, Path(args.out)) if args.out else None
+    try:
+        written = _write_overlays(report, Path(args.out), args.overwrite) if args.out else None
+    except OverlayConflict as exc:
+        sys.stderr.write("error: --out would replace files it must not; nothing was written:\n")
+        for problem in exc.problems:
+            sys.stderr.write(f"  - {problem}\n")
+        sys.stderr.write(
+            "Write --out to an empty folder outside the one being scanned, or pass "
+            "--overwrite to replace earlier overlays (never a scanned file).\n"
+        )
+        return 1
+    except OverlayWriteError as exc:
+        sys.stderr.write(f"error: writing overlays failed: {exc}\n")
+        if exc.replaced:
+            sys.stderr.write("These existing files were already replaced (--overwrite):\n")
+            for dest in exc.replaced:
+                sys.stderr.write(f"  - {dest}\n")
+            sys.stderr.write("No other overlay was left behind.\n")
+        else:
+            sys.stderr.write("Nothing was written.\n")
+        return 1
 
     if args.json:
         payload = report.to_dict(include_original=args.include_original_values)
@@ -308,7 +440,18 @@ def build_parser() -> argparse.ArgumentParser:
              f"list and shell history, and a known salt lets anyone test "
              f"guessed values against the hashes. The flag wins if both are set.",
     )
-    scan_p.add_argument("--out", help="Directory to write the clean overlays into.")
+    scan_p.add_argument(
+        "--out",
+        help="Directory to write the clean overlays into. Nothing is written if "
+             "an overlay would replace an existing file, a scanned file, or "
+             "another overlay of this run.",
+    )
+    scan_p.add_argument(
+        "--overwrite", action="store_true",
+        help="Let --out replace an existing file at an overlay's name, even one "
+             "that is not an overlay. A scanned file, a symbolic link, a "
+             "directory or a clash between two overlays is still refused.",
+    )
     scan_p.add_argument("--json", action="store_true", help="Emit the full report as JSON.")
     scan_p.add_argument(
         "--include-original-values", action="store_true",

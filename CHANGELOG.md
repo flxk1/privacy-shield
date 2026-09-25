@@ -116,6 +116,22 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   list and its counts were not. The stronger of identical findings is kept;
   findings of different types on one interval are both kept.
 
+- **`--out` can no longer destroy a file.** Overlays are named after their
+  flattened source path and were written with a plain `write_text`, so
+  `scan . --out .` replaced a user's own `a.txt.overlay.txt` with `a.txt`'s
+  overlay, and `sub/b.md` and `sub__b.md` wrote one file between them while
+  the CLI reported both. Every target is now checked before anything is
+  written, and on any conflict the CLI writes nothing, creates no folder and
+  exits 1, naming each file. An existing file needs the new `--overwrite`,
+  which replaces any file at an overlay's name. Even with it, these are
+  refused: a scanned file (by file identity), a symbolic link, a directory,
+  and two overlays with one name (compared case- and
+  normalisation-insensitively). Writes are staged and moved into place. A new
+  overlay never replaces anything that appeared after the check, and a failure
+  part-way, including a name the filesystem rejects, removes what the run
+  created. Tested:
+  `tests/test_cli_out_guard.py`.
+
 - **The random IBAN-in-prose test asserted exact equality and failed
   intermittently.** A coincidental mod-97 pass can extend the claimed span
   forward or backward, kept by the union rule (`docs/limits.md`); the test

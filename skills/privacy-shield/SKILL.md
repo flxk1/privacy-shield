@@ -90,4 +90,6 @@ path above — see `degrade_gracefully_without_optional_extras` below.
   print the variable: whoever knows the salt can test guessed values against
   the hashes. If the variable is unset the CLI exits `1`; ask the user to set
   it rather than inventing a salt.
-- Write `--out` to a folder outside the one being scanned.
+- Write `--out` to an empty folder outside the one being scanned. If the CLI
+  refuses with "nothing was written", report the named files to the user; do
+  not add `--overwrite` unless the user asks to replace earlier overlays.

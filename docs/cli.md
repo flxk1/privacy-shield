@@ -55,7 +55,7 @@ Installed as the `privacy-shield` console script by `pip install .`:
 
 ```
 privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REGEX_ONLY]
-                                  [--destination external_llm] [--out DIR] [--json]
+                                  [--destination external_llm] [--out DIR [--overwrite]] [--json]
                                   [--redaction-mode redact|pseudonymize|hash|detect_only|block]
                                   [--hash-salt SALT]
                                   [--min-confidence low|medium|high]
@@ -74,6 +74,26 @@ The default is closed because stdout is not always a terminal:
 model's context, which would put the original one pipe from an external
 service — the act this package's governance block prohibits. Ask for it when a
 person is reading the output; leave it off when a program is.
+
+`--out` never replaces a file it was not asked to replace. Every overlay path
+is checked before anything is written, and on any conflict the CLI writes
+nothing, does not create the folder, and exits `1`, naming each file. Without
+`--overwrite` an existing file is a conflict. With it, any existing file at an
+overlay's name is replaced, including one that is not an overlay, but these
+are still refused:
+- the target is one of the scanned files, matched by file identity so a hard
+  link counts;
+- the target is a symbolic link or a directory;
+- two documents flatten to one overlay name, compared case- and
+  Unicode-normalisation-insensitively.
+
+Overlays are written to temporary files first and then moved into place. A new
+overlay is created only if nothing appeared at its path in the meantime. A
+replaced one is renamed over the old entry, never written through it. If
+writing fails part-way, for example on a name the filesystem rejects as too
+long, the overlays created in that run are removed, and the
+error names any existing file `--overwrite` had already replaced. Use an empty
+folder outside the one being scanned.
 
 `--redaction-mode hash` needs a salt, from `PRIVACY_SHIELD_HASH_SALT` or
 `--hash-salt` (the flag wins; an empty value counts as unset); one under 32
