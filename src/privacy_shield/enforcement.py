@@ -1,9 +1,12 @@
 """Optional enforcement and audit-enrichment seam for the egress guard.
 
 The core guard makes its decision locally from the privacy mode, classification
-tiers, and scanner result, then records it to the standalone audit log. This
-module defines the interface through which a host may add a verdict and signed
-receipt. The core imports no host implementation.
+tiers, and scanner result. Nothing is written to disk unless the guard is
+configured with an ``audit_log`` path (or ``PRIVACY_SHIELD_AUDIT_LOG`` is set);
+see :class:`privacy_shield.gate.PrivacyGate`. This module defines the
+interface through which a host may add a verdict and signed receipt,
+independent of and additive to that recording. The core imports no host
+implementation.
 
 Contract
 --------

@@ -26,7 +26,8 @@ span text
 cloud LLM  ──►  response
    │
    ▼  rehydrate locally       anonymous_json.rehydrate_response
-   ▼  audit every action      audit_log.py + privacy_skill_kg.py
+   ▼  audit, if configured    audit_log.py + privacy_skill_kg.py (opt-in: `audit_log=`/
+   │                          `PRIVACY_SHIELD_AUDIT_LOG`; writes nothing by default)
 ```
 
 `shield.py` (`PrivacyShield`) is the orchestrator, with four modes:

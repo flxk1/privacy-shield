@@ -49,7 +49,9 @@ Runtime controls: the PII-cleaned overlay and egress guard; only the overlay
 leaves. An empty `dependencies` list keeps every Loomground plane and external
 enforcement host optional. Absent `[semantic]`/`[extract]`, detection
 degrades to the deterministic regex/lexicon floor. Without a sink,
-the guard decides locally and writes the standalone audit trail. A host
+the guard decides locally and writes nothing to disk unless configured
+(`audit_log=`/`PRIVACY_SHIELD_AUDIT_LOG`) to record to the standalone audit
+trail. A host
 attaches via the neutral `EnforcementSink` contract; see
 [ADR 0001](docs/adr/0001-external-enforcement.md). The `privacy-shield` skill
 wraps this for agents: package/CLI needs nothing else; MCP requires

@@ -37,3 +37,15 @@ The executable contract is
 `tests/test_privacy_gate_external_enforcement.py`: standalone blocking and
 allowing remain complete, an attached sink receives the same decision, and a
 faulty sink cannot break the core guard.
+
+## Amendment (2026-09-26)
+
+"Writes its local audit record" above (Context) described the default before
+this amendment: `PrivacyGate.check()` recorded every decision unconditionally. That
+default is now opt-in — `audit_log=` / `PRIVACY_SHIELD_AUDIT_LOG`, see
+`PrivacyGate.__init__`/`configure_audit` — because the unconditional write hit
+the real, unbounded user-state audit log on every call, including read-only
+scans. This ADR's seam (`EnforcementSink` et al.) and its consequences are
+unaffected: the seam was already independent of, and additive to, whatever
+the guard's own recording does. See CHANGELOG.md Unreleased for the change
+and its tests.
