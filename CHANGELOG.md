@@ -115,9 +115,11 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `josé@example.com` and `erika<U+200B>@example.com` went out whole with
   pii_detected False, and NFD `René.Müller＠…` kept `René.Mü`;
   `erika@müller.de` and `erika@straße.de` were not found. Marks and
-  invisible characters are now read through anywhere in the address, any
-  Latin letter reads as a letter in the address's shape, and `email_ok`
-  reads the same way. Two addresses run together are both claimed; the second's domain
+  invisible characters are now read through anywhere in the address; a
+  Latin letter with a diacritic reads as its base letter, a character NFKC
+  reads as one ASCII letter or digit (a superscript, modifier or circled
+  letter) reads as that, and a Latin letter with neither (`ß`, `ø`) reads as
+  a letter in the address's shape; `email_ok` reads the same way. Two addresses run together are both claimed; the second's domain
   used to go out. Tested:
   `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
   `::test_two_addresses_run_together_are_both_claimed`.

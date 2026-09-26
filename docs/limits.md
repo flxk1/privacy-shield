@@ -898,7 +898,9 @@ next round starts from this rather than rediscovering it:
   Invisible characters (Unicode `Cf` - zero-width space, soft hyphen, word
   joiner, bidi controls) and combining marks (`M*`, spacing marks included)
   are not there, anywhere in the address; a Latin letter with a diacritic
-  reads as its base letter, and one with none (`ß`, `ø`, `ł`, `æ`) reads as
+  reads as its base letter; a character NFKC reads as one ASCII letter or
+  digit (superscript `ⁱ`, modifier `ᵉ`, ordinal `ª`, circled `ⓔ`) reads as
+  that; and a Latin letter with none of these (`ß`, `ø`, `ł`, `æ`) reads as
   a letter, since only the shape is judged and the claim is cut from the
   original. So an address in decomposed Unicode (NFD, as macOS file names and
   much copied text are) is one address, and so is a Latin-script
@@ -918,13 +920,14 @@ next round starts from this rather than rediscovering it:
   the second claim at the end of the first left `@firma.de` in the overlay.
   Tested: `tests/test_leak_invariant.py::test_two_addresses_run_together_are_both_claimed`.
 - **A zero-width space does not separate a word from an address.** Read
-  through, `Hallo<U+200B>erika@…` claims `Hallo` with the local part - the
+  through, `Hallo<U+200B>erika@…` claims `Hallo` with the local part and
+  `…example.com<U+200B>Sie` claims `Sie` with the top-level domain - the
   over-redaction a text that separates words with zero-width spaces (Thai,
   some CJK web copy) pays, as a glued word already does. Pinned by
   `tests/test_leak_invariant.py::test_a_word_before_a_zero_width_space_goes_with_the_address`.
 - **Addresses not found, in any width.** An internationalised domain in a
-  non-Latin script (`erika@例え.jp` rather than its punycode); a local part
-  in circled letters; an address wrapped across a line; an address written
+  non-Latin script (`erika@例え.jp` rather than its punycode); an address
+  wrapped across a line; an address written
   backwards under a right-to-left override. The gate shares these
   blind spots, and it reports a left-behind local part only when the whole
   local part survives. Pinned by

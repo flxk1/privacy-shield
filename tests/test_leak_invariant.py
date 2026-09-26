@@ -295,6 +295,9 @@ def _read(value: str) -> str:
             compat = unicodedata.normalize("NFKC", char)
             if len(compat) == 1 and compat in "@._%+-":
                 folded = compat
+            elif len(compat) == 1 and compat.isascii() and compat.isalnum():
+                # A superscript, modifier or circled letter, read as itself.
+                folded = compat
             else:
                 # A Latin letter with a diacritic, read as its base letter.
                 parts = unicodedata.normalize("NFD", char)
@@ -1841,7 +1844,6 @@ def test_an_address_is_reported_as_it_was_written():
     [
         pytest.param("Mail erika@\u4f8b\u3048.jp bitte", id="non_latin_idn_domain"),
         pytest.param("Mail \u202emoc.elpmaxe@akire\u202c bitte", id="right_to_left_override"),
-        pytest.param("Mail \u24d4\u24e1\u24d8\u24da\u24d0@example.com bitte", id="circled_local_part"),
         pytest.param("Mail erika\uff20\nexample.com bitte", id="wrapped_after_at"),
     ],
 )
@@ -1880,6 +1882,11 @@ HIDDEN_ADDRESSES = [
     pytest.param("erika@l\u00e6ge.dk", id="ae_ligature"),
     pytest.param("erika@\u0111a.vn", id="d_stroke"),
     pytest.param("erika@\u0131stanbul.com.tr", id="dotless_i"),
+    pytest.param("ERIKA@\u00d8RSTED.DK", id="capital_o_stroke"),
+    pytest.param("erika@exa\u2071mple.com", id="superscript_i"),
+    pytest.param("erika@\u1d49xample.com", id="modifier_e"),
+    pytest.param("\u00aaerika@example.com", id="ordinal_a"),
+    pytest.param("\u24d4\u24e1\u24d8\u24da\u24d0@example.com", id="circled_local_part"),
 ]
 
 
@@ -1940,9 +1947,12 @@ def test_a_word_before_a_zero_width_space_goes_with_the_address():
     """docs/limits.md: read through, a zero-width space no longer separates a
     word from the local part after it - the over-redaction a script that
     separates words that way pays."""
-    text = "Mail Hallo\u200berika@example.com bitte"
-    document = scan(text, force_text=True).documents[0]
-    assert document.overlay == "Mail [EMAIL] bitte", document.overlay
+    for text in (
+        "Mail Hallo\u200berika@example.com bitte",
+        "Mail erika@example.com\u200bSie bitte",
+    ):
+        document = scan(text, force_text=True).documents[0]
+        assert document.overlay == "Mail [EMAIL] bitte", document.overlay
 
 
 def test_the_gate_sees_a_decomposed_local_part_left_behind():
