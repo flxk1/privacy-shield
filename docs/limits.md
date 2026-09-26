@@ -907,8 +907,8 @@ next round starts from this rather than rediscovering it:
   one address, and so is an internationalised domain whose letters are Latin
   by name or compatibility form, in either normal form (`erika@müller.de`,
   `m.weiß@straße.de`). The standard library has no Unicode Script property,
-  so seven Latin-script letters that are neither are not read as letters -
-  see "Addresses not found". NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
+  so seven Latin-script letters and two Latin superscript length marks that
+  are neither are not read as letters - see "Addresses not found". NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
   `René.Müller＠…` kept `René.Mü`, `eri<U+00AD>ka@…` kept `eri`, and
   `erika@müller.de` and `erika@straße.de` were not found. The gate reads addresses the same way.
   Tested:
@@ -930,8 +930,9 @@ next round starts from this rather than rediscovering it:
   `tests/test_leak_invariant.py::test_a_word_before_a_zero_width_space_goes_with_the_address`.
 - **Addresses not found, in any width.** An internationalised domain in a
   non-Latin script (`erika@例え.jp` rather than its punycode), or one using
-  one of the seven Latin-script letters Latin neither by name nor by
-  compatibility form (`ᴯ ᴻ ᵎ 𐞀 Ⅎ ⅎ Ↄ`, as in `erika@ⅎlag.de`); an address
+  one of the nine Latin-script characters Latin neither by name nor by
+  compatibility form - the letters `ᴯ ᴻ ᵎ 𐞀 Ⅎ ⅎ Ↄ` and the length marks
+  U+10781 and U+10782 (as in `erika@ⅎlag.de`); an address
   wrapped across a line; an address written
   backwards under a right-to-left override. The gate shares these
   blind spots, and it reports a left-behind local part only when the whole
