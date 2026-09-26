@@ -894,19 +894,50 @@ next round starts from this rather than rediscovering it:
   `::test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out`,
   `::test_a_full_width_at_is_not_an_address_by_itself`,
   `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
-- **Addresses not found, in any width.** An internationalised domain written
-  in its own script (`erika@müller.de` rather than its punycode); a local part
-  in decomposed Unicode, since a combining mark ends it (NFD `josé@…` goes out
-  whole, NFD `René.Müller＠…` is claimed from after the last combining mark);
-  a zero-width space before the `@`, which hides the whole address, or a
-  zero-width space or soft hyphen inside a local part, which ends it there
-  (`eri<U+200B>ka@…` keeps `eri`); a local part in circled letters; an address
-  wrapped across a line. The gate shares these blind spots, and it
-  reports a left-behind local part only when the whole local part survives.
-  Pinned by
+- **An address is read through combining marks and invisible characters.**
+  Invisible characters (Unicode `Cf` - zero-width space, soft hyphen, word
+  joiner, bidi controls) and combining marks (`M*`, spacing marks included)
+  are not there, anywhere in the address; a Latin letter with a diacritic
+  reads as its base letter; a character NFKC reads as one ASCII letter or
+  digit (superscript `ⁱ`, modifier `ᵉ`, ordinal `ª`, circled `ⓔ`) reads as
+  that; and any other letter that is Latin by its name or its compatibility
+  form (`ß`, `ø`, `ł`, `æ`, modifier `ᵊ`) reads as a letter, since only the
+  shape is judged and the claim is cut from the original. So an address in
+  decomposed Unicode (NFD, as macOS file names and much copied text are) is
+  one address, and so is an internationalised domain whose letters are Latin
+  by name or compatibility form, in either normal form (`erika@müller.de`,
+  `m.weiß@straße.de`). The standard library has no Unicode Script property,
+  so seven Latin-script letters and two Latin superscript length marks that
+  are neither are not read as letters - see "Addresses not found". NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
+  `René.Müller＠…` kept `René.Mü`, `eri<U+00AD>ka@…` kept `eri`, and
+  `erika@müller.de` and `erika@straße.de` were not found. The gate reads addresses the same way.
+  Tested:
+  `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
+  `::test_the_gate_sees_an_address_with_marks_or_invisibles`,
+  `::test_a_local_part_with_a_spacing_mark_is_claimed_whole`,
+  `::test_the_gate_sees_a_decomposed_local_part_left_behind`,
+  `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+- **Two addresses run together are both claimed.** The first domain runs on
+  into the second local part, with nothing or only an invisible character
+  between them; the claims overlap and the redaction covers both. Clipping
+  the second claim at the end of the first left `@firma.de` in the overlay.
+  Tested: `tests/test_leak_invariant.py::test_two_addresses_run_together_are_both_claimed`.
+- **A zero-width space does not separate a word from an address.** Read
+  through, `Hallo<U+200B>erika@…` claims `Hallo` with the local part and
+  `…example.com<U+200B>Sie` claims `Sie` with the top-level domain - the
+  over-redaction a text that separates words with zero-width spaces (Thai,
+  some CJK web copy) pays, as a glued word already does. Pinned by
+  `tests/test_leak_invariant.py::test_a_word_before_a_zero_width_space_goes_with_the_address`.
+- **Addresses not found, in any width.** An internationalised domain in a
+  non-Latin script (`erika@例え.jp` rather than its punycode), or one using
+  one of the nine Latin-script characters Latin neither by name nor by
+  compatibility form - the letters `ᴯ ᴻ ᵎ 𐞀 Ⅎ ⅎ Ↄ` and the length marks
+  U+10781 and U+10782 (as in `erika@ⅎlag.de`); an address
+  wrapped across a line; an address written
+  backwards under a right-to-left override. The gate shares these
+  blind spots, and it reports a left-behind local part only when the whole
+  local part survives. Pinned by
   `tests/test_leak_invariant.py::test_an_address_the_finder_cannot_read_is_a_documented_limit`,
-  `::test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark`,
-  `::test_an_invisible_character_in_a_local_part_ends_it`,
   `::test_the_gate_misses_a_partly_surviving_local_part`.
 - **Not found: an IBAN whose country code is in look-alike Cyrillic letters
   (`ДЕ89…`).** A country code is two Latin letters; `Д` is not one in any
