@@ -122,6 +122,40 @@ def test_guard_refuses_shutil_operations_under_a_fake_root(guarded_fake_root, tm
     GUARD_HITS.clear()
 
 
+def test_guard_flags_shutil_copy_into_a_fake_root_but_not_out_of_one(guarded_fake_root, tmp_path):
+    """_SHUTIL_TARGET names which argument of each shutil event is WRITTEN
+    TO; a blanket all-args branch would flag copying source material OUT of
+    a guarded root too (a legitimate read), not just writing into one.
+    """
+    from conftest import _REAL_STATE_ROOTS
+
+    source_in_root = guarded_fake_root / "source.txt"
+    _REAL_STATE_ROOTS.remove(str(guarded_fake_root))
+    try:
+        source_in_root.write_text("readable", encoding="utf-8")
+    finally:
+        _REAL_STATE_ROOTS.append(str(guarded_fake_root))
+
+    # Copying OUT of the guarded root (a read) must not be flagged.
+    dest_outside = tmp_path / "copied-out.txt"
+    assert not GUARD_HITS
+    shutil.copy(source_in_root, dest_outside)
+    assert dest_outside.read_text(encoding="utf-8") == "readable"
+    assert not GUARD_HITS
+
+    # Copying INTO the guarded root must still be refused.
+    dest_inside = guarded_fake_root / "copied-in.txt"
+    raised = False
+    try:
+        shutil.copy(dest_outside, dest_inside)
+    except PermissionError:
+        raised = True
+    assert raised, "a shutil.copy INTO the fake root was not refused"
+    assert not dest_inside.exists()
+    assert GUARD_HITS
+    GUARD_HITS.clear()
+
+
 def test_guard_refuses_link_and_symlink_into_a_fake_root(guarded_fake_root, tmp_path):
     outside = tmp_path / "source.txt"
     outside.write_text("x", encoding="utf-8")

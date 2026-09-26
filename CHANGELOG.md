@@ -109,6 +109,37 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
+- **The context-embeddings cache left the package tree.** It was a fifth
+  runtime store the 2.0.0 state-root move missed: `embed_pii_contexts()` wrote
+  `<package>/data/privacy_shield/pii_context_embeddings.json`, and the test
+  suite rewrote that file on every run. It now resolves under the user-state
+  directory next to the other four stores; `PRIVACY_SHIELD_CONTEXT_EMBEDDINGS`
+  overrides it verbatim and `PIIContextMatcher(embeddings_path=...)` beats
+  both. A cache left in the package by an earlier setup is named in a warning
+  and not read - re-run `embed_pii_contexts()` to rebuild it. The test suite
+  now refuses and fails an in-process write into the package tree (open,
+  mkdir, remove, rename, link, symlink, sqlite, shutil; `.pyc` bytecode
+  excepted). Child processes and `dir_fd`-relative opens are not seen. Tested:
+  `tests/test_state_paths.py::test_context_embeddings_default_resolves_outside_the_installed_package`,
+  `::test_context_embeddings_env_override_wins_verbatim`,
+  `::test_context_embeddings_explicit_path_beats_the_override`,
+  `::test_context_embeddings_setup_writes_to_the_user_state_home`,
+  `::test_a_cache_left_in_the_package_is_named_not_read`,
+  `::test_a_write_into_the_package_tree_is_refused_and_recorded`.
+
+- **An e-mail address written with a full-width `＠` or full-width letters is
+  detected.** `erika＠example.com` went out whole with pii_detected False in
+  every egress mode: the finder expanded only around an ASCII `@`. It now
+  folds digits and letters as a run does, reads every character NFKC maps
+  to `@ . _ % + -` as that, and reads the ideographic full stops `。` and
+  `｡` as `.` in a domain that has no reading without them. `iban_ok` and
+  `email_ok` read the same fold, so a full-width IBAN or address is no longer
+  rejected by its own validator. Addresses the
+  finder still cannot read - an IDN domain, decomposed Unicode, a zero-width
+  character, a wrapped address - are listed in `docs/limits.md`. Tested:
+  `tests/test_leak_invariant.py::test_an_address_written_in_full_width_is_an_address`,
+  `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+
 - **A card or IBAN written in full-width or non-Latin digits is detected.**
   Identifier runs were built from ASCII alphanumerics, so
   `Karte ４１１１ １１１１ １１１１ １１１１` went out as `Karte [PHONE] １１１１`
@@ -363,6 +394,7 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `::test_guard_refuses_truncate_under_a_fake_root`,
   `::test_guard_refuses_sqlite3_connect_under_a_fake_root`,
   `::test_guard_refuses_sqlite3_connect_uri_form_under_a_fake_root`,
+  `::test_guard_flags_shutil_copy_into_a_fake_root_but_not_out_of_one`,
   `::test_guard_refuses_a_write_via_a_symlink_alias_of_the_fake_root`,
   `::test_guard_refuses_a_case_variant_of_the_fake_root_path`,
   `::test_guard_refuses_a_bytes_path_under_the_fake_root_and_leaves_an_unrelated_bytes_path_alone`,

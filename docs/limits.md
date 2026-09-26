@@ -872,11 +872,46 @@ next round starts from this rather than rediscovering it:
   lines: postcodes, phone numbers, prices and prose 0%; date ranges such as
   `２００５/９/２２～２０２２/３/１５` about 25%, as they are when written in
   ASCII.
-- **Not found in any width: an e-mail written with a full-width `＠` or
-  full-width letters, and an IBAN whose country code is in look-alike
-  Cyrillic letters (`ДЕ89…`).** The e-mail finder and IBAN country codes are
-  ASCII. Pinned by
-  `tests/test_leak_invariant.py::test_the_ascii_that_remains_is_a_documented_limit`.
+- **An e-mail address is read through the same fold, plus its punctuation.**
+  `erika＠example.com`, a fully full-width address, a full-width domain or dot,
+  and the small `﹫` are all addresses; each went out with pii_detected False
+  when the finder expanded only around an ASCII `@`. Digits and letters fold
+  as in a run; every character NFKC reads as `@ . _ % + -` reads as that; and
+  the ideographic full stops `。` and `｡`, which RFC 3490 accepts as label
+  dots, read as `.` - but only right of the `@`, and only when the domain has
+  no reading without them, because `。` is also how a Japanese or Chinese
+  sentence ends. Read everywhere, it claimed the sentence before an address as
+  its local part and `。Thanks` after it as a top-level domain. A letter with no ASCII form - an umlaut in a local part -
+  stays itself, as RFC 6531 allows. A `＠` alone does not make an address
+  (`5＠3.50`, `りんご3個＠100円`). The validators read the same fold, so a
+  finding is never rejected by its own validator for its width. Tested:
+  `tests/test_leak_invariant.py::test_an_address_written_in_full_width_is_an_address`,
+  `::test_the_at_signs_are_every_character_nfkc_reads_as_at`,
+  `::test_a_sentence_ending_before_or_after_an_address_stays`,
+  `::test_an_address_is_reported_as_it_was_written`,
+  `::test_the_gate_sees_a_full_width_address`,
+  `::test_the_gate_sees_a_full_width_local_part_left_behind`,
+  `::test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out`,
+  `::test_a_full_width_at_is_not_an_address_by_itself`,
+  `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+- **Addresses not found, in any width.** An internationalised domain written
+  in its own script (`erika@müller.de` rather than its punycode); a local part
+  in decomposed Unicode, since a combining mark ends it (NFD `josé@…` goes out
+  whole, NFD `René.Müller＠…` is claimed from after the last combining mark);
+  a zero-width space before the `@`, which hides the whole address, or a
+  zero-width space or soft hyphen inside a local part, which ends it there
+  (`eri<U+200B>ka@…` keeps `eri`); a local part in circled letters; an address
+  wrapped across a line. The gate shares these blind spots, and it
+  reports a left-behind local part only when the whole local part survives.
+  Pinned by
+  `tests/test_leak_invariant.py::test_an_address_the_finder_cannot_read_is_a_documented_limit`,
+  `::test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark`,
+  `::test_an_invisible_character_in_a_local_part_ends_it`,
+  `::test_the_gate_misses_a_partly_surviving_local_part`.
+- **Not found: an IBAN whose country code is in look-alike Cyrillic letters
+  (`ДЕ89…`).** A country code is two Latin letters; `Д` is not one in any
+  width. Pinned by
+  `tests/test_leak_invariant.py::test_a_cyrillic_country_code_is_a_documented_limit`.
 - **Folder walk** defaults to known text/document extensions
   (`runner.DEFAULT_EXTENSIONS`); use `--all-files` to consider every file.
   Binary/undecodable files are recorded as per-document `errors`, not fatal.
@@ -891,7 +926,9 @@ next round starts from this rather than rediscovering it:
   `OPENAI_BASE_URL` at a local embedding server; against anything else the
   semantic layer declines, logs once, and the scan continues on the regex
   floor. The one-off `embed_pii_contexts()` setup is exempt: it embeds the
-  fixed context phrases in the module's own source, not anybody's data.
+  fixed context phrases in the module's own source, not anybody's data. It
+  writes its cache to the user-state directory, never the package
+  (`PRIVACY_SHIELD_CONTEXT_EMBEDDINGS` overrides the path).
 - **The local-LLM layer talks to local HTTP endpoints.**
   `services/local_model_runtime.py` discovers providers on
   `http://localhost:11434` (Ollama), `:1234` (LM Studio), `:1337` (Jan) and

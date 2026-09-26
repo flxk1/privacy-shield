@@ -1,11 +1,13 @@
 import os
 import pwd
+import re
 import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import pytest
 
+import privacy_shield
 from privacy_shield._legacy_env import LEGACY_ENV
 
 pytest_plugins = ["pytester"]
@@ -27,10 +29,30 @@ _orig_xdg_state_home = os.environ.get("XDG_STATE_HOME", "").strip()
 if _orig_xdg_state_home:
     _REAL_STATE_ROOTS.append(str(Path(_orig_xdg_state_home) / "privacy-shield"))
 
-# Hits the hook refused; drained and asserted per-test by _fail_on_real_state_writes,
-# and once more at session end for anything outside a test body (collection-time
-# imports, fixture teardown after the last test).
+# The package tree must never receive runtime state (v2.0.0 rule). Both the
+# imported package and the checkout's src/ are covered, whichever differs.
+# In-process only: child processes and dir_fd-relative opens are not seen.
+PROTECTED_ROOTS = sorted({
+    os.path.realpath(Path(privacy_shield.__file__).parent),
+    os.path.realpath(Path(__file__).resolve().parent.parent / "src"),
+})
+
+# Hits either hook branch refused; drained and asserted per-test by
+# _fail_on_real_state_writes, and once more at session end for anything
+# outside a test body (collection-time imports, fixture teardown after the
+# last test).
 GUARD_HITS: list = []
+
+# importlib writes "<name>.pyc.<id>" and renames it into place.
+_BYTECODE = re.compile(r".+\.pyc(\.\d+)?")
+# Which argument of each shutil audit event is the path WRITTEN TO (as
+# opposed to read from) - so copying/moving OUT of a guarded root is not
+# flagged, only INTO one.
+_SHUTIL_TARGET = {
+    "shutil.copyfile": 1, "shutil.copymode": 1, "shutil.copystat": 1,
+    "shutil.copytree": 1, "shutil.move": 1, "shutil.unpack_archive": 1,
+    "shutil.rmtree": 0, "shutil.chown": 0, "shutil.make_archive": 0,
+}
 
 _WRITE_FLAGS = (
     os.O_WRONLY | os.O_RDWR | os.O_CREAT
@@ -47,12 +69,18 @@ def _normalize(path_str: str) -> str:
     return resolved.lower() if _CASE_INSENSITIVE else resolved
 
 
-def _under_real_root(path) -> bool:
+def _decode_path(path):
     if isinstance(path, int):  # fd-only open/truncate: no path to check
-        return False
+        return None
     try:
-        raw = os.fsdecode(path)
+        return os.fsdecode(path)
     except TypeError:
+        return None
+
+
+def _under_real_root(path) -> bool:
+    raw = _decode_path(path)
+    if raw is None:
         return False
     candidate = _normalize(raw)
     for root in _REAL_STATE_ROOTS:
@@ -60,6 +88,19 @@ def _under_real_root(path) -> bool:
         if candidate == r or candidate.startswith(r + os.sep):
             return True
     return False
+
+
+def _in_package_tree(path) -> bool:
+    raw = _decode_path(path)
+    if raw is None:
+        return False
+    resolved = os.path.realpath(raw)
+    parts = resolved.split(os.sep)
+    if parts[-1] == "__pycache__" or (
+        parts[-2:-1] == ["__pycache__"] and _BYTECODE.fullmatch(parts[-1])
+    ):
+        return False
+    return any(resolved == root or resolved.startswith(root + os.sep) for root in PROTECTED_ROOTS)
 
 
 def _target_paths(event: str, args: tuple) -> list:
@@ -71,7 +112,7 @@ def _target_paths(event: str, args: tuple) -> list:
         is_write = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (
             isinstance(flags, int) and bool(flags & _WRITE_FLAGS)
         )
-        return [path] if is_write else []
+        return [path] if is_write and path is not None else []
     if event in ("os.mkdir", "os.rmdir", "os.remove"):
         return [args[0]]
     if event in ("os.rename", "os.replace"):
@@ -89,9 +130,10 @@ def _target_paths(event: str, args: tuple) -> list:
         if isinstance(db, str) and db.startswith("file:"):
             # sqlite3 URI form (uri=True): strip scheme + query, unquote.
             return [unquote(urlparse(db).path)]
-        return [db]
-    if event.startswith("shutil."):
-        return [a for a in args if isinstance(a, (str, bytes, os.PathLike))]
+        return [db] if isinstance(db, (str, bytes, os.PathLike)) else []
+    if event in _SHUTIL_TARGET:
+        target = args[_SHUTIL_TARGET[event]]
+        return [target] if isinstance(target, (str, bytes, os.PathLike)) else []
     return []
 
 
@@ -103,6 +145,11 @@ def _audit_hook(event: str, args: tuple) -> None:
             raise PermissionError(
                 f"blocked write to a guarded user-state root: "
                 f"event={event} path={target}"
+            )
+        if _in_package_tree(target):
+            GUARD_HITS.append((event, str(target)))
+            raise PermissionError(
+                f"blocked write into the package tree: event={event} path={target}"
             )
 
 
