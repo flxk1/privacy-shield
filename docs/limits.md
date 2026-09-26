@@ -926,7 +926,9 @@ next round starts from this rather than rediscovering it:
   `OPENAI_BASE_URL` at a local embedding server; against anything else the
   semantic layer declines, logs once, and the scan continues on the regex
   floor. The one-off `embed_pii_contexts()` setup is exempt: it embeds the
-  fixed context phrases in the module's own source, not anybody's data.
+  fixed context phrases in the module's own source, not anybody's data. It
+  writes its cache to the user-state directory, never the package
+  (`PRIVACY_SHIELD_CONTEXT_EMBEDDINGS` overrides the path).
 - **The local-LLM layer talks to local HTTP endpoints.**
   `services/local_model_runtime.py` discovers providers on
   `http://localhost:11434` (Ollama), `:1234` (LM Studio), `:1337` (Jan) and
