@@ -127,6 +127,22 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `::test_a_cache_left_in_the_package_is_named_not_read`,
   `::test_a_write_into_the_package_tree_is_refused_and_recorded`.
 
+- **An e-mail address in decomposed Unicode, with an invisible character in
+  it, or with an internationalised domain whose letters are Latin by name or
+  compatibility form is detected.** A combining mark or a `Cf` character ended
+  the address: NFD `josé@example.com` and `erika<U+200B>@example.com` went out
+  whole with pii_detected False, and NFD `René.Müller＠…` kept `René.Mü`;
+  `erika@müller.de` and `erika@straße.de` were not found. Marks and invisible
+  characters are now read through anywhere in the address; a Latin letter with
+  a diacritic reads as its base letter, a character NFKC reads as one ASCII
+  letter or digit (a superscript, modifier or circled letter) reads as that,
+  and any other letter Latin by its name or its compatibility form (`ß`, `ø`,
+  `ᵊ`) reads as a letter in the address's shape; `email_ok` reads the same
+  way. Two addresses run together are both claimed; the second's domain used
+  to go out. Tested:
+  `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
+  `::test_two_addresses_run_together_are_both_claimed`.
+
 - **An e-mail address written with a full-width `＠` or full-width letters is
   detected.** `erika＠example.com` went out whole with pii_detected False in
   every egress mode: the finder expanded only around an ASCII `@`. It now

@@ -329,6 +329,61 @@ def fold(value: str) -> str:
     return "".join(_email_char(char) for char in value)
 
 
+def _is_mark(char: str) -> bool:
+    """A combining mark: the second half of a decomposed letter."""
+    return unicodedata.category(char).startswith("M")
+
+
+def _address_char(char: str) -> Optional[str]:
+    """*char* as an address reads, or None where it is not there at all.
+
+    Invisible characters and combining marks are not there: "jose\u0301" is
+    "josé" decomposed, as macOS file names and much copied text are, and
+    "erika\u200b@" is "erika@". Each ended the address and it went out
+    whole. A Latin letter with a diacritic reads as its base letter, so
+    "müller.de" is a domain in either normal form; a character NFKC reads as
+    one ASCII letter or digit - a superscript "ⁱ", a modifier "ᵉ", a circled
+    "ⓔ" - reads as that; and a Latin letter with neither ("ß", "ø", "ł")
+    reads as a letter, since only the address's shape is judged here and the
+    claim is cut from the original. The rest is `_email_char`.
+    """
+    if _is_transparent(char) or _is_mark(char):
+        return None
+    folded = _email_char(char)
+    if folded == char and not char.isascii():
+        parts = unicodedata.normalize("NFD", char)
+        if (
+            len(parts) > 1
+            and parts[0].isascii()
+            and parts[0].isalpha()
+            and all(_is_mark(part) for part in parts[1:])
+        ):
+            return parts[0]
+        compat = unicodedata.normalize("NFKC", char)
+        if len(compat) == 1 and compat.isascii() and compat.isalnum():
+            return compat
+        # Judged on the compatibility form too: "ᵊ" is a MODIFIER LETTER by
+        # name, and NFKC reads it as the Latin schwa.
+        if char.isalpha() and any(
+            unicodedata.name(form, "").startswith("LATIN ")
+            for form in (char, compat) if len(form) == 1
+        ):
+            return "x"
+    return folded
+
+
+def _address_view(value: str) -> Tuple[str, List[int]]:
+    """*value* as an address reads, and where each character came from."""
+    chars: List[str] = []
+    origins: List[int] = []
+    for index, char in enumerate(value):
+        read = _address_char(char)
+        if read is not None:
+            chars.append(read)
+            origins.append(index)
+    return "".join(chars), origins
+
+
 def _is_local_part_char(char: str) -> bool:
     if char in "._%+-":
         return True
@@ -392,7 +447,7 @@ RFC_EMAIL = re.compile(
 def email_ok(value: str) -> bool:
     if len(value) > 254:
         return False
-    read = fold(value).strip()
+    read = _address_view(value)[0].strip()
     if RFC_EMAIL.match(read):
         return True
     local, at, domain = read.partition("@")
@@ -747,27 +802,26 @@ def find_emails(text: str) -> List[Span]:
     is still the same mailbox, and "acct_erika@example.com" IS the address
     rather than a prefix plus an address.
 
-    Addresses are claimed left to right and an address may not reach back into
-    one already claimed. Without that, two addresses written with nothing
-    between them defeated this: expanding left from the SECOND "@" ran back
-    through the first address's domain, and the longest thing that validated
-    from there started halfway through address one - so the claim covered the
-    join and left "abcdef1234@" standing in the overlay. The mailbox name of a
-    real address, which is usually the person's name.
+    Two addresses written with nothing between them share characters: the
+    first domain runs on into the second local part. Each is claimed whole
+    and the claims overlap, so the redactor's union covers both. Clipping the
+    second claim at the end of the first left its local part empty, so it was
+    not claimed at all and its domain went out.
     """
     if not any(sign in text for sign in AT_SIGNS):
         return []
     # Searched on the folded text, which has the same length, so every offset
     # found there is an offset into *text*.
-    original, text = text, fold(text)
+    # Searched on the address view; `kept` maps it back to *text*, so a claim
+    # still covers the invisibles and marks it read through.
+    original = text
+    text, kept = _address_view(text)
     dotted = text.translate(_IDNA_DOTS)
     spans: List[Span] = []
-    claimed_to = 0
     for at in (index for index, char in enumerate(text) if char == "@"):
         left = at
         while left > 0 and _is_local_part_char(text[left - 1]):
             left -= 1
-        left = max(left, claimed_to)
         right = at + 1
         while right < len(text) and text[right] in _DOMAIN_CHARS:
             right += 1
@@ -793,6 +847,6 @@ def find_emails(text: str) -> List[Span]:
         candidate = text[left:at + 1] + dotted[at + 1:domain.end()]
         if not RFC_EMAIL.match(candidate):
             continue
-        spans.append((left, domain.end(), original[left:domain.end()]))
-        claimed_to = domain.end()
+        start, end = kept[left], kept[domain.end() - 1] + 1
+        spans.append((start, end, original[start:end]))
     return spans
