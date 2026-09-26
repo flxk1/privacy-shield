@@ -9,8 +9,13 @@ walks a **folder**, a **single file**, or **raw text**, runs the pipeline per
 document (extract → regex → semantic → local-LLM → redact → overlay), then the
 **egress guard** decides — on the source classification (privacy mode +
 confidential / berufsgeheimnis tiers + Art. 9) — whether the payload may leave.
-Only when it may does the clean overlay go out. Every decision is recorded to
-the standalone `audit_log`. No external enforcement sink is attached.
+Only when it may does the clean overlay go out. Nothing is written to disk by
+default; pass `audit_log_path` (or set `PRIVACY_SHIELD_AUDIT_LOG`) to record
+every decision to that path via the standalone `audit_log` — the same file
+also carries `PrivacyShield`'s own per-document audit entries when either is
+given, mixed with the gate's `ai_privacy_shield_decision` entries (the two
+formats differ; the shield's entries carry no `"event"` key). No external
+enforcement sink is attached, and no breach-detector escalation.
 
 Keyword-only signature:
 
@@ -59,7 +64,7 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
                                   [--redaction-mode redact|pseudonymize|hash|detect_only|block]
                                   [--hash-salt SALT]
                                   [--min-confidence low|medium|high]
-                                  [--audit-log PATH] [--no-recursive]
+                                  [--audit-log PATH | --audit] [--no-recursive]
                                   [--all-files | --extensions .txt,.csv] [--text]
                                   [--include-original-values]
 ```

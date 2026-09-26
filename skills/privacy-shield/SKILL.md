@@ -6,8 +6,10 @@ description: >-
   the only thing meant to leave the machine — then decide whether egress to an
   external service is allowed, by source classification. Personal data is found
   with a regex/lexicon floor plus an optional local embedding/LLM layer; the
-  value<->placeholder map stays local; every decision is written to a local audit
-  trail. Works standalone with every Loomground plane optional. An external
+  value<->placeholder map stays local; this skill's own invocation always
+  passes `--audit` (or `--audit-log PATH`), so every decision it makes is
+  written to a local audit trail — the library default, used without either,
+  writes nothing. Works standalone with every Loomground plane optional. An external
   enforcement host can attach behind the neutral sink interface
   that no-ops when absent. "Cleared" means the source class is allowed to egress,
   NOT a zero-residual certificate. Use when the user says "redact this", "clean
@@ -48,7 +50,17 @@ Primary path, works standalone with nothing else installed: the
 `privacy_shield` package's scan / overlay / egress engine (`scanner`,
 `redactor`, `anonymous_json`, `gate`, `audit_log`). Call it as
 `privacy_shield.scan(target) -> ScanReport`, or via the `privacy-shield` CLI
-over a file or folder.
+over a file or folder. This skill's documented invocation always carries
+`--audit` (record to the standard user-state audit path) or `--audit-log
+PATH` (a specific one) — never neither:
+
+```
+privacy-shield scan <path|-|text> --audit
+```
+
+That opt-in is what makes `every_decision_written_to_the_audit_trail` below
+true of what this skill does; the library's own default, called with
+neither flag, writes nothing (see `PrivacyGate` in the package docs).
 
 The shell grant is scoped to `Bash(privacy-shield:*)` — the console script this
 package installs, and nothing else. An unrestricted `Bash` would hand a skill

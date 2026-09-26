@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from ._legacy_env import reject_legacy_env
+from .audit_log import audit_log_path
 from .redactor import RedactionMode
 from .utils.file_io import path_exists
 from .runner import ScanReport, scan
@@ -343,6 +344,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         )
         return 1
 
+    audit_log_path_arg = args.audit_log or (str(audit_log_path()) if args.audit else None)
+
     report = scan(
         target,
         mode=mode,
@@ -350,7 +353,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         redaction_mode=redaction_mode,
         min_confidence=min_confidence,
         recursive=not args.no_recursive,
-        audit_log_path=args.audit_log,
+        audit_log_path=audit_log_path_arg,
         tenant_id=args.tenant_id,
         user_id=args.user_id,
         force_text=force_text,
@@ -459,7 +462,20 @@ def build_parser() -> argparse.ArgumentParser:
              "--json. OFF by default: stdout is the model's context when this "
              "CLI runs under the skill's Bash grant.",
     )
-    scan_p.add_argument("--audit-log", help="Path for the shield's per-document audit log.")
+    scan_p.add_argument(
+        "--audit-log",
+        help="Opt the shield's per-document audit log AND the egress gate's "
+             "decisions (privacy_shield.gate.PrivacyGate) into this path. "
+             "Both write to the same file, in their own formats — the "
+             "gate's entries carry an 'event' key, the shield's do not. "
+             "Wins over --audit if both are given.",
+    )
+    scan_p.add_argument(
+        "--audit", action="store_true",
+        help="Opt both writers above into the standard user-state audit path "
+             "(privacy_shield.audit_log.audit_log_path()) with no argument. "
+             "Neither given: scan() writes nothing to disk.",
+    )
     scan_p.add_argument(
         "--no-recursive",
         action="store_true",

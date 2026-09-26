@@ -314,3 +314,53 @@ def test_naming_or_disclaiming_the_norm_is_not_the_claim(text):
     assert not _affirmative_zero_residual_claims(text), (
         f"the guard flagged text that names or disclaims the norm: {text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# every_decision_written_to_the_audit_trail
+# ---------------------------------------------------------------------------
+#
+# PO decision (2026-09-26): kept, made true of what THIS SKILL does rather
+# than of the library's own default, which is opt-in (gate.py) and writes
+# nothing on its own. SKILL.md documents one fixed invocation; this pins it
+# by extracting and RUNNING that exact line, so editing the doc to drop
+# --audit/--audit-log breaks the test instead of silently untruthing the
+# obligation.
+
+_INVOCATION_BLOCK = re.compile(r"```\nprivacy-shield scan <path\|-\|text> (.+)\n```")
+
+
+def _documented_invocation_flags() -> list[str]:
+    match = _INVOCATION_BLOCK.search(_text("skills/privacy-shield/SKILL.md"))
+    assert match, (
+        "SKILL.md no longer documents a fixed `privacy-shield scan "
+        "<path|-|text> ...` invocation for this test to hold"
+    )
+    return match.group(1).split()
+
+
+def test_skill_md_documents_an_audit_opt_in_invocation():
+    flags = _documented_invocation_flags()
+    assert "--audit" in flags or "--audit-log" in flags, (
+        f"the documented invocation flags {flags!r} opt into neither --audit "
+        f"nor --audit-log, so every_decision_written_to_the_audit_trail is "
+        f"false of what this skill actually runs"
+    )
+
+
+def test_the_documented_invocation_actually_writes_the_audit_trail(tmp_path):
+    from privacy_shield import cli
+    from privacy_shield.audit_log import audit_log_path
+
+    flags = _documented_invocation_flags()
+    code = cli.main(["scan", "hello there", "--text", *flags])
+    assert code == 0
+
+    if "--audit-log" in flags:
+        path = Path(flags[flags.index("--audit-log") + 1])
+    else:
+        path = audit_log_path()
+    assert path.is_file(), (
+        f"the skill's documented invocation ({['scan', 'hello there', '--text', *flags]}) "
+        f"did not write an audit record at {path}"
+    )
