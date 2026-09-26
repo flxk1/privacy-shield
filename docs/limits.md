@@ -900,7 +900,7 @@ next round starts from this rather than rediscovering it:
   whole, NFD `René.Müller＠…` is claimed from after the last combining mark);
   a zero-width space before the `@`, which hides the whole address, or a
   zero-width space or soft hyphen inside a local part, which ends it there
-  (`eri​ka@…` keeps `eri`); a local part in circled letters; an address
+  (`eri<U+200B>ka@…` keeps `eri`); a local part in circled letters; an address
   wrapped across a line. The gate shares these blind spots, and it
   reports a left-behind local part only when the whole local part survives.
   Pinned by
