@@ -345,22 +345,97 @@ def _skill_md_body() -> str:
     return SKILL_MD.read_text(encoding="utf-8").split("---\n", 2)[2]
 
 
-def test_every_documented_privacy_scan_call_passes_audit_log_path():
-    """F4: the MCP tool's own default is `audit_log_path=None` (silent,
-    same as the library) - loomground_mcp/tools/applied.py:61-84, read
-    read-only from the installed package. Any prose paragraph that documents
-    calling `privacy_scan` must name `audit_log_path` in the same paragraph,
-    or that documented path is silently false of
-    every_decision_written_to_the_audit_trail.
+_FENCE = re.compile(r"```\n(.*?)\n```", re.DOTALL)
+
+#: The ONLY prose paragraph (outside a fenced block) allowed to mention
+#: `privacy_scan` at all. A substring check ("mentions audit_log_path
+#: somewhere nearby") passed an inverted instruction ("Never pass
+#: audit_log_path; leave it unset") that also happens to mention the name;
+#: pinning the exact paragraph, rather than searching for a keyword, is what
+#: catches that class of mutation.
+_ALLOWED_PRIVACY_SCAN_PROSE = (
+    "Enriched path, when `loomground-mcp` is installed and running: call the\n"
+    "`privacy_scan` tool as:",
+)
+
+
+def _fenced_blocks(text: str) -> list[str]:
+    return _FENCE.findall(text)
+
+
+def _prose_outside_fences(text: str) -> str:
+    return _FENCE.sub("", text)
+
+
+def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_log_path():
+    """F4: the MCP tool's own default is `audit_log_path=None` (silent, same
+    as the library) - loomground_mcp/tools/applied.py:61-84, read read-only
+    from the installed package, not edited here.
+
+    Three ways this obligation can go quietly false again, each closed here:
+
+    1. The fenced `privacy_scan(...)` call itself drops `audit_log_path=`, or
+       keeps the keyword but stops pointing it at `privacy-shield audit-path`
+       (e.g. reverting to the unreachable `python -c` form, or a bare
+       placeholder nobody can act on).
+    2. A prose paragraph OUTSIDE any fence tells the agent something
+       different - up to and including the inverted instruction "Never pass
+       audit_log_path; leave it unset" - which a substring/keyword check
+       cannot distinguish from a paragraph that correctly requires it,
+       because both mention both words. Every non-fenced paragraph
+       mentioning `privacy_scan` must match the pinned allow-list exactly;
+       anything else fails, inverted or not.
+    3. The `privacy-shield audit-path` command named in the doc does not
+       actually print `audit_log_path()` - checked by running it for real.
     """
     body = _skill_md_body()
-    paragraphs = [p for p in body.split("\n\n") if "privacy_scan" in p]
-    assert paragraphs, "SKILL.md no longer documents calling privacy_scan at all"
-    undocumented = [p for p in paragraphs if "audit_log_path" not in p]
-    assert not undocumented, (
-        "a documented privacy_scan call does not mention audit_log_path, so "
-        "every_decision_written_to_the_audit_trail is false on that path:\n  "
-        + "\n  ---\n  ".join(undocumented)
+
+    # (1) Every fenced privacy_scan(...) call passes audit_log_path=
+    # pointing at `privacy-shield audit-path`.
+    calls = [b for b in _fenced_blocks(body) if "privacy_scan(" in b]
+    assert calls, "SKILL.md no longer documents a fenced privacy_scan(...) call"
+    for call in calls:
+        assert "audit_log_path=" in call, (
+            f"a documented privacy_scan call does not pass audit_log_path=:\n{call}"
+        )
+        match = re.search(r"audit_log_path=(\S.*?)(?:,\s*\w+=|\)\s*$)", call, re.DOTALL)
+        assert match, f"could not isolate the audit_log_path= value in:\n{call}"
+        assert "privacy-shield audit-path" in match.group(1), (
+            f"audit_log_path= is not sourced from `privacy-shield audit-path`:\n{call}"
+        )
+
+    # (2) Every OUTSIDE-fence paragraph mentioning privacy_scan is one of the
+    # pinned, allow-listed ones - not a keyword search.
+    prose = _prose_outside_fences(body)
+    paragraphs = [p.strip() for p in prose.split("\n\n") if "privacy_scan" in p]
+    unpinned = [p for p in paragraphs if p not in _ALLOWED_PRIVACY_SCAN_PROSE]
+    assert not unpinned, (
+        "a prose paragraph mentioning privacy_scan outside a fenced block is "
+        "not on the pinned allow-list (this catches an inverted instruction "
+        "a substring check would miss):\n  " + "\n  ---\n  ".join(unpinned)
+    )
+
+    # (3) `privacy-shield audit-path`, run for real, prints audit_log_path().
+    assert "privacy-shield audit-path" in body, (
+        "SKILL.md no longer names the `privacy-shield audit-path` command at all"
+    )
+    from privacy_shield import cli
+    from privacy_shield.audit_log import audit_log_path
+    import io
+    import contextlib
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["audit-path"])
+    assert code == 0
+    assert out.getvalue().strip() == str(audit_log_path())
+
+    # (4) The command SKILL.md tells the agent to run is actually permitted
+    # by its own allowed-tools grant.
+    allowed_tools = SKILL_MD.read_text(encoding="utf-8").split("---\n", 2)[1]
+    assert re.search(r"Bash\(privacy-shield:\*\)", allowed_tools), (
+        "SKILL.md documents running `privacy-shield audit-path` but its "
+        "allowed-tools grant no longer permits a Bash(privacy-shield:*) call"
     )
 
 
