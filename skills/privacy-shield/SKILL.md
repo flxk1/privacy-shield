@@ -73,10 +73,18 @@ links the repository's pipeline and external-enforcement notes.
 
 Enriched path, when `loomground-mcp` is installed and running: call the
 `privacy_scan` tool with raw text, the privacy mode, redaction mode,
-confidence floor and source classification. The result includes the clean
-overlay, span findings and egress verdict; only the overlay may be used for a
-subsequent external call. Without `loomground-mcp`, fall back to the primary
-path above — see `degrade_gracefully_without_optional_extras` below.
+confidence floor, source classification, and — same as the CLI's `--audit` —
+`audit_log_path` set to the standard user-state path, so this path's
+decisions are recorded too: obtain it with `python -c 'from
+privacy_shield.audit_log import audit_log_path; print(audit_log_path())'`
+(or run `privacy-shield` once with `--audit` on the same machine, which
+resolves and creates the same path). `privacy_scan` defaults
+`audit_log_path` to `None`, i.e. silent, exactly like the library; passing it
+is what keeps `every_decision_written_to_the_audit_trail` true of this path
+too. The result includes the clean overlay, span findings and egress
+verdict; only the overlay may be used for a subsequent external call.
+Without `loomground-mcp`, fall back to the primary path above — see
+`degrade_gracefully_without_optional_extras` below.
 
 ## Notes
 - The egress verdict is on SOURCE CLASSIFICATION (privacy mode + confidential /
