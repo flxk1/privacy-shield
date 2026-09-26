@@ -894,19 +894,24 @@ next round starts from this rather than rediscovering it:
   `::test_the_gate_sees_an_identifier_that_changed_width_on_the_way_out`,
   `::test_a_full_width_at_is_not_an_address_by_itself`,
   `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
+- **An address is read through combining marks and invisible characters.**
+  A local part in decomposed Unicode (NFD, as macOS file names and much
+  copied text are) is one local part: a combining mark continues it and is
+  dropped only to judge the address's shape. Invisible characters (Unicode
+  `Cf` - zero-width space, soft hyphen, word joiner) are read through, as in
+  a run, anywhere in the address. NFD `josé@…` and `erika<U+200B>@…` went out
+  whole, NFD `René.Müller＠…` kept `René.Mü`, and `eri<U+00AD>ka@…` kept
+  `eri`. The gate reads them the same way. Tested:
+  `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
+  `::test_the_gate_sees_an_address_with_marks_or_invisibles`,
+  `::test_the_gate_sees_a_decomposed_local_part_left_behind`,
+  `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
 - **Addresses not found, in any width.** An internationalised domain written
   in its own script (`erika@müller.de` rather than its punycode); a local part
-  in decomposed Unicode, since a combining mark ends it (NFD `josé@…` goes out
-  whole, NFD `René.Müller＠…` is claimed from after the last combining mark);
-  a zero-width space before the `@`, which hides the whole address, or a
-  zero-width space or soft hyphen inside a local part, which ends it there
-  (`eri<U+200B>ka@…` keeps `eri`); a local part in circled letters; an address
-  wrapped across a line. The gate shares these blind spots, and it
-  reports a left-behind local part only when the whole local part survives.
-  Pinned by
+  in circled letters; an address wrapped across a line. The gate shares these
+  blind spots, and it reports a left-behind local part only when the whole
+  local part survives. Pinned by
   `tests/test_leak_invariant.py::test_an_address_the_finder_cannot_read_is_a_documented_limit`,
-  `::test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark`,
-  `::test_an_invisible_character_in_a_local_part_ends_it`,
   `::test_the_gate_misses_a_partly_surviving_local_part`.
 - **Not found: an IBAN whose country code is in look-alike Cyrillic letters
   (`ДЕ89…`).** A country code is two Latin letters; `Д` is not one in any

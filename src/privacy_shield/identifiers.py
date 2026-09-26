@@ -329,6 +329,21 @@ def fold(value: str) -> str:
     return "".join(_email_char(char) for char in value)
 
 
+def _is_mark(char: str) -> bool:
+    """A combining mark: the second half of a decomposed letter."""
+    return unicodedata.category(char).startswith("M")
+
+
+def _bare(value: str) -> str:
+    """*value* without invisible characters and combining marks - the letters
+    an address is made of, for judging its shape. "jose\u0301" is "josé"
+    decomposed, as macOS file names and much copied text are, and the mark
+    ended the local part: the address went out whole."""
+    return "".join(
+        char for char in value if not (_is_transparent(char) or _is_mark(char))
+    )
+
+
 def _is_local_part_char(char: str) -> bool:
     if char in "._%+-":
         return True
@@ -392,7 +407,7 @@ RFC_EMAIL = re.compile(
 def email_ok(value: str) -> bool:
     if len(value) > 254:
         return False
-    read = fold(value).strip()
+    read = _bare(fold(value)).strip()
     if RFC_EMAIL.match(read):
         return True
     local, at, domain = read.partition("@")
@@ -759,13 +774,22 @@ def find_emails(text: str) -> List[Span]:
         return []
     # Searched on the folded text, which has the same length, so every offset
     # found there is an offset into *text*.
-    original, text = text, fold(text)
+    # Invisible characters are dropped first, as in a run: a zero-width space
+    # before the "@" hid the whole address, and a soft hyphen inside a local
+    # part cut it. `kept` maps the view back to *text*, so a claim still
+    # covers them. Combining marks stay, and continue a local part.
+    original = text
+    folded = fold(text)
+    kept = [index for index, char in enumerate(folded) if not _is_transparent(char)]
+    text = "".join(folded[index] for index in kept)
     dotted = text.translate(_IDNA_DOTS)
     spans: List[Span] = []
     claimed_to = 0
     for at in (index for index, char in enumerate(text) if char == "@"):
         left = at
-        while left > 0 and _is_local_part_char(text[left - 1]):
+        while left > 0 and (
+            _is_local_part_char(text[left - 1]) or _is_mark(text[left - 1])
+        ):
             left -= 1
         left = max(left, claimed_to)
         right = at + 1
@@ -790,9 +814,10 @@ def find_emails(text: str) -> List[Span]:
             domain = _DOMAIN_AFTER_AT.match(dotted, at + 1, right)
         if domain is None:
             continue
-        candidate = text[left:at + 1] + dotted[at + 1:domain.end()]
+        candidate = _bare(text[left:at + 1]) + dotted[at + 1:domain.end()]
         if not RFC_EMAIL.match(candidate):
             continue
-        spans.append((left, domain.end(), original[left:domain.end()]))
+        start, end = kept[left], kept[domain.end() - 1] + 1
+        spans.append((start, end, original[start:end]))
         claimed_to = domain.end()
     return spans

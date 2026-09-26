@@ -299,6 +299,16 @@ def _read(value: str) -> str:
     return "".join(out)
 
 
+def _letters(value: str) -> str:
+    """*value* without invisible (Cf) characters or combining marks (M*): an
+    address in decomposed Unicode, or with a zero-width space in it, is the
+    same address."""
+    return "".join(
+        char for char in value
+        if not unicodedata.category(char).startswith(("Cf", "M"))
+    )
+
+
 def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
     """Every RFC-shaped address, by trying every substring around each "@".
 
@@ -321,7 +331,7 @@ def _oracle_emails(text: str) -> "list[tuple[str, str, int, int]]":
         for view in (text, dotted):
             for begin in range(low, at):
                 for finish in range(high, at + 1, -1):
-                    candidate = view[begin:finish]
+                    candidate = _letters(view[begin:finish])
                     if len(candidate) <= 254 and _ORACLE_EMAIL_SHAPE.match(candidate):
                         if best is None or len(candidate) > len(best[0]):
                             best = (candidate, begin, finish)
@@ -526,7 +536,7 @@ def leaks_in(text: str, document) -> list[str]:
             )
 
     # Read as the finders read, so a full-width local part is still one.
-    read_overlay = _read(overlay)
+    read_overlay = _letters(_read(overlay))
     for kind, canonical, as_written in validated_identifiers(text):
         if canonical in overlay or as_written in overlay:
             leaks.append(f"validated {kind} survived whole in overlay")
@@ -1820,11 +1830,6 @@ def test_an_address_is_reported_as_it_was_written():
     "text",
     [
         pytest.param("Mail erika@m\u00fcller.de bitte", id="idn_domain"),
-        pytest.param(
-            "Mail " + unicodedata.normalize("NFD", "jos\u00e9@example.com") + " bitte",
-            id="decomposed_local_part",
-        ),
-        pytest.param("Mail erika\u200b@example.com bitte", id="zero_width_before_at"),
         pytest.param("Mail \u24d4\u24e1\u24d8\u24da\u24d0@example.com bitte", id="circled_local_part"),
         pytest.param("Mail erika\uff20\nexample.com bitte", id="wrapped_after_at"),
     ],
@@ -1839,24 +1844,55 @@ def test_an_address_the_finder_cannot_read_is_a_documented_limit(text):
     assert document.overlay == text and not leaks_in(text, document)
 
 
-def test_a_decomposed_local_part_is_claimed_from_its_last_combining_mark():
-    """docs/limits.md, "Addresses not found"."""
-    from privacy_shield import identifiers
-
-    address = unicodedata.normalize("NFD", "Ren\u00e9.M\u00fcller") + "\uff20kanzlei.de"
-    text = f"Mail {address}"
-    after_mark = text.rindex("\u0308") + 1
-    assert [(s, e) for s, e, _v in identifiers.find_emails(text)] == [(after_mark, len(text))]
+def _nfd(value: str) -> str:
+    return unicodedata.normalize("NFD", value)
 
 
-@pytest.mark.parametrize("invisible", ["\u200b", "\u00ad"], ids=["zero_width_space", "soft_hyphen"])
-def test_an_invisible_character_in_a_local_part_ends_it(invisible):
-    """docs/limits.md, "Addresses not found"."""
-    from privacy_shield import identifiers
+HIDDEN_ADDRESSES = [
+    pytest.param(_nfd("jos\u00e9@example.com"), id="decomposed_local_part"),
+    pytest.param(_nfd("Ren\u00e9.M\u00fcller") + "\uff20kanzlei.de", id="decomposed_with_full_width_at"),
+    pytest.param(_nfd("fran\u00e7ois") + "@example.fr", id="decomposed_cedilla"),
+    pytest.param("erika\u200b@example.com", id="zero_width_before_at"),
+    pytest.param("eri\u200bka@example.com", id="zero_width_in_local_part"),
+    pytest.param("eri\u00adka@example.com", id="soft_hyphen_in_local_part"),
+    pytest.param("erika@\u200bexample.com", id="zero_width_after_at"),
+    pytest.param("erika@exam\u00adple.com", id="soft_hyphen_in_domain"),
+    pytest.param("erika@example.\u2060com", id="word_joiner_before_tld"),
+]
 
-    text = f"Mail eri{invisible}ka@example.com"
-    start = text.index(invisible) + 1
-    assert [(s, e) for s, e, _v in identifiers.find_emails(text)] == [(start, len(text))]
+
+@pytest.mark.parametrize("address", HIDDEN_ADDRESSES)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_an_address_with_marks_or_invisibles_is_claimed_whole(address, mode):
+    """A combining mark ended a local part - NFD "josé@..." went out whole,
+    NFD "René.Müller＠..." kept "René.Mü" - and an invisible character ended
+    or hid one: "erika\u200b@..." went out whole, "eri\u00adka@..." kept
+    "eri". Marks now continue a local part and invisibles are read through,
+    as in a run."""
+    text = f"Mail {address} bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert [s.pii_type for s in document.spans] == ["email"], document.overlay
+    assert _PLACEHOLDER.sub("", document.overlay) == "Mail  bitte", document.overlay
+
+
+@pytest.mark.parametrize("address", HIDDEN_ADDRESSES)
+def test_the_gate_sees_an_address_with_marks_or_invisibles(address):
+    from types import SimpleNamespace
+
+    text = f"Mail {address} bitte"
+    assert any(kind == "email" for kind, _c, _w in validated_identifiers(text))
+    untouched = SimpleNamespace(egress_allowed=True, overlay=text, spans=[])
+    assert leaks_in(text, untouched)
+
+
+def test_the_gate_sees_a_decomposed_local_part_left_behind():
+    from types import SimpleNamespace
+
+    local = _nfd("Ren\u00e9.M\u00fcller")
+    text = f"Mail {local}@kanzlei.de"
+    kept = SimpleNamespace(egress_allowed=True, overlay=f"Mail {local}[EMAIL]", spans=[])
+    assert leaks_in(text, kept)
 
 
 def test_the_gate_misses_a_partly_surviving_local_part():
