@@ -118,8 +118,9 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   invisible characters are now read through anywhere in the address; a
   Latin letter with a diacritic reads as its base letter, a character NFKC
   reads as one ASCII letter or digit (a superscript, modifier or circled
-  letter) reads as that, and a Latin letter with neither (`ß`, `ø`) reads as
-  a letter in the address's shape; `email_ok` reads the same way. Two addresses run together are both claimed; the second's domain
+  letter) reads as that, and any other letter Latin by its name or its
+  compatibility form (`ß`, `ø`, `ᵊ`) reads as a letter in the address's
+  shape; `email_ok` reads the same way. Two addresses run together are both claimed; the second's domain
   used to go out. Tested:
   `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
   `::test_two_addresses_run_together_are_both_claimed`.

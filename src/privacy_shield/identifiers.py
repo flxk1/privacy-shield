@@ -362,7 +362,12 @@ def _address_char(char: str) -> Optional[str]:
         compat = unicodedata.normalize("NFKC", char)
         if len(compat) == 1 and compat.isascii() and compat.isalnum():
             return compat
-        if char.isalpha() and unicodedata.name(char, "").startswith("LATIN "):
+        # Judged on the compatibility form too: "ᵊ" is a MODIFIER LETTER by
+        # name, and NFKC reads it as the Latin schwa.
+        if char.isalpha() and any(
+            unicodedata.name(form, "").startswith("LATIN ")
+            for form in (char, compat) if len(form) == 1
+        ):
             return "x"
     return folded
 

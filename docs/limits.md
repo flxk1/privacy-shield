@@ -900,8 +900,8 @@ next round starts from this rather than rediscovering it:
   are not there, anywhere in the address; a Latin letter with a diacritic
   reads as its base letter; a character NFKC reads as one ASCII letter or
   digit (superscript `ⁱ`, modifier `ᵉ`, ordinal `ª`, circled `ⓔ`) reads as
-  that; and a Latin letter with none of these (`ß`, `ø`, `ł`, `æ`) reads as
-  a letter, since only the shape is judged and the claim is cut from the
+  that; and any other letter that is Latin by its name or its compatibility
+  form (`ß`, `ø`, `ł`, `æ`, modifier `ᵊ`) reads as a letter, since only the shape is judged and the claim is cut from the
   original. So an address in decomposed Unicode (NFD, as macOS file names and
   much copied text are) is one address, and so is a Latin-script
   internationalised domain in either normal form (`erika@müller.de`,
