@@ -409,9 +409,14 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   placeholders are not valid Python literals) and every keyword must be one
   of the real installed parameter names; `text` must be present; there must
   be exactly one call per fence and no `#` comment line in it;
-  `audit_log_path=` must be EXACTLY `<output of `privacy-shield
-  audit-path`>` (not merely contain that phrase — `None` fails);
-  `destination=`'s given example value must be a real entry of
+  `audit_log_path=` and `destination=` must EACH be EXACTLY their pinned
+  placeholder text — `<output of `privacy-shield audit-path`>` and
+  `<egress target, e.g. external_llm>` respectively (not merely containing
+  a phrase or an `e.g.` token: a wrapper like `<source classification, e.g.
+  external_llm>` has a real example but still tells the agent the value IS
+  a classification, so it must fail too — three such variants are pinned as
+  regression cases); `destination=`'s pinned example is additionally
+  checked against a real entry of
   `privacy_shield.gate._EXTERNAL_DESTINATIONS`; when `loomground_mcp` is
   importable the same keywords are additionally bound against the real
   function with `inspect.signature(...).bind_partial`; the one prose
@@ -421,14 +426,17 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   verbatim; `privacy-shield audit-path` is run for real and checked against
   `audit_log_path()`; the `allowed-tools` grant is parsed structurally with
   `yaml.safe_load` (not a text search, which a commented-out copy of the
-  real grant would also satisfy) and must contain an entry starting
-  `Bash(privacy-shield`. Free-text prose elsewhere in the document that
-  contradicts this without naming the pinned paragraphs is out of this
-  test's reach — noted as such in its own docstring, not silently assumed
-  covered.
-  `::test_scan_blocks_a_berufsgeheimnis_text_bound_for_an_external_destination`
-  pins the gate fact the fix relies on: a real external `destination`
-  still blocks a privileged document.
+  real grant would also satisfy) and must have an entry EXACTLY equal to
+  `Bash(privacy-shield:*)` — a look-alike such as
+  `Bash(privacy-shield-legacy:*)` does not authorise the command. Free-text
+  prose elsewhere in the document that contradicts this without naming the
+  pinned paragraphs is out of this test's reach — noted as such in its own
+  docstring, not silently assumed covered.
+  `::test_scan_blocks_a_confidential_text_bound_for_an_external_destination`
+  pins the gate fact the fix relies on, isolated to Rule 2 specifically: a
+  text carrying no Art. 9 terms at all (asserted directly against
+  `PrivacyGate.check_art9`, so Rule 3 cannot be what blocks it) still gets
+  blocked from a real external destination on classification alone.
 
 - **Stale claims of the old always-on default, across docs and the skill,
   corrected**: `README.md`, `llms.txt`, `docs/cli.md`, `docs/pipeline.md`,
