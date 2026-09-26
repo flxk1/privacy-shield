@@ -302,6 +302,9 @@ def _read(value: str) -> str:
                     unicodedata.category(part).startswith("M") for part in parts[1:]
                 ):
                     folded = parts[0]
+                elif char.isalpha() and unicodedata.name(char, "").startswith("LATIN "):
+                    # No base letter - "ß", "ø" - but a Latin letter all the same.
+                    folded = "x"
         out.append(folded or char)
     return "".join(out)
 
@@ -1871,6 +1874,12 @@ HIDDEN_ADDRESSES = [
     pytest.param(_nfd("erika@m\u00fcller.de"), id="decomposed_idn_domain"),
     pytest.param("erika@m\u00fcller.de", id="latin_idn_domain"),
     pytest.param("erika@caf\u00e9.de", id="latin_idn_domain_acute"),
+    pytest.param("m.wei\u00df@stra\u00dfe.de", id="sharp_s"),
+    pytest.param("s\u00f8ren@k\u00f8b.dk", id="o_stroke"),
+    pytest.param("erika@\u0142\u00f3d\u017a.pl", id="l_stroke"),
+    pytest.param("erika@l\u00e6ge.dk", id="ae_ligature"),
+    pytest.param("erika@\u0111a.vn", id="d_stroke"),
+    pytest.param("erika@\u0131stanbul.com.tr", id="dotless_i"),
 ]
 
 

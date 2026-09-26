@@ -341,7 +341,10 @@ def _address_char(char: str) -> Optional[str]:
     "josé" decomposed, as macOS file names and much copied text are, and
     "erika\u200b@" is "erika@". Each ended the address and it went out
     whole. A Latin letter with a diacritic reads as its base letter, so
-    "müller.de" is a domain in either normal form. The rest is `_email_char`.
+    "müller.de" is a domain in either normal form; one with no base letter
+    ("ß", "ø", "ł") reads as a letter, since only the address's shape is
+    judged here and the claim is cut from the original. The rest is
+    `_email_char`.
     """
     if _is_transparent(char) or _is_mark(char):
         return None
@@ -355,6 +358,8 @@ def _address_char(char: str) -> Optional[str]:
             and all(_is_mark(part) for part in parts[1:])
         ):
             return parts[0]
+        if char.isalpha() and unicodedata.name(char, "").startswith("LATIN "):
+            return "x"
     return folded
 
 

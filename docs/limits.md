@@ -898,12 +898,14 @@ next round starts from this rather than rediscovering it:
   Invisible characters (Unicode `Cf` - zero-width space, soft hyphen, word
   joiner, bidi controls) and combining marks (`M*`, spacing marks included)
   are not there, anywhere in the address; a Latin letter with a diacritic
-  reads as its base letter. So an address in decomposed Unicode (NFD, as
-  macOS file names and much copied text are) is one address, and so is a
-  Latin-script internationalised domain in either normal form
-  (`erika@müller.de`). NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
+  reads as its base letter, and one with none (`ß`, `ø`, `ł`, `æ`) reads as
+  a letter, since only the shape is judged and the claim is cut from the
+  original. So an address in decomposed Unicode (NFD, as macOS file names and
+  much copied text are) is one address, and so is a Latin-script
+  internationalised domain in either normal form (`erika@müller.de`,
+  `m.weiß@straße.de`). NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
   `René.Müller＠…` kept `René.Mü`, `eri<U+00AD>ka@…` kept `eri`, and
-  `erika@müller.de` was not found. The gate reads addresses the same way.
+  `erika@müller.de` and `erika@straße.de` were not found. The gate reads addresses the same way.
   Tested:
   `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
   `::test_the_gate_sees_an_address_with_marks_or_invisibles`,
