@@ -2,6 +2,7 @@ import os
 import pwd
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -82,7 +83,13 @@ def _target_paths(event: str, args: tuple) -> list:
     if event == "os.truncate":
         return [args[0]] if args else []
     if event == "sqlite3.connect":
-        return [args[0]] if args else []
+        if not args:
+            return []
+        db = args[0]
+        if isinstance(db, str) and db.startswith("file:"):
+            # sqlite3 URI form (uri=True): strip scheme + query, unquote.
+            return [unquote(urlparse(db).path)]
+        return [db]
     if event.startswith("shutil."):
         return [a for a in args if isinstance(a, (str, bytes, os.PathLike))]
     return []

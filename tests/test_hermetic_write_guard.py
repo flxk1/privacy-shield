@@ -8,6 +8,8 @@ import os
 import shutil
 from pathlib import Path
 
+import pytest
+
 from conftest import GUARD_HITS
 
 
@@ -93,18 +95,29 @@ def test_guard_refuses_remove_under_a_fake_root(guarded_fake_root):
 
 
 def test_guard_refuses_shutil_operations_under_a_fake_root(guarded_fake_root, tmp_path):
+    # shutil.copymode's own write is a bare os.chmod (path, mode, dir_fd),
+    # an event this guard does not cover on its own - only the "shutil.*"
+    # catch-all branch refuses it, unlike copyfile/move whose underlying
+    # open()/rename() calls would already be caught by other branches
+    # regardless of whether the shutil branch exists at all.
+    from conftest import _REAL_STATE_ROOTS
+
     outside = tmp_path / "outside.txt"
     outside.write_text("x", encoding="utf-8")
-    dest = guarded_fake_root / "copied.txt"
+    dest = guarded_fake_root / "already-exists.txt"
+    _REAL_STATE_ROOTS.remove(str(guarded_fake_root))
+    try:
+        dest.write_text("y", encoding="utf-8")
+    finally:
+        _REAL_STATE_ROOTS.append(str(guarded_fake_root))
 
     assert not GUARD_HITS
     raised = False
     try:
-        shutil.copyfile(outside, dest)
+        shutil.copymode(outside, dest)
     except PermissionError:
         raised = True
-    assert raised
-    assert not dest.exists()
+    assert raised, "shutil.copymode under the fake root was not refused"
     assert GUARD_HITS
     GUARD_HITS.clear()
 
@@ -163,6 +176,97 @@ def test_guard_refuses_sqlite3_connect_under_a_fake_root(guarded_fake_root):
     assert not db_path.exists()
     assert GUARD_HITS
     GUARD_HITS.clear()
+
+
+def test_guard_refuses_sqlite3_connect_uri_form_under_a_fake_root(guarded_fake_root):
+    """F2: sqlite3.connect(uri=True) passes a "file:<path>?query" string as
+    the sole arg - naive matching on that whole string against the root
+    never matches (the "file:" scheme prefixes it), letting the URI form
+    escape a check the plain-path form catches.
+    """
+    import sqlite3
+
+    db_path = guarded_fake_root / "uri-state.sqlite3"
+    uri = f"file:{db_path}?mode=rwc"
+    assert not GUARD_HITS
+    raised = False
+    try:
+        sqlite3.connect(uri, uri=True)
+    except PermissionError:
+        raised = True
+    assert raised, "a sqlite3 URI-form connect under the fake root was not refused"
+    assert not db_path.exists()
+    assert GUARD_HITS
+    GUARD_HITS.clear()
+
+
+def test_guard_refuses_a_write_via_a_symlink_alias_of_the_fake_root(guarded_fake_root, tmp_path):
+    alias = tmp_path / "alias-to-fake-root"
+    os.symlink(guarded_fake_root, alias)  # the symlink itself lives OUTSIDE the root
+    probe = alias / "through-the-alias.jsonl"
+
+    assert not GUARD_HITS
+    raised = False
+    try:
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("should never land\n")
+    except PermissionError:
+        raised = True
+    assert raised, "a write through a symlink alias of the fake root was not refused"
+    assert not (guarded_fake_root / "through-the-alias.jsonl").exists()
+    assert GUARD_HITS
+    GUARD_HITS.clear()
+
+
+def _fs_is_case_insensitive(scratch_dir: Path) -> bool:
+    probe = scratch_dir / "CaseProbe.tmp"
+    probe.write_text("x", encoding="utf-8")
+    try:
+        return (scratch_dir / "caseprobe.tmp").exists()
+    finally:
+        probe.unlink()
+
+
+def test_guard_refuses_a_case_variant_of_the_fake_root_path(guarded_fake_root, tmp_path):
+    if not _fs_is_case_insensitive(tmp_path):
+        pytest.skip("this filesystem is case-sensitive; a case variant is not an alias here")
+
+    variant_root = str(guarded_fake_root).swapcase()
+    probe = f"{variant_root}/case-variant-probe.jsonl"
+
+    assert not GUARD_HITS
+    raised = False
+    try:
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("should never land\n")
+    except PermissionError:
+        raised = True
+    assert raised, "a case-variant alias of the fake root was not refused"
+    assert GUARD_HITS
+    GUARD_HITS.clear()
+
+
+def test_guard_refuses_a_bytes_path_under_the_fake_root_and_leaves_an_unrelated_bytes_path_alone(
+    guarded_fake_root, tmp_path,
+):
+    guarded_probe = os.fsencode(str(guarded_fake_root / "bytes-probe.jsonl"))
+    assert not GUARD_HITS
+    raised = False
+    try:
+        with open(guarded_probe, "wb") as fh:
+            fh.write(b"should never land")
+    except PermissionError:
+        raised = True
+    assert raised, "a bytes path under the fake root was not refused"
+    assert GUARD_HITS
+    GUARD_HITS.clear()
+
+    # An unrelated bytes path elsewhere must be entirely unaffected.
+    elsewhere = tmp_path / "unrelated.bin"
+    with open(os.fsencode(str(elsewhere)), "wb") as fh:
+        fh.write(b"fine")
+    assert elsewhere.read_bytes() == b"fine"
+    assert not GUARD_HITS
 
 
 def test_pytester_a_stale_hit_from_before_any_test_fails_the_first_test(pytester):
@@ -251,3 +355,50 @@ def test_inner_swallows_the_permission_error(guarded_fake_root):
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(["*blocked write(s)*during this test*"])
     assert result.ret != 0
+
+
+def test_pytester_a_hit_after_the_last_test_fails_the_session(pytester):
+    """F1: a hit recorded after the LAST test's own per-test check has
+    already passed (e.g. during session-level teardown) must still fail the
+    overall run - this is what pytest_sessionfinish is for, not the
+    per-test fixture.
+    """
+    real_conftest_path = str(Path(__file__).resolve().parent / "conftest.py")
+
+    pytester.makeconftest(f"""
+import importlib.util
+import pytest
+
+_spec = importlib.util.spec_from_file_location(
+    "_real_outer_conftest_for_pytester_test4", {real_conftest_path!r}
+)
+_real = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_real)
+
+GUARD_HITS = _real.GUARD_HITS
+_REAL_STATE_ROOTS = _real._REAL_STATE_ROOTS
+_fail_on_real_state_writes = _real._fail_on_real_state_writes
+_isolated_user_state = _real._isolated_user_state
+guarded_fake_root = _real.guarded_fake_root
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _real.pytest_sessionfinish(session, exitstatus)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _append_a_hit_after_every_test_is_done():
+    yield
+    # Runs at session teardown, after the one real test below (and its own
+    # per-test check) already finished cleanly.
+    GUARD_HITS.append(("open", "/simulated/after-the-last-test.jsonl"))
+""")
+    pytester.makepyfile(
+        test_inner_after="""
+def test_a_clean_test_that_never_writes_anything():
+    assert 1 == 1
+"""
+    )
+    result = pytester.runpytest_inprocess("-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1)  # the one real test itself passed cleanly
+    assert result.ret != 0, "a hit recorded after the last test did not fail the session"
