@@ -135,6 +135,40 @@ def test_scan_writes_nothing_without_audit_log_path(pii_folder, tmp_path, temp_a
     assert set(pii_folder.rglob("*")) - before_folder == set()
 
 
+def test_scan_never_escalates_to_the_global_breach_detector(monkeypatch):
+    import privacy_shield.breach as breach_mod
+
+    calls = []
+    monkeypatch.setattr(
+        breach_mod.breach_detector, "detect_anomaly",
+        lambda **kw: calls.append(kw) or None,
+    )
+    # Past BreachDetector's own real escalation threshold (5 in 300s), to
+    # prove this isn't merely "too few blocks to have escalated yet".
+    for _ in range(6):
+        report = scan(
+            "streng vertraulich board minutes",
+            mode=PrivacyMode.STANDARD,
+            destination="external_llm",
+        )
+        assert report.documents[0].egress_allowed is False
+    assert calls == []
+
+
+def test_scan_env_var_opts_in_with_no_audit_log_path_argument(tmp_path, monkeypatch):
+    env_audit = tmp_path / "env-audit.jsonl"
+    monkeypatch.setenv("PRIVACY_SHIELD_AUDIT_LOG", str(env_audit))
+    report = scan("contact jane@example.org for details", mode=PrivacyMode.STANDARD)
+    assert report.document_count == 1
+    events = [
+        json.loads(line)
+        for line in env_audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    decisions = [e for e in events if e.get("event") == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value]
+    assert len(decisions) == 1
+
+
 def test_scan_raw_text_produces_overlay(temp_audit):
     report = scan(f"contact {FAKE_EMAIL} for details", mode=PrivacyMode.STANDARD)
     assert report.document_count == 1
@@ -232,6 +266,39 @@ def test_cli_scan_writes_overlays_and_exits_zero(pii_folder, tmp_path, temp_audi
 def test_cli_local_only_exits_two(pii_folder, temp_audit):
     code = cli.main(["scan", str(pii_folder), "--mode", "LOCAL_ONLY"])
     assert code == 2  # blocked egress -> non-zero
+
+
+def test_cli_audit_flag_records_to_the_standard_path(tmp_path):
+    from privacy_shield.audit_log import audit_log_path
+
+    code = cli.main(["scan", "hello there", "--text", "--audit"])
+    assert code == 0
+    standard_path = audit_log_path()
+    assert tmp_path in standard_path.parents  # conftest redirects HOME to tmp_path
+    assert standard_path.is_file()
+    events = [
+        json.loads(line)
+        for line in standard_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(e.get("event") == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value for e in events)
+
+
+def test_cli_without_audit_or_audit_log_writes_nothing(tmp_path):
+    before = set(tmp_path.rglob("*"))
+    code = cli.main(["scan", "hello there", "--text"])
+    assert code == 0
+    assert set(tmp_path.rglob("*")) - before == set()
+
+
+def test_cli_audit_log_wins_over_audit_when_both_given(tmp_path):
+    from privacy_shield.audit_log import audit_log_path
+
+    explicit = tmp_path / "explicit-audit.jsonl"
+    code = cli.main(["scan", "hello there", "--text", "--audit", "--audit-log", str(explicit)])
+    assert code == 0
+    assert explicit.is_file()
+    assert not audit_log_path().exists()  # --audit was overridden, not additive
 
 
 def test_cli_human_output_names_the_cause_of_a_non_document_block(tmp_path, capsys):

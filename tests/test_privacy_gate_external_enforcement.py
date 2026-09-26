@@ -267,6 +267,31 @@ def test_env_var_is_itself_opt_in_to_the_standard_path(tmp_path, monkeypatch) ->
     assert len(events) == 1
 
 
+def test_env_var_is_resolved_per_call_on_the_preexisting_singleton(tmp_path, monkeypatch) -> None:
+    from privacy_shield.gate import privacy_gate
+
+    # The module singleton was constructed at import time, long before this
+    # test's env var exists. No configure_audit() call either.
+    first = tmp_path / "first.jsonl"
+    monkeypatch.setenv("PRIVACY_SHIELD_AUDIT_LOG", str(first))
+    privacy_gate.check({"text": "hello there"}, destination="external_llm")
+    assert len(_read_jsonl(first)) == 1
+
+    # Point the env var somewhere else: the singleton follows, live, with no
+    # reconfiguration call of any kind.
+    second = tmp_path / "second.jsonl"
+    monkeypatch.setenv("PRIVACY_SHIELD_AUDIT_LOG", str(second))
+    privacy_gate.check({"text": "hello again"}, destination="external_llm")
+    assert len(_read_jsonl(first)) == 1  # unchanged
+    assert len(_read_jsonl(second)) == 1
+
+    # Unset it entirely: back to writing nothing, still with no reconfigure.
+    monkeypatch.delenv("PRIVACY_SHIELD_AUDIT_LOG")
+    privacy_gate.check({"text": "hello a third time"}, destination="external_llm")
+    assert len(_read_jsonl(first)) == 1
+    assert len(_read_jsonl(second)) == 1
+
+
 def test_configure_audit_turns_on_recording_for_an_existing_gate(tmp_path) -> None:
     audit_file = tmp_path / "audit.jsonl"
     gate = PrivacyGate()

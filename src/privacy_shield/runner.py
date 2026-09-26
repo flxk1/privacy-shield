@@ -610,7 +610,9 @@ def scan(
     guard decides — on the source classification — whether the (overlaid) payload
     may leave for *destination*. Only when it may does the clean overlay leave.
     Nothing is written to disk by default; pass ``audit_log_path`` to record
-    every decision to that path.
+    every decision to that path, or set ``PRIVACY_SHIELD_AUDIT_LOG`` to opt in
+    to the standard user-state path with no argument at all (the gate treats
+    the env var itself as the opt-in — see :class:`privacy_shield.gate.PrivacyGate`).
 
     The result carries, per document, the clean overlay, the per-span findings,
     and the egress verdict; and, in aggregate, ``all_allowed``.
