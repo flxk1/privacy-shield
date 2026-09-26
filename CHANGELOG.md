@@ -110,7 +110,7 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 ### Fixed
 
 - **An e-mail address in decomposed Unicode, with an invisible character in
-  it, or with a Latin-script internationalised domain is detected.** A
+  it, or with an internationalised domain in Latin letters is detected.** A
   combining mark or a `Cf` character ended the address: NFD
   `josé@example.com` and `erika<U+200B>@example.com` went out whole with
   pii_detected False, and NFD `René.Müller＠…` kept `René.Mü`;

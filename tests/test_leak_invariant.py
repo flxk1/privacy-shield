@@ -1846,6 +1846,7 @@ def test_an_address_is_reported_as_it_was_written():
     "text",
     [
         pytest.param("Mail erika@\u4f8b\u3048.jp bitte", id="non_latin_idn_domain"),
+        pytest.param("Mail erika@\u214elag.de bitte", id="latin_letter_by_script_only"),
         pytest.param("Mail \u202emoc.elpmaxe@akire\u202c bitte", id="right_to_left_override"),
         pytest.param("Mail erika\uff20\nexample.com bitte", id="wrapped_after_at"),
     ],

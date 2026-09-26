@@ -901,11 +901,14 @@ next round starts from this rather than rediscovering it:
   reads as its base letter; a character NFKC reads as one ASCII letter or
   digit (superscript `ⁱ`, modifier `ᵉ`, ordinal `ª`, circled `ⓔ`) reads as
   that; and any other letter that is Latin by its name or its compatibility
-  form (`ß`, `ø`, `ł`, `æ`, modifier `ᵊ`) reads as a letter, since only the shape is judged and the claim is cut from the
-  original. So an address in decomposed Unicode (NFD, as macOS file names and
-  much copied text are) is one address, and so is a Latin-script
-  internationalised domain in either normal form (`erika@müller.de`,
-  `m.weiß@straße.de`). NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
+  form (`ß`, `ø`, `ł`, `æ`, modifier `ᵊ`) reads as a letter, since only the
+  shape is judged and the claim is cut from the original. So an address in
+  decomposed Unicode (NFD, as macOS file names and much copied text are) is
+  one address, and so is an internationalised domain whose letters are Latin
+  by name or compatibility form, in either normal form (`erika@müller.de`,
+  `m.weiß@straße.de`). The standard library has no Unicode Script property,
+  so seven Latin-script letters that are neither are not read as letters -
+  see "Addresses not found". NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
   `René.Müller＠…` kept `René.Mü`, `eri<U+00AD>ka@…` kept `eri`, and
   `erika@müller.de` and `erika@straße.de` were not found. The gate reads addresses the same way.
   Tested:
@@ -926,7 +929,9 @@ next round starts from this rather than rediscovering it:
   some CJK web copy) pays, as a glued word already does. Pinned by
   `tests/test_leak_invariant.py::test_a_word_before_a_zero_width_space_goes_with_the_address`.
 - **Addresses not found, in any width.** An internationalised domain in a
-  non-Latin script (`erika@例え.jp` rather than its punycode); an address
+  non-Latin script (`erika@例え.jp` rather than its punycode), or one using
+  one of the seven Latin-script letters Latin neither by name nor by
+  compatibility form (`ᴯ ᴻ ᵎ 𐞀 Ⅎ ⅎ Ↄ`, as in `erika@ⅎlag.de`); an address
   wrapped across a line; an address written
   backwards under a right-to-left override. The gate shares these
   blind spots, and it reports a left-behind local part only when the whole
