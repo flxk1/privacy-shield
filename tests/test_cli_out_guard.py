@@ -224,7 +224,12 @@ def test_a_long_non_ascii_name_the_filesystem_accepts_is_written(tmp_path, capsy
     folder = tmp_path / "jp"
     folder.mkdir()
     source = folder / ("日本語の長いファイル名" * 8 + ".txt")
-    source.write_text("Kontakt erika@example.org\n", encoding="utf-8")
+    try:
+        source.write_text("Kontakt erika@example.org\n", encoding="utf-8")
+    except OSError as exc:
+        if exc.errno != errno.ENAMETOOLONG:
+            raise
+        pytest.skip("this filesystem limits names by bytes (ext4), not characters")
     name = _overlay_of(tmp_path, source).name
     assert len(name) < 255 < len(os.fsencode(name))
     out = tmp_path / "out"
