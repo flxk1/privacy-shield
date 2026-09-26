@@ -339,6 +339,31 @@ def _documented_invocation_flags() -> list[str]:
     return match.group(1).split()
 
 
+def _skill_md_body() -> str:
+    """SKILL.md's body, past the frontmatter: the allowed-tools line names
+    `privacy_scan` without describing a call and must not count as one."""
+    return SKILL_MD.read_text(encoding="utf-8").split("---\n", 2)[2]
+
+
+def test_every_documented_privacy_scan_call_passes_audit_log_path():
+    """F4: the MCP tool's own default is `audit_log_path=None` (silent,
+    same as the library) - loomground_mcp/tools/applied.py:61-84, read
+    read-only from the installed package. Any prose paragraph that documents
+    calling `privacy_scan` must name `audit_log_path` in the same paragraph,
+    or that documented path is silently false of
+    every_decision_written_to_the_audit_trail.
+    """
+    body = _skill_md_body()
+    paragraphs = [p for p in body.split("\n\n") if "privacy_scan" in p]
+    assert paragraphs, "SKILL.md no longer documents calling privacy_scan at all"
+    undocumented = [p for p in paragraphs if "audit_log_path" not in p]
+    assert not undocumented, (
+        "a documented privacy_scan call does not mention audit_log_path, so "
+        "every_decision_written_to_the_audit_trail is false on that path:\n  "
+        + "\n  ---\n  ".join(undocumented)
+    )
+
+
 def test_skill_md_documents_an_audit_opt_in_invocation():
     flags = _documented_invocation_flags()
     assert "--audit" in flags or "--audit-log" in flags, (
@@ -348,9 +373,16 @@ def test_skill_md_documents_an_audit_opt_in_invocation():
     )
 
 
-def test_the_documented_invocation_actually_writes_the_audit_trail(tmp_path):
+def test_the_documented_invocation_actually_writes_the_audit_trail(tmp_path, caplog):
+    """F3: shield.py's own write used to fail silently into a logged error on
+    a fresh HOME (no parent dir yet) - is_file() alone did not catch that the
+    shield's own entry was lost while the gate's still landed. Pinned here on
+    the exact invocation SKILL.md documents, not just any scan().
+    """
+    import json as json_mod
+
     from privacy_shield import cli
-    from privacy_shield.audit_log import audit_log_path
+    from privacy_shield.audit_log import AuditEvent, audit_log_path
 
     flags = _documented_invocation_flags()
     code = cli.main(["scan", "hello there", "--text", *flags])
@@ -364,3 +396,13 @@ def test_the_documented_invocation_actually_writes_the_audit_trail(tmp_path):
         f"the skill's documented invocation ({['scan', 'hello there', '--text', *flags]}) "
         f"did not write an audit record at {path}"
     )
+    events = [
+        json_mod.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    gate_events = [e for e in events if e.get("event") == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value]
+    shield_events = [e for e in events if "event" not in e]
+    assert len(gate_events) == 1, f"expected 1 gate entry, got {len(gate_events)}: {events}"
+    assert len(shield_events) == 1, f"expected 1 shield entry, got {len(shield_events)}: {events}"
+    assert not any("Audit logging failed" in r.message for r in caplog.records)

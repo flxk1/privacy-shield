@@ -284,6 +284,39 @@ def test_cli_audit_flag_records_to_the_standard_path(tmp_path):
     assert any(e.get("event") == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value for e in events)
 
 
+def test_cli_audit_on_a_fresh_home_writes_both_writers_for_every_document(tmp_path, caplog):
+    """F3: shield.py's own audit write opened audit_log_path in append mode
+    without creating its parent directory, and ran BEFORE the gate's
+    log_audit_event (which does mkdir). On a fresh HOME (no
+    .../logs/ yet) the shield's write failed silently into a logged error,
+    and the first document's shield entry never landed — the file read
+    [gate, shield, gate] for two documents instead of [shield, gate,
+    shield, gate].
+    """
+    folder = tmp_path / "two-docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("contact jane@example.org\n", encoding="utf-8")
+    (folder / "b.txt").write_text("iban DE89370400440532013000\n", encoding="utf-8")
+
+    code = cli.main(["scan", str(folder), "--audit"])
+    assert code == 0
+
+    from privacy_shield.audit_log import audit_log_path
+
+    standard_path = audit_log_path()
+    assert standard_path.is_file()
+    events = [
+        json.loads(line)
+        for line in standard_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    gate_events = [e for e in events if e.get("event") == AuditEvent.AI_PRIVACY_SHIELD_DECISION.value]
+    shield_events = [e for e in events if "event" not in e]
+    assert len(gate_events) == 2, f"expected 2 gate entries, got {len(gate_events)}: {events}"
+    assert len(shield_events) == 2, f"expected 2 shield entries, got {len(shield_events)}: {events}"
+    assert not any("Audit logging failed" in r.message for r in caplog.records)
+
+
 def test_cli_without_audit_or_audit_log_writes_nothing(tmp_path):
     before = set(tmp_path.rglob("*"))
     code = cli.main(["scan", "hello there", "--text"])
