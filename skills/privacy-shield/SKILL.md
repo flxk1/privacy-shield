@@ -75,16 +75,23 @@ Enriched path, when `loomground-mcp` is installed and running: call the
 `privacy_scan` tool as:
 
 ```
-privacy_scan(target=<text or path>, audit_log_path=<output of `privacy-shield audit-path`>, mode=<privacy mode>, redaction_mode=<redaction mode>, min_confidence=<confidence floor>, destination=<source classification>)
+privacy_scan(text=<text>, destination=<egress target, e.g. external_llm>, audit_log_path=<output of `privacy-shield audit-path`>, mode=<privacy mode>, redaction_mode=<redaction mode>, min_confidence=<confidence floor>)
 ```
 
 Run `privacy-shield audit-path` first — permitted by `Bash(privacy-shield:*)`,
 prints the standard user-state audit path (honouring
 `PRIVACY_SHIELD_AUDIT_LOG`) and writes nothing — for the `audit_log_path`
-value above. The result includes the clean overlay, span findings and
-egress verdict; only the overlay may be used for a subsequent external call.
-Without `loomground-mcp`, fall back to the primary path above — see
-`degrade_gracefully_without_optional_extras` below.
+value above. `text` is the only input this tool accepts, forced to raw text:
+a file or folder goes through the CLI instead
+(`privacy-shield scan <path> --audit`), never through this call. `destination`
+is the EGRESS TARGET (`external_llm`, `openai`, `datev`, ...), never a
+classification: the gate computes the source classification from `text`
+itself and blocks or allows on it, so a non-external value there — passing a
+classification word instead of a real destination — skips every block rule
+and clears data that should have been refused. The result includes the clean
+overlay, span findings and egress verdict; only the overlay may be used for a
+subsequent external call. Without `loomground-mcp`, fall back to the primary
+path above — see `degrade_gracefully_without_optional_extras` below.
 
 ## Notes
 - The egress verdict is on SOURCE CLASSIFICATION (privacy mode + confidential /
