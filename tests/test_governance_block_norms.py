@@ -445,6 +445,108 @@ def _parse_call(call_source: str) -> tuple[str, dict[str, str]]:
     return name, kwargs
 
 
+def _assert_fenced_calls_pass_audit_and_destination(body: str) -> None:
+    """Checks 1-3 of the test below, factored out so the parametrized
+    mutation test can run the SAME check against a doctored copy of the
+    real SKILL.md text, rather than a re-implementation that could drift
+    from what the real test actually enforces."""
+    from privacy_shield.gate import _EXTERNAL_DESTINATIONS
+
+    fences_with_call = [b for b in _fenced_blocks(body) if "privacy_scan(" in b]
+    assert fences_with_call, "SKILL.md no longer documents a fenced privacy_scan(...) call"
+    for fence in fences_with_call:
+        assert fence.count("privacy_scan(") == 1, (
+            f"more than one privacy_scan( call in one fence:\n{fence}"
+        )
+        assert "#" not in fence, f"a comment line in the fenced call:\n{fence}"
+
+    for fence in fences_with_call:
+        name, kwargs = _parse_call(fence.strip())
+        assert name == "privacy_scan", f"unexpected call name {name!r} in:\n{fence}"
+
+        unknown = set(kwargs) - _PRIVACY_SCAN_PARAMS
+        assert not unknown, (
+            f"keyword(s) {unknown} are not real privacy_scan parameters "
+            f"({sorted(_PRIVACY_SCAN_PARAMS)}):\n{fence}"
+        )
+        assert "text" in kwargs, (
+            f"privacy_scan's only required parameter is `text` (there is no "
+            f"`target`), missing from:\n{fence}"
+        )
+
+        assert kwargs.get("audit_log_path") == _AUDIT_LOG_PATH_PLACEHOLDER, (
+            f"audit_log_path= is not exactly {_AUDIT_LOG_PATH_PLACEHOLDER!r} "
+            f"(got {kwargs.get('audit_log_path')!r}) in:\n{fence}"
+        )
+
+        # Pinned exactly, not merely "has an e.g. token somewhere": a wrapper
+        # like "<source classification, e.g. external_llm>" has a real
+        # example but still tells the agent the value IS a classification.
+        assert kwargs.get("destination") == _DESTINATION_PLACEHOLDER, (
+            f"destination= is not exactly {_DESTINATION_PLACEHOLDER!r} "
+            f"(got {kwargs.get('destination')!r}) in:\n{fence}"
+        )
+        example = re.search(r"e\.g\.\s*([A-Za-z0-9_]+)", kwargs["destination"])
+        assert example, (
+            f"destination= gives no `e.g. <value>` example to check against "
+            f"the gate's real external destinations:\n{fence}"
+        )
+        assert example.group(1) in _EXTERNAL_DESTINATIONS, (
+            f"destination='s example value {example.group(1)!r} is not a real "
+            f"external destination ({sorted(_EXTERNAL_DESTINATIONS)}) - a "
+            f"classification word there disables every block rule:\n{fence}"
+        )
+
+        # (3) Bind against the REAL installed signature too, when available.
+        try:
+            import loomground_mcp.tools.applied as applied
+        except ImportError:
+            applied = None
+        if applied is not None:
+            import inspect
+
+            sig = inspect.signature(applied.privacy_scan)
+            sig.bind_partial(**{k: v for k, v in kwargs.items()})
+
+
+#: F1 says these are "pinned as regression cases" - this is where that
+#: pinning lives: each must make the destination check above FAIL when
+#: substituted for the real placeholder in the real SKILL.md text, and the
+#: unmodified real text (the control) must still pass.
+@pytest.mark.parametrize(
+    "destination_value, expect_pass",
+    [
+        ("<source classification, e.g. external_llm>", False),
+        ("<the classification (e.g. external_llm is wrong; pass confidential)>", False),
+        ("<e.g. external_llm or confidential>", False),
+        (None, True),  # control: the real, unmodified text
+    ],
+    ids=[
+        "reworded-source-classification",
+        "reworded-explicit-wrong-value",
+        "reworded-e-g-or-alternative",
+        "control-real-text-unmodified",
+    ],
+)
+def test_the_destination_check_rejects_reworded_placeholders_not_just_the_real_one(
+    destination_value, expect_pass,
+):
+    body = _skill_md_body()
+    if destination_value is None:
+        mutated = body
+    else:
+        needle = f"destination={_DESTINATION_PLACEHOLDER}"
+        replacement = f"destination={destination_value}"
+        mutated = body.replace(needle, replacement)
+        assert mutated != body, f"could not find {needle!r} in SKILL.md to mutate"
+
+    if expect_pass:
+        _assert_fenced_calls_pass_audit_and_destination(mutated)
+    else:
+        with pytest.raises(AssertionError):
+            _assert_fenced_calls_pass_audit_and_destination(mutated)
+
+
 def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_log_path():
     """F4: the MCP tool's own default is `audit_log_path=None` (silent, same
     as the library) - loomground_mcp/tools/applied.py:61-84, read read-only
@@ -500,65 +602,9 @@ def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_l
     """
     body = _skill_md_body()
 
-    # (1) Exactly one privacy_scan( call per fence, no comment lines.
-    fences_with_call = [b for b in _fenced_blocks(body) if "privacy_scan(" in b]
-    assert fences_with_call, "SKILL.md no longer documents a fenced privacy_scan(...) call"
-    for fence in fences_with_call:
-        assert fence.count("privacy_scan(") == 1, (
-            f"more than one privacy_scan( call in one fence:\n{fence}"
-        )
-        assert "#" not in fence, f"a comment line in the fenced call:\n{fence}"
-
-    # (2) Parse each call; check keywords, text, audit_log_path, destination.
-    from privacy_shield.gate import _EXTERNAL_DESTINATIONS
-
-    for fence in fences_with_call:
-        name, kwargs = _parse_call(fence.strip())
-        assert name == "privacy_scan", f"unexpected call name {name!r} in:\n{fence}"
-
-        unknown = set(kwargs) - _PRIVACY_SCAN_PARAMS
-        assert not unknown, (
-            f"keyword(s) {unknown} are not real privacy_scan parameters "
-            f"({sorted(_PRIVACY_SCAN_PARAMS)}):\n{fence}"
-        )
-        assert "text" in kwargs, (
-            f"privacy_scan's only required parameter is `text` (there is no "
-            f"`target`), missing from:\n{fence}"
-        )
-
-        assert kwargs.get("audit_log_path") == _AUDIT_LOG_PATH_PLACEHOLDER, (
-            f"audit_log_path= is not exactly {_AUDIT_LOG_PATH_PLACEHOLDER!r} "
-            f"(got {kwargs.get('audit_log_path')!r}) in:\n{fence}"
-        )
-
-        # Pinned exactly, not merely "has an e.g. token somewhere": a wrapper
-        # like "<source classification, e.g. external_llm>" has a real
-        # example but still tells the agent the value IS a classification.
-        assert kwargs.get("destination") == _DESTINATION_PLACEHOLDER, (
-            f"destination= is not exactly {_DESTINATION_PLACEHOLDER!r} "
-            f"(got {kwargs.get('destination')!r}) in:\n{fence}"
-        )
-        example = re.search(r"e\.g\.\s*([A-Za-z0-9_]+)", kwargs["destination"])
-        assert example, (
-            f"destination= gives no `e.g. <value>` example to check against "
-            f"the gate's real external destinations:\n{fence}"
-        )
-        assert example.group(1) in _EXTERNAL_DESTINATIONS, (
-            f"destination='s example value {example.group(1)!r} is not a real "
-            f"external destination ({sorted(_EXTERNAL_DESTINATIONS)}) - a "
-            f"classification word there disables every block rule:\n{fence}"
-        )
-
-        # (3) Bind against the REAL installed signature too, when available.
-        try:
-            import loomground_mcp.tools.applied as applied
-        except ImportError:
-            applied = None
-        if applied is not None:
-            import inspect
-
-            sig = inspect.signature(applied.privacy_scan)
-            sig.bind_partial(**{k: v for k, v in kwargs.items()})
+    # (1)-(3): fenced call shape, keywords, audit_log_path, destination, and
+    # (when available) a bind against the real installed signature.
+    _assert_fenced_calls_pass_audit_and_destination(body)
 
     # (4a) The one allowed prose sentence outside any fence.
     prose = _prose_outside_fences(body)

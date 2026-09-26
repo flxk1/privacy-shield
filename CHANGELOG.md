@@ -414,8 +414,11 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `<egress target, e.g. external_llm>` respectively (not merely containing
   a phrase or an `e.g.` token: a wrapper like `<source classification, e.g.
   external_llm>` has a real example but still tells the agent the value IS
-  a classification, so it must fail too — three such variants are pinned as
-  regression cases); `destination=`'s pinned example is additionally
+  a classification, so it must fail too — three such variants are run
+  through the same check and asserted to fail it, alongside a control case
+  of the real unmutated text asserted to pass, in
+  `::test_the_destination_check_rejects_reworded_placeholders_not_just_the_real_one`);
+  `destination=`'s pinned example is additionally
   checked against a real entry of
   `privacy_shield.gate._EXTERNAL_DESTINATIONS`; when `loomground_mcp` is
   importable the same keywords are additionally bound against the real
