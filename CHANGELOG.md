@@ -2,7 +2,13 @@
 <!-- Copyright 2026 flxk1 -->
 # Changelog
 
-## Unreleased
+## 2.2.0
+
+Behaviour change: `PrivacyGate.check()`, `scan()`, `require_privacy_check` and the
+CLI no longer write an audit record or a breach escalation unless the caller
+configures one (`audit_log=`, `breach_detector=`, `scan(audit_log_path=)`,
+`--audit` / `--audit-log`, or `PRIVACY_SHIELD_AUDIT_LOG`). Callers that relied on
+the implicit audit trail must opt in; the details are under Fixed below.
 
 The name layer becomes per-language: German is main's rules unchanged, English
 is a separate design, and the other twenty-two official EU languages are
