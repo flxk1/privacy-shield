@@ -67,7 +67,16 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
                                   [--audit-log PATH | --audit] [--no-recursive]
                                   [--all-files | --extensions .txt,.csv] [--text]
                                   [--include-original-values]
+
+privacy-shield audit-path
 ```
+
+`audit-path` prints `audit_log.audit_log_path()` (honouring
+`PRIVACY_SHIELD_AUDIT_LOG`, the same resolution `--audit` uses) and exits;
+it creates no file and no directory. It exists for a caller that needs the
+standard path without doing a scan — e.g. the `privacy-shield` skill's
+`loomground-mcp` enriched path, whose `privacy_scan` tool takes
+`audit_log_path` as an argument but has no CLI of its own to resolve it.
 
 `--json` reports each finding by type, position, confidence and layer, and
 **not** by its original text. `--include-original-values` adds `value` and

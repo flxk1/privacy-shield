@@ -395,6 +395,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 0 if report.all_allowed else 2
 
 
+def _cmd_audit_path(args: argparse.Namespace) -> int:
+    """Print the standard audit path and nothing else. No side effects: this
+    only resolves audit_log_path() (honouring PRIVACY_SHIELD_AUDIT_LOG, the
+    same resolution --audit uses); it creates no file and no directory."""
+    print(audit_log_path())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="privacy-shield",
@@ -504,6 +512,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--tenant-id", default="", help="Tenant id for the audit trail.")
     scan_p.add_argument("--user-id", default="", help="Acting user id for the audit trail.")
     scan_p.set_defaults(func=_cmd_scan)
+
+    audit_path_p = sub.add_parser(
+        "audit-path",
+        help="Print the standard audit path (audit_log.audit_log_path()) and exit. Writes nothing.",
+    )
+    audit_path_p.set_defaults(func=_cmd_audit_path)
+
     return parser
 
 

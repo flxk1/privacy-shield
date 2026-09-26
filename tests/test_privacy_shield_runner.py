@@ -334,6 +334,28 @@ def test_cli_audit_log_wins_over_audit_when_both_given(tmp_path):
     assert not audit_log_path().exists()  # --audit was overridden, not additive
 
 
+def test_cli_audit_path_prints_the_resolved_path_and_writes_nothing(tmp_path, capsys):
+    from privacy_shield.audit_log import audit_log_path
+
+    before = set(tmp_path.rglob("*"))
+    code = cli.main(["audit-path"])
+    assert code == 0
+    out = capsys.readouterr().out.strip()
+    assert out == str(audit_log_path())
+    assert set(tmp_path.rglob("*")) - before == set()
+
+
+def test_cli_audit_path_honours_the_env_var(tmp_path, monkeypatch, capsys):
+    env_path = tmp_path / "somewhere" / "audit.jsonl"
+    monkeypatch.setenv("PRIVACY_SHIELD_AUDIT_LOG", str(env_path))
+    code = cli.main(["audit-path"])
+    assert code == 0
+    out = capsys.readouterr().out.strip()
+    assert out == str(env_path)
+    assert not env_path.exists()
+    assert not env_path.parent.exists()
+
+
 def test_cli_human_output_names_the_cause_of_a_non_document_block(tmp_path, capsys):
     """Reproduced: one ordinary `.txt` file, one `.png` - no flags.
 
