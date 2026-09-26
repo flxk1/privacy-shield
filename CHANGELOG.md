@@ -256,13 +256,17 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   module `privacy_gate` singleton and `require_privacy_check` follow the same
   default and gain `PrivacyGate.configure_audit()` to opt in.
   `PRIVACY_SHIELD_AUDIT_LOG`, when set, is itself an explicit opt-in to that
-  path (deployment-level config), resolved per call so it applies to the
-  singleton too. `runner.scan(audit_log_path=...)` now actually routes the
-  gate's decisions there too — previously it reached only `PrivacyShield`'s
-  own per-document audit, while the gate silently wrote to the default path
-  regardless; with no `audit_log_path`, `scan()` now writes nothing anywhere,
-  and never escalates to the global breach detector. The `_decide_local`
-  docstring is corrected. Tested:
+  path (deployment-level config), **resolved per call, not once at
+  construction** — a later-`monkeypatch.setenv`/unset on an
+  already-constructed gate or the module singleton is honoured on the very
+  next call, with no reconfiguration of any kind. `runner.scan(audit_log_path=...)`
+  now actually routes the gate's decisions there too — previously it reached
+  only `PrivacyShield`'s own per-document audit, while the gate silently wrote
+  to the default path regardless; with no `audit_log_path` (and
+  `PRIVACY_SHIELD_AUDIT_LOG` unset), `scan()` now writes nothing anywhere, and
+  never escalates to the global breach detector, even past its own real
+  escalation threshold. `scan()`'s docstring also states the env-var opt-in.
+  The `_decide_local` docstring is corrected. Tested:
   `tests/test_privacy_gate_external_enforcement.py::test_default_unsafe_egress_blocks_and_writes_nothing`,
   `::test_default_safe_egress_passes_and_writes_nothing`,
   `::test_default_blocks_do_not_reach_a_breach_detector`,
@@ -273,28 +277,87 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `::test_injected_breach_detector_receives_escalations`,
   `::test_real_breach_detector_escalates_when_injected`,
   `::test_env_var_is_itself_opt_in_to_the_standard_path`,
+  `::test_env_var_is_resolved_per_call_on_the_preexisting_singleton`,
   `::test_configure_audit_turns_on_recording_for_an_existing_gate`,
   `::test_sink_and_audit_log_both_fire_when_both_configured`,
   `tests/test_privacy_shield_runner.py::test_scan_writes_nothing_without_audit_log_path`,
   `::test_scan_folder_redacts_pii_span_by_span`,
+  `::test_scan_never_escalates_to_the_global_breach_detector`,
+  `::test_scan_env_var_opts_in_with_no_audit_log_path_argument`,
   `tests/test_legacy_env.py::test_neither_name_set_uses_the_default`,
   `::test_neither_name_set_still_resolves_default_when_opted_in`,
   `::test_replacement_names_are_honoured`,
   `tests/test_breach_gate_isolation.py::test_broken_breach_log_dir_does_not_break_the_gate_decision`,
   `::test_broken_breach_log_dir_logs_at_error_not_debug`.
 
+- **The `privacy-shield` CLI gains `--audit`** (no argument): opts both the
+  shield's per-document audit log and the gate's decisions into the standard
+  user-state path (`audit_log.audit_log_path()`), the same file mixing both
+  writers' formats — the gate's entries carry an `"event"` key, the shield's
+  do not (documented in `docs/cli.md`). `--audit-log PATH` wins if both are
+  given. Neither given: the CLI writes nothing, same as the library default.
+  The `privacy-shield` skill's own documented invocation
+  (`skills/privacy-shield/SKILL.md`) always carries `--audit`, which is what
+  makes its `every_decision_written_to_the_audit_trail` governance obligation
+  true of what the skill actually runs — the PO decision was to keep that
+  obligation and ground it on the skill's own invocation rather than on the
+  library's now-opt-in default. Tested:
+  `tests/test_privacy_shield_runner.py::test_cli_audit_flag_records_to_the_standard_path`,
+  `::test_cli_without_audit_or_audit_log_writes_nothing`,
+  `::test_cli_audit_log_wins_over_audit_when_both_given`,
+  `tests/test_governance_block_norms.py::test_skill_md_documents_an_audit_opt_in_invocation`,
+  `::test_the_documented_invocation_actually_writes_the_audit_trail`.
+
+- **Stale claims of the old always-on default, across docs and the skill,
+  corrected**: `README.md`, `llms.txt`, `docs/cli.md`, `docs/pipeline.md`,
+  `src/privacy_shield/enforcement.py`'s module docstring, and
+  `skills/privacy-shield/SKILL.md`'s description all said or implied the
+  gate/scan "writes the standalone audit trail" unconditionally; each now
+  states the opt-in. `docs/adr/0001-external-enforcement.md`'s accepted
+  Decision/Consequences text is unchanged (an ADR's accepted decision is not
+  rewritten); a dated Amendment section is appended instead, noting the
+  Context paragraph described the pre-opt-in default. No test backs prose in
+  a document by itself; this claim is backed by the specific SKILL.md/CLI
+  tests listed above, which exercise the one piece of documentation (the
+  skill's invocation) that is executable.
+
 - **The test suite could silently write into the real
   `~/Library/Application Support/privacy-shield` / `~/.local/state/privacy-shield`
   trees** if a default regressed, since the isolation fixture only pointed
   `HOME`/`XDG_STATE_HOME`/`LOCALAPPDATA`/`USERPROFILE` at `tmp_path` without
-  verifying nothing escaped it. `tests/conftest.py` now resolves the real
-  home from the OS account (`pwd.getpwuid`, not `$HOME`) and installs a
-  `sys.addaudithook` that refuses (raises `PermissionError`, so the write
-  never happens) any open-for-write, `mkdir`, `rename`/`replace`, `remove` or
-  `shutil.*` call targeting those real roots, recording hits so a swallowed
-  exception in the code under test still fails the test. Tested:
-  `tests/test_hermetic_write_guard.py::test_guard_refuses_a_write_under_the_real_root`,
-  `::test_guard_refuses_mkdir_under_the_real_root`.
+  verifying nothing escaped it — and this happened once, from an earlier
+  version of this guard's own meta-test probing the real root directly (an
+  empty `__hermetic_probe_dir__` was created there and had to be removed by
+  hand). `tests/conftest.py` now resolves the real home from the OS account
+  (`pwd.getpwuid`, not `$HOME`) and installs a `sys.addaudithook` that refuses
+  (raises `PermissionError`, so the write never happens) any open-for-write,
+  `mkdir`, `rmdir`, `remove`, `rename`/`replace`, `link`/`symlink`,
+  `truncate`, `sqlite3.connect`, or `shutil.*` call targeting those real
+  roots (plus any FAKE root a test registers — see below), resolving symlinks
+  and comparing case-insensitively on macOS/Windows, decoding `bytes`/
+  `PathLike` paths rather than raising past them. Hits are recorded and
+  checked both before and after every test (so a hit from collection/import
+  time is not silently discarded by the per-test fixture's own bookkeeping),
+  and once more at session end. Out of scope, and named as such in the code:
+  dir_fd-relative opens, and writes performed by a subprocess.
+  **The guard's own tests never probe the real tree**: a `guarded_fake_root`
+  fixture registers a throwaway directory as an additional guarded root, so a
+  regression in the guard can only ever be proven against a fake root, never
+  against the user's real state. Tested (all against the fake root):
+  `tests/test_hermetic_write_guard.py::test_guard_refuses_a_write_under_a_fake_root`,
+  `::test_guard_refuses_mkdir_under_a_fake_root`,
+  `::test_guard_refuses_rename_and_replace_under_a_fake_root`,
+  `::test_guard_refuses_remove_under_a_fake_root`,
+  `::test_guard_refuses_shutil_operations_under_a_fake_root`,
+  `::test_guard_refuses_link_and_symlink_into_a_fake_root`,
+  `::test_guard_refuses_truncate_under_a_fake_root`,
+  `::test_guard_refuses_sqlite3_connect_under_a_fake_root`,
+  `::test_pytester_a_stale_hit_from_before_any_test_fails_the_first_test`,
+  `::test_pytester_swallowed_write_exception_still_fails_the_inner_test`
+  (a real, separate inner pytest run, via `pytester`, whose test body catches
+  the guard's `PermissionError` exactly as `gate.py`'s `_record_audit` does —
+  proving the per-test check catches it even when the exception itself never
+  propagates).
 
 ### Found, not fixed
 
