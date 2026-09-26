@@ -374,28 +374,61 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   same resolution `--audit` uses) and writes nothing — no file, no
   directory. Exists because the `loomground-mcp` `privacy_scan` tool's own
   default is `audit_log_path=None` (read read-only from the installed
-  package, `loomground_mcp/tools/applied.py:61-84`, not edited here:
-  flagged to its owner as consumer territory), and SKILL.md's
-  enriched-path instructions previously told the agent to obtain the
-  standard path via `python -c '...'`, a command the skill's own
-  `allowed-tools` grant (`privacy_scan, Bash(privacy-shield:*), Read`) does
-  not permit — so `every_decision_written_to_the_audit_trail` was
-  unachievable on that path even after naming `audit_log_path`. SKILL.md's
-  enriched path is now ONE fenced `privacy_scan(...)` call passing
-  `audit_log_path=<output of `privacy-shield audit-path`>`, with prose
-  mentions of `privacy_scan` outside that fence held to a single pinned
-  sentence. Tested:
+  package, `loomground_mcp/tools/applied.py`, verified via AST, not edited
+  here: its own docstring not naming `audit_log_path` is flagged to its
+  owner as consumer territory), and SKILL.md's enriched-path instructions
+  previously told the agent to obtain the standard path via `python -c
+  '...'`, a command the skill's own `allowed-tools` grant does not permit.
+  SKILL.md's enriched path is now ONE fenced `privacy_scan(...)` call.
+
+- **That fenced call was itself wrong on two counts, one a real gate
+  bypass.** `target=` is not a `privacy_scan` parameter (the tool's only
+  required one is `text`; a path is out of scope for it entirely and goes
+  through the CLI instead); and `destination=<source classification>`
+  passed a classification word (e.g. `confidential`) as the EGRESS
+  destination — `destination` not being one of the gate's real external
+  destinations (`external_llm`, `openai`, ...) skips every block rule
+  entirely, so `privacy_scan("Streng vertraulich: Mandantengeheimnis,
+  patient diabetes", destination="confidential")` came back cleared for
+  egress. The pre-existing (pre-branch) prose already said to pass "source
+  classification" to the call, an ambiguous phrase with no fenced example;
+  this branch's earlier fenced rewrite made that ambiguity concrete and
+  wrong. No other document in this repository makes the same error (`grep`
+  confirmed: `docs/cli.md`, `llms.txt`, `README.md` all describe
+  `destination` correctly as the egress target). Fixed:
+  `privacy_scan(text=<text>, destination=<egress target, e.g.
+  external_llm>, audit_log_path=<output of `privacy-shield
+  audit-path`>, ...)`.
+
+  Tested:
   `tests/test_privacy_shield_runner.py::test_cli_audit_path_prints_the_resolved_path_and_writes_nothing`,
   `::test_cli_audit_path_honours_the_env_var`,
   `tests/test_governance_block_norms.py::test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_log_path`
-  (structural, not a substring check: every fenced `privacy_scan(...)` call
-  must pass `audit_log_path=` sourced from `privacy-shield audit-path`;
-  every OUTSIDE-fence paragraph mentioning `privacy_scan` must match a
-  pinned allow-list exactly, so an inverted instruction that also happens
-  to mention `audit_log_path` — "Never pass audit_log_path; leave it
-  unset" — still fails; `privacy-shield audit-path` is run for real and
-  checked against `audit_log_path()`; the `Bash(privacy-shield:*)` grant
-  permitting it is checked in the frontmatter).
+  — structural, not a substring check: the fenced call is parsed (a
+  hand-written keyword parser, not `ast.parse`, since the `<...>`
+  placeholders are not valid Python literals) and every keyword must be one
+  of the real installed parameter names; `text` must be present; there must
+  be exactly one call per fence and no `#` comment line in it;
+  `audit_log_path=` must be EXACTLY `<output of `privacy-shield
+  audit-path`>` (not merely contain that phrase — `None` fails);
+  `destination=`'s given example value must be a real entry of
+  `privacy_shield.gate._EXTERNAL_DESTINATIONS`; when `loomground_mcp` is
+  importable the same keywords are additionally bound against the real
+  function with `inspect.signature(...).bind_partial`; the one prose
+  sentence allowed to mention `privacy_scan` outside the fence, and the
+  separate paragraph explaining `audit_log_path`/`destination` (which never
+  says "privacy_scan" and so is pinned on its own), are each checked
+  verbatim; `privacy-shield audit-path` is run for real and checked against
+  `audit_log_path()`; the `allowed-tools` grant is parsed structurally with
+  `yaml.safe_load` (not a text search, which a commented-out copy of the
+  real grant would also satisfy) and must contain an entry starting
+  `Bash(privacy-shield`. Free-text prose elsewhere in the document that
+  contradicts this without naming the pinned paragraphs is out of this
+  test's reach — noted as such in its own docstring, not silently assumed
+  covered.
+  `::test_scan_blocks_a_berufsgeheimnis_text_bound_for_an_external_destination`
+  pins the gate fact the fix relies on: a real external `destination`
+  still blocks a privileged document.
 
 - **Stale claims of the old always-on default, across docs and the skill,
   corrected**: `README.md`, `llms.txt`, `docs/cli.md`, `docs/pipeline.md`,
