@@ -358,6 +358,39 @@ _ALLOWED_PRIVACY_SCAN_PROSE = (
     "`privacy_scan` tool as:",
 )
 
+#: The paragraph that tells the agent how to get audit_log_path and what
+#: destination means - pinned verbatim because it does not mention
+#: `privacy_scan` by name (it says "this tool"/"this call") and so would
+#: never be caught by the allow-list above if reworded or replaced.
+_RUN_AUDIT_PATH_PARAGRAPH = (
+    "Run `privacy-shield audit-path` first — permitted by `Bash(privacy-shield:*)`,\n"
+    "prints the standard user-state audit path (honouring\n"
+    "`PRIVACY_SHIELD_AUDIT_LOG`) and writes nothing — for the `audit_log_path`\n"
+    "value above. `text` is the only input this tool accepts, forced to raw text:\n"
+    "a file or folder goes through the CLI instead\n"
+    "(`privacy-shield scan <path> --audit`), never through this call. `destination`\n"
+    "is the EGRESS TARGET (`external_llm`, `openai`, `datev`, ...), never a\n"
+    "classification: the gate computes the source classification from `text`\n"
+    "itself and blocks or allows on it, so a non-external value there — passing a\n"
+    "classification word instead of a real destination — skips every block rule\n"
+    "and clears data that should have been refused. The result includes the clean\n"
+    "overlay, span findings and egress verdict; only the overlay may be used for a\n"
+    "subsequent external call. Without `loomground-mcp`, fall back to the primary\n"
+    "path above — see `degrade_gracefully_without_optional_extras` below."
+)
+
+#: The installed loomground_mcp privacy_scan signature, verified read-only
+#: via AST against the installed package (not edited by this repo):
+#: text, mode, destination, redaction_mode, min_confidence, audit_log_path,
+#: tenant_id, user_id, hash_salt. `text` has no default (required); the rest
+#: do. Any keyword the fenced call passes must be one of these.
+_PRIVACY_SCAN_PARAMS = frozenset({
+    "text", "mode", "destination", "redaction_mode", "min_confidence",
+    "audit_log_path", "tenant_id", "user_id", "hash_salt",
+})
+
+_AUDIT_LOG_PATH_PLACEHOLDER = "<output of `privacy-shield audit-path`>"
+
 
 def _fenced_blocks(text: str) -> list[str]:
     return _FENCE.findall(text)
@@ -367,55 +400,171 @@ def _prose_outside_fences(text: str) -> str:
     return _FENCE.sub("", text)
 
 
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split on commas at <...> placeholder depth 0. A real ast.parse chokes
+    on a placeholder like `<egress target, e.g. external_llm>`, whose own
+    comma is not an argument separator; a plain split(",") would cut it in
+    half."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in s:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _parse_call(call_source: str) -> tuple[str, dict[str, str]]:
+    """Parse `name(kw=value, kw=value, ...)`, tolerating the <...>
+    placeholders above. Returns (name, {keyword: raw_value_text})."""
+    open_paren = call_source.index("(")
+    name = call_source[:open_paren].strip()
+    inner = call_source[open_paren + 1:call_source.rindex(")")]
+    kwargs: dict[str, str] = {}
+    for part in _split_top_level_commas(inner):
+        part = part.strip()
+        if not part:
+            continue
+        key, sep, value = part.partition("=")
+        assert sep, f"positional argument {part!r} in a keyword-only call: {call_source!r}"
+        kwargs[key.strip()] = value.strip()
+    return name, kwargs
+
+
 def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_log_path():
     """F4: the MCP tool's own default is `audit_log_path=None` (silent, same
     as the library) - loomground_mcp/tools/applied.py:61-84, read read-only
     from the installed package, not edited here.
 
-    Three ways this obligation can go quietly false again, each closed here:
+    What this test checks, exactly - and no more:
 
-    1. The fenced `privacy_scan(...)` call itself drops `audit_log_path=`, or
-       keeps the keyword but stops pointing it at `privacy-shield audit-path`
-       (e.g. reverting to the unreachable `python -c` form, or a bare
-       placeholder nobody can act on).
-    2. A prose paragraph OUTSIDE any fence tells the agent something
-       different - up to and including the inverted instruction "Never pass
-       audit_log_path; leave it unset" - which a substring/keyword check
-       cannot distinguish from a paragraph that correctly requires it,
-       because both mention both words. Every non-fenced paragraph
-       mentioning `privacy_scan` must match the pinned allow-list exactly;
-       anything else fails, inverted or not.
-    3. The `privacy-shield audit-path` command named in the doc does not
-       actually print `audit_log_path()` - checked by running it for real.
+    1. Each fence contains exactly one `privacy_scan(` call and no `#`
+       comment lines - a second call, or a commented-out alternative,
+       inside the one fence a reader is shown would be ambiguous about
+       which is documented.
+    2. That call is parsed (a hand-written parser, not `ast.parse` - the
+       `<...>` placeholders are not valid Python literals) and every
+       keyword it passes is one of the installed function's own parameter
+       names (`_PRIVACY_SCAN_PARAMS`, verified by AST above); `text` is
+       present (the tool's only required parameter; there is no `target`);
+       `audit_log_path`'s value is EXACTLY the pinned placeholder text (not
+       merely containing the phrase, so `None` or a bare unexplained
+       placeholder both fail); `destination`'s example value (after
+       "e.g.") is a real external destination
+       (`privacy_shield.gate._EXTERNAL_DESTINATIONS`) - a classification
+       word there silently disables every block rule (verified against the
+       gate below).
+    3. If `loomground_mcp` is importable, the same keywords are additionally
+       bound against the REAL function's signature with
+       `inspect.signature(...).bind_partial` - a second, independent check
+       that does not depend on this test's own pinned parameter set being
+       current. Skipped, not failed, when the package is absent (the CLI
+       and this test both work standalone).
+    4. Two paragraphs are pinned VERBATIM: the one prose sentence outside
+       any fence allowed to mention `privacy_scan` at all
+       (`_ALLOWED_PRIVACY_SCAN_PROSE` - any other paragraph mentioning it,
+       inverted or not, fails), and the paragraph that explains
+       `audit_log_path`/`destination` and does not itself say
+       "privacy_scan" (`_RUN_AUDIT_PATH_PARAGRAPH` - it would not be caught
+       by the allow-list above if reworded, since it never names the tool).
+    5. `privacy-shield audit-path` is run for real (not just named in the
+       text) and its stdout is compared to `audit_log_path()`.
+    6. The `allowed-tools` VALUE, parsed from the YAML frontmatter with
+       `yaml.safe_load` (not a text search over the raw frontmatter, which
+       a commented-out copy of the real grant would also satisfy), contains
+       an entry starting `Bash(privacy-shield`.
+
+    Out of reach of this test: free-text prose ANYWHERE else in the
+    document that tells the agent something wrong about `privacy_scan`
+    without naming the pinned paragraphs above or using the word
+    `privacy_scan` outside a fence - inversion in unconstrained prose is
+    not provable by a fixed regex or allow-list; the pins above hold the
+    specific paragraphs this obligation is grounded in.
     """
     body = _skill_md_body()
 
-    # (1) Every fenced privacy_scan(...) call passes audit_log_path=
-    # pointing at `privacy-shield audit-path`.
-    calls = [b for b in _fenced_blocks(body) if "privacy_scan(" in b]
-    assert calls, "SKILL.md no longer documents a fenced privacy_scan(...) call"
-    for call in calls:
-        assert "audit_log_path=" in call, (
-            f"a documented privacy_scan call does not pass audit_log_path=:\n{call}"
+    # (1) Exactly one privacy_scan( call per fence, no comment lines.
+    fences_with_call = [b for b in _fenced_blocks(body) if "privacy_scan(" in b]
+    assert fences_with_call, "SKILL.md no longer documents a fenced privacy_scan(...) call"
+    for fence in fences_with_call:
+        assert fence.count("privacy_scan(") == 1, (
+            f"more than one privacy_scan( call in one fence:\n{fence}"
         )
-        match = re.search(r"audit_log_path=(\S.*?)(?:,\s*\w+=|\)\s*$)", call, re.DOTALL)
-        assert match, f"could not isolate the audit_log_path= value in:\n{call}"
-        assert "privacy-shield audit-path" in match.group(1), (
-            f"audit_log_path= is not sourced from `privacy-shield audit-path`:\n{call}"
+        assert "#" not in fence, f"a comment line in the fenced call:\n{fence}"
+
+    # (2) Parse each call; check keywords, text, audit_log_path, destination.
+    from privacy_shield.gate import _EXTERNAL_DESTINATIONS
+
+    for fence in fences_with_call:
+        name, kwargs = _parse_call(fence.strip())
+        assert name == "privacy_scan", f"unexpected call name {name!r} in:\n{fence}"
+
+        unknown = set(kwargs) - _PRIVACY_SCAN_PARAMS
+        assert not unknown, (
+            f"keyword(s) {unknown} are not real privacy_scan parameters "
+            f"({sorted(_PRIVACY_SCAN_PARAMS)}):\n{fence}"
+        )
+        assert "text" in kwargs, (
+            f"privacy_scan's only required parameter is `text` (there is no "
+            f"`target`), missing from:\n{fence}"
         )
 
-    # (2) Every OUTSIDE-fence paragraph mentioning privacy_scan is one of the
-    # pinned, allow-listed ones - not a keyword search.
+        assert kwargs.get("audit_log_path") == _AUDIT_LOG_PATH_PLACEHOLDER, (
+            f"audit_log_path= is not exactly {_AUDIT_LOG_PATH_PLACEHOLDER!r} "
+            f"(got {kwargs.get('audit_log_path')!r}) in:\n{fence}"
+        )
+
+        destination_value = kwargs.get("destination", "")
+        example = re.search(r"e\.g\.\s*([A-Za-z0-9_]+)", destination_value)
+        assert example, (
+            f"destination= gives no `e.g. <value>` example to check against "
+            f"the gate's real external destinations:\n{fence}"
+        )
+        assert example.group(1) in _EXTERNAL_DESTINATIONS, (
+            f"destination='s example value {example.group(1)!r} is not a real "
+            f"external destination ({sorted(_EXTERNAL_DESTINATIONS)}) - a "
+            f"classification word there disables every block rule:\n{fence}"
+        )
+
+        # (3) Bind against the REAL installed signature too, when available.
+        try:
+            import loomground_mcp.tools.applied as applied
+        except ImportError:
+            applied = None
+        if applied is not None:
+            import inspect
+
+            sig = inspect.signature(applied.privacy_scan)
+            sig.bind_partial(**{k: v for k, v in kwargs.items()})
+
+    # (4a) The one allowed prose sentence outside any fence.
     prose = _prose_outside_fences(body)
-    paragraphs = [p.strip() for p in prose.split("\n\n") if "privacy_scan" in p]
-    unpinned = [p for p in paragraphs if p not in _ALLOWED_PRIVACY_SCAN_PROSE]
+    paragraphs = [p.strip() for p in prose.split("\n\n")]
+    mentioning = [p for p in paragraphs if "privacy_scan" in p]
+    unpinned = [p for p in mentioning if p not in _ALLOWED_PRIVACY_SCAN_PROSE]
     assert not unpinned, (
         "a prose paragraph mentioning privacy_scan outside a fenced block is "
         "not on the pinned allow-list (this catches an inverted instruction "
         "a substring check would miss):\n  " + "\n  ---\n  ".join(unpinned)
     )
 
-    # (3) `privacy-shield audit-path`, run for real, prints audit_log_path().
+    # (4b) The audit-path/destination explainer paragraph, pinned verbatim.
+    assert _RUN_AUDIT_PATH_PARAGRAPH in paragraphs, (
+        "the paragraph explaining audit_log_path/destination no longer "
+        "matches the pinned text (it never says \"privacy_scan\" itself, so "
+        "the allow-list above cannot catch a rewording of it)"
+    )
+
+    # (5) `privacy-shield audit-path`, run for real, prints audit_log_path().
     assert "privacy-shield audit-path" in body, (
         "SKILL.md no longer names the `privacy-shield audit-path` command at all"
     )
@@ -430,13 +579,35 @@ def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_l
     assert code == 0
     assert out.getvalue().strip() == str(audit_log_path())
 
-    # (4) The command SKILL.md tells the agent to run is actually permitted
-    # by its own allowed-tools grant.
-    allowed_tools = SKILL_MD.read_text(encoding="utf-8").split("---\n", 2)[1]
-    assert re.search(r"Bash\(privacy-shield:\*\)", allowed_tools), (
-        "SKILL.md documents running `privacy-shield audit-path` but its "
-        "allowed-tools grant no longer permits a Bash(privacy-shield:*) call"
+    # (6) allowed-tools, parsed structurally (yaml.safe_load), not by text
+    # search over the raw frontmatter - a commented-out copy of the real
+    # grant elsewhere in the frontmatter must not satisfy a text search.
+    yaml = pytest.importorskip("yaml")
+    frontmatter = yaml.safe_load(SKILL_MD.read_text(encoding="utf-8").split("---\n", 2)[1])
+    allowed_tools = frontmatter["allowed-tools"]
+    entries = [e.strip() for e in allowed_tools.split(",")]
+    assert any(e.startswith("Bash(privacy-shield") for e in entries), (
+        f"allowed-tools ({allowed_tools!r}) has no entry starting "
+        f"Bash(privacy-shield, so `privacy-shield audit-path` is not permitted"
     )
+
+
+def test_scan_blocks_a_berufsgeheimnis_text_bound_for_an_external_destination():
+    """Grounds the doc's own claim: passing a real external `destination`
+    (not a classification word) still gets a privileged document blocked.
+    If this regresses, the doc's example destination stops meaning what the
+    doc says it means.
+    """
+    from privacy_shield.runner import scan
+    from privacy_shield.shield import PrivacyMode
+
+    report = scan(
+        "Streng vertraulich: Mandantengeheimnis, patient diabetes",
+        mode=PrivacyMode.STANDARD,
+        destination="external_llm",
+        force_text=True,
+    )
+    assert report.documents[0].egress_allowed is False
 
 
 def test_skill_md_documents_an_audit_opt_in_invocation():
