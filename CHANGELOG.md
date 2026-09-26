@@ -308,6 +308,33 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `tests/test_governance_block_norms.py::test_skill_md_documents_an_audit_opt_in_invocation`,
   `::test_the_documented_invocation_actually_writes_the_audit_trail`.
 
+- **`shield.py`'s own audit write silently dropped the first document on a
+  fresh HOME.** It opened `audit_log_path` in append mode without creating
+  its parent directory first, and ran before the gate's `log_audit_event`
+  (which does `mkdir`); on the very first write of a session the open failed
+  with `[Errno 2] No such file or directory`, was logged as "Audit logging
+  failed" and swallowed, and only the *second* document's shield entry
+  landed — `--audit` on a fresh HOME over a folder of 2 files wrote
+  `[gate, shield, gate]` instead of `[shield, gate, shield, gate]`. Fixed by
+  creating the parent directory before the append. Tested:
+  `tests/test_privacy_shield_runner.py::test_cli_audit_on_a_fresh_home_writes_both_writers_for_every_document`
+  (asserts exactly 2 shield + 2 gate entries and no "Audit logging failed"
+  log record), `tests/test_governance_block_norms.py::test_the_documented_invocation_actually_writes_the_audit_trail`
+  (strengthened the same way for the skill's own invocation).
+
+- **The `loomground-mcp` `privacy_scan` tool's own default is
+  `audit_log_path=None`** (read read-only from the installed package,
+  `loomground_mcp/tools/applied.py:61-84`, not edited here) — SKILL.md's
+  enriched-path paragraph documented calling it without ever mentioning that
+  parameter, so `every_decision_written_to_the_audit_trail` was false on
+  that path even though the CLI path made it true. SKILL.md now documents
+  passing `audit_log_path` to the same standard path `--audit` uses, and
+  states concretely how to obtain it
+  (`python -c 'from privacy_shield.audit_log import audit_log_path; print(audit_log_path())'`).
+  Tested: `tests/test_governance_block_norms.py::test_every_documented_privacy_scan_call_passes_audit_log_path`
+  (fails on any prose paragraph documenting a `privacy_scan` call that does
+  not name `audit_log_path` in the same paragraph).
+
 - **Stale claims of the old always-on default, across docs and the skill,
   corrected**: `README.md`, `llms.txt`, `docs/cli.md`, `docs/pipeline.md`,
   `src/privacy_shield/enforcement.py`'s module docstring, and
@@ -321,29 +348,12 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   tests listed above, which exercise the one piece of documentation (the
   skill's invocation) that is executable.
 
-- **The test suite could silently write into the real
+- **The test suite now refuses, and fails, on any write under the real
   `~/Library/Application Support/privacy-shield` / `~/.local/state/privacy-shield`
-  trees** if a default regressed, since the isolation fixture only pointed
-  `HOME`/`XDG_STATE_HOME`/`LOCALAPPDATA`/`USERPROFILE` at `tmp_path` without
-  verifying nothing escaped it — and this happened once, from an earlier
-  version of this guard's own meta-test probing the real root directly (an
-  empty `__hermetic_probe_dir__` was created there and had to be removed by
-  hand). `tests/conftest.py` now resolves the real home from the OS account
-  (`pwd.getpwuid`, not `$HOME`) and installs a `sys.addaudithook` that refuses
-  (raises `PermissionError`, so the write never happens) any open-for-write,
-  `mkdir`, `rmdir`, `remove`, `rename`/`replace`, `link`/`symlink`,
-  `truncate`, `sqlite3.connect`, or `shutil.*` call targeting those real
-  roots (plus any FAKE root a test registers — see below), resolving symlinks
-  and comparing case-insensitively on macOS/Windows, decoding `bytes`/
-  `PathLike` paths rather than raising past them. Hits are recorded and
-  checked both before and after every test (so a hit from collection/import
-  time is not silently discarded by the per-test fixture's own bookkeeping),
-  and once more at session end. Out of scope, and named as such in the code:
-  dir_fd-relative opens, and writes performed by a subprocess.
-  **The guard's own tests never probe the real tree**: a `guarded_fake_root`
-  fixture registers a throwaway directory as an additional guarded root, so a
-  regression in the guard can only ever be proven against a fake root, never
-  against the user's real state. Tested (all against the fake root):
+  trees** — proven only against a registered fake root, never the real one, so
+  a regression in this guard cannot be found by writing into a real user's
+  state (an earlier version of the guard's own meta-test did exactly that
+  once). Tested:
   `tests/test_hermetic_write_guard.py::test_guard_refuses_a_write_under_a_fake_root`,
   `::test_guard_refuses_mkdir_under_a_fake_root`,
   `::test_guard_refuses_rename_and_replace_under_a_fake_root`,
@@ -352,12 +362,13 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   `::test_guard_refuses_link_and_symlink_into_a_fake_root`,
   `::test_guard_refuses_truncate_under_a_fake_root`,
   `::test_guard_refuses_sqlite3_connect_under_a_fake_root`,
+  `::test_guard_refuses_sqlite3_connect_uri_form_under_a_fake_root`,
+  `::test_guard_refuses_a_write_via_a_symlink_alias_of_the_fake_root`,
+  `::test_guard_refuses_a_case_variant_of_the_fake_root_path`,
+  `::test_guard_refuses_a_bytes_path_under_the_fake_root_and_leaves_an_unrelated_bytes_path_alone`,
   `::test_pytester_a_stale_hit_from_before_any_test_fails_the_first_test`,
-  `::test_pytester_swallowed_write_exception_still_fails_the_inner_test`
-  (a real, separate inner pytest run, via `pytester`, whose test body catches
-  the guard's `PermissionError` exactly as `gate.py`'s `_record_audit` does —
-  proving the per-test check catches it even when the exception itself never
-  propagates).
+  `::test_pytester_swallowed_write_exception_still_fails_the_inner_test`,
+  `::test_pytester_a_hit_after_the_last_test_fails_the_session`.
 
 ### Found, not fixed
 
