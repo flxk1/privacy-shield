@@ -127,6 +127,9 @@ def _target_paths(event: str, args: tuple) -> list:
         if not args:
             return []
         db = args[0]
+        if isinstance(db, bytes):
+            # 3.10 audits the database after PyUnicode_FSConverter, i.e. as bytes.
+            db = os.fsdecode(db)
         if isinstance(db, str) and db.startswith("file:"):
             # sqlite3 URI form (uri=True): strip scheme + query, unquote.
             return [unquote(urlparse(db).path)]

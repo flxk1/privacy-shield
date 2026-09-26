@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import GUARD_HITS
+from conftest import GUARD_HITS, _audit_hook
 
 
 def test_guard_refuses_a_write_under_a_fake_root(guarded_fake_root):
@@ -230,6 +230,16 @@ def test_guard_refuses_sqlite3_connect_uri_form_under_a_fake_root(guarded_fake_r
         raised = True
     assert raised, "a sqlite3 URI-form connect under the fake root was not refused"
     assert not db_path.exists()
+    assert GUARD_HITS
+    GUARD_HITS.clear()
+
+
+def test_guard_refuses_the_bytes_uri_python_3_10_audits(guarded_fake_root):
+    """3.10 raises sqlite3.connect with the database already fs-encoded, so the
+    URI arrives as bytes; fed straight to the hook, it must still be refused."""
+    uri = os.fsencode(f"file:{guarded_fake_root / 'bytes-uri.sqlite3'}?mode=rwc")
+    with pytest.raises(PermissionError):
+        _audit_hook("sqlite3.connect", (uri,))
     assert GUARD_HITS
     GUARD_HITS.clear()
 
