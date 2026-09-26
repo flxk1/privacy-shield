@@ -390,6 +390,11 @@ _PRIVACY_SCAN_PARAMS = frozenset({
 })
 
 _AUDIT_LOG_PATH_PLACEHOLDER = "<output of `privacy-shield audit-path`>"
+#: Pinned exactly like the audit_log_path placeholder - checking only for an
+#: "e.g. <value>" token inside destination= let a wrapper like "<source
+#: classification, e.g. external_llm>" through: the example was real, but
+#: the placeholder around it still told the agent to pass a classification.
+_DESTINATION_PLACEHOLDER = "<egress target, e.g. external_llm>"
 
 
 def _fenced_blocks(text: str) -> list[str]:
@@ -456,13 +461,15 @@ def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_l
        keyword it passes is one of the installed function's own parameter
        names (`_PRIVACY_SCAN_PARAMS`, verified by AST above); `text` is
        present (the tool's only required parameter; there is no `target`);
-       `audit_log_path`'s value is EXACTLY the pinned placeholder text (not
-       merely containing the phrase, so `None` or a bare unexplained
-       placeholder both fail); `destination`'s example value (after
-       "e.g.") is a real external destination
-       (`privacy_shield.gate._EXTERNAL_DESTINATIONS`) - a classification
-       word there silently disables every block rule (verified against the
-       gate below).
+       `audit_log_path`'s and `destination`'s values are each EXACTLY their
+       pinned placeholder text (not merely containing a phrase or an
+       "e.g." token - a wrapper like "<source classification, e.g.
+       external_llm>" has a real example but still tells the agent the
+       value IS a classification, so it must fail too); `destination`'s
+       pinned example is additionally checked against a real external
+       destination (`privacy_shield.gate._EXTERNAL_DESTINATIONS`) - a
+       classification word there silently disables every block rule
+       (verified against the gate below).
     3. If `loomground_mcp` is importable, the same keywords are additionally
        bound against the REAL function's signature with
        `inspect.signature(...).bind_partial` - a second, independent check
@@ -480,8 +487,9 @@ def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_l
        text) and its stdout is compared to `audit_log_path()`.
     6. The `allowed-tools` VALUE, parsed from the YAML frontmatter with
        `yaml.safe_load` (not a text search over the raw frontmatter, which
-       a commented-out copy of the real grant would also satisfy), contains
-       an entry starting `Bash(privacy-shield`.
+       a commented-out copy of the real grant would also satisfy), has an
+       entry EXACTLY equal to `Bash(privacy-shield:*)` - a look-alike such
+       as `Bash(privacy-shield-legacy:*)` does not authorise the command.
 
     Out of reach of this test: free-text prose ANYWHERE else in the
     document that tells the agent something wrong about `privacy_scan`
@@ -523,8 +531,14 @@ def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_l
             f"(got {kwargs.get('audit_log_path')!r}) in:\n{fence}"
         )
 
-        destination_value = kwargs.get("destination", "")
-        example = re.search(r"e\.g\.\s*([A-Za-z0-9_]+)", destination_value)
+        # Pinned exactly, not merely "has an e.g. token somewhere": a wrapper
+        # like "<source classification, e.g. external_llm>" has a real
+        # example but still tells the agent the value IS a classification.
+        assert kwargs.get("destination") == _DESTINATION_PLACEHOLDER, (
+            f"destination= is not exactly {_DESTINATION_PLACEHOLDER!r} "
+            f"(got {kwargs.get('destination')!r}) in:\n{fence}"
+        )
+        example = re.search(r"e\.g\.\s*([A-Za-z0-9_]+)", kwargs["destination"])
         assert example, (
             f"destination= gives no `e.g. <value>` example to check against "
             f"the gate's real external destinations:\n{fence}"
@@ -586,23 +600,34 @@ def test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_l
     frontmatter = yaml.safe_load(SKILL_MD.read_text(encoding="utf-8").split("---\n", 2)[1])
     allowed_tools = frontmatter["allowed-tools"]
     entries = [e.strip() for e in allowed_tools.split(",")]
-    assert any(e.startswith("Bash(privacy-shield") for e in entries), (
-        f"allowed-tools ({allowed_tools!r}) has no entry starting "
-        f"Bash(privacy-shield, so `privacy-shield audit-path` is not permitted"
+    assert "Bash(privacy-shield:*)" in entries, (
+        f"allowed-tools ({allowed_tools!r}) has no entry exactly equal to "
+        f"Bash(privacy-shield:*), so `privacy-shield audit-path` is not "
+        f"permitted (a look-alike grant such as "
+        f"Bash(privacy-shield-legacy:*) does not authorise it)"
     )
 
 
-def test_scan_blocks_a_berufsgeheimnis_text_bound_for_an_external_destination():
-    """Grounds the doc's own claim: passing a real external `destination`
-    (not a classification word) still gets a privileged document blocked.
-    If this regresses, the doc's example destination stops meaning what the
-    doc says it means.
+def test_scan_blocks_a_confidential_text_bound_for_an_external_destination():
+    """Grounds the doc's own claim, isolated to Rule 2 specifically
+    (classification/confidentiality block) rather than any block rule: the
+    text below carries no Art. 9 terms at all (asserted below), so Rule 3
+    cannot be what blocks it - if Rule 2 alone were ever removed from the
+    gate, this is the test that would go red, not one that Rule 3 also
+    happens to catch. If this regresses, the doc's example destination
+    stops meaning what the doc says it means.
     """
+    from privacy_shield.gate import PrivacyGate
     from privacy_shield.runner import scan
     from privacy_shield.shield import PrivacyMode
 
+    text = "This document is strictly vertraulich and covers next quarter revenue."
+    gate = PrivacyGate()
+    assert gate.classify_data(text) in {"berufsgeheimnis", "confidential"}
+    assert gate.check_art9(text) == []
+
     report = scan(
-        "Streng vertraulich: Mandantengeheimnis, patient diabetes",
+        text,
         mode=PrivacyMode.STANDARD,
         destination="external_llm",
         force_text=True,
