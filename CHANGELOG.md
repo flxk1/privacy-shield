@@ -353,18 +353,33 @@ growing more of our own - the evaluation is in `docs/limits.md`.
   log record), `tests/test_governance_block_norms.py::test_the_documented_invocation_actually_writes_the_audit_trail`
   (strengthened the same way for the skill's own invocation).
 
-- **The `loomground-mcp` `privacy_scan` tool's own default is
-  `audit_log_path=None`** (read read-only from the installed package,
-  `loomground_mcp/tools/applied.py:61-84`, not edited here) — SKILL.md's
-  enriched-path paragraph documented calling it without ever mentioning that
-  parameter, so `every_decision_written_to_the_audit_trail` was false on
-  that path even though the CLI path made it true. SKILL.md now documents
-  passing `audit_log_path` to the same standard path `--audit` uses, and
-  states concretely how to obtain it
-  (`python -c 'from privacy_shield.audit_log import audit_log_path; print(audit_log_path())'`).
-  Tested: `tests/test_governance_block_norms.py::test_every_documented_privacy_scan_call_passes_audit_log_path`
-  (fails on any prose paragraph documenting a `privacy_scan` call that does
-  not name `audit_log_path` in the same paragraph).
+- **New `privacy-shield audit-path` CLI subcommand**: prints
+  `audit_log.audit_log_path()` (honouring `PRIVACY_SHIELD_AUDIT_LOG`, the
+  same resolution `--audit` uses) and writes nothing — no file, no
+  directory. Exists because the `loomground-mcp` `privacy_scan` tool's own
+  default is `audit_log_path=None` (read read-only from the installed
+  package, `loomground_mcp/tools/applied.py:61-84`, not edited here:
+  flagged to its owner as consumer territory), and SKILL.md's
+  enriched-path instructions previously told the agent to obtain the
+  standard path via `python -c '...'`, a command the skill's own
+  `allowed-tools` grant (`privacy_scan, Bash(privacy-shield:*), Read`) does
+  not permit — so `every_decision_written_to_the_audit_trail` was
+  unachievable on that path even after naming `audit_log_path`. SKILL.md's
+  enriched path is now ONE fenced `privacy_scan(...)` call passing
+  `audit_log_path=<output of `privacy-shield audit-path`>`, with prose
+  mentions of `privacy_scan` outside that fence held to a single pinned
+  sentence. Tested:
+  `tests/test_privacy_shield_runner.py::test_cli_audit_path_prints_the_resolved_path_and_writes_nothing`,
+  `::test_cli_audit_path_honours_the_env_var`,
+  `tests/test_governance_block_norms.py::test_every_documented_privacy_scan_call_is_a_pinned_fenced_call_with_audit_log_path`
+  (structural, not a substring check: every fenced `privacy_scan(...)` call
+  must pass `audit_log_path=` sourced from `privacy-shield audit-path`;
+  every OUTSIDE-fence paragraph mentioning `privacy_scan` must match a
+  pinned allow-list exactly, so an inverted instruction that also happens
+  to mention `audit_log_path` — "Never pass audit_log_path; leave it
+  unset" — still fails; `privacy-shield audit-path` is run for real and
+  checked against `audit_log_path()`; the `Bash(privacy-shield:*)` grant
+  permitting it is checked in the frontmatter).
 
 - **Stale claims of the old always-on default, across docs and the skill,
   corrected**: `README.md`, `llms.txt`, `docs/cli.md`, `docs/pipeline.md`,
