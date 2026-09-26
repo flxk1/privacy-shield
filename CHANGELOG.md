@@ -109,13 +109,18 @@ growing more of our own - the evaluation is in `docs/limits.md`.
 
 ### Fixed
 
-- **An e-mail address in decomposed Unicode or with an invisible character in
-  it is detected.** A combining mark or a `Cf` character ended the address:
-  NFD `josé@example.com` and `erika<U+200B>@example.com` went out whole with
-  pii_detected False, and NFD `René.Müller＠…` kept `René.Mü`. Combining marks
-  now continue a local part, invisible characters are read through anywhere
-  in the address, and `email_ok` reads the same way. Tested:
-  `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`.
+- **An e-mail address in decomposed Unicode, with an invisible character in
+  it, or with a Latin-script internationalised domain is detected.** A
+  combining mark or a `Cf` character ended the address: NFD
+  `josé@example.com` and `erika<U+200B>@example.com` went out whole with
+  pii_detected False, and NFD `René.Müller＠…` kept `René.Mü`;
+  `erika@müller.de` was not found in either normal form. Marks and invisible
+  characters are now read through anywhere in the address, a Latin letter
+  with a diacritic reads as its base letter, and `email_ok` reads the same
+  way. Two addresses run together are both claimed; the second's domain
+  used to go out. Tested:
+  `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
+  `::test_two_addresses_run_together_are_both_claimed`.
 
 - **An e-mail address written with a full-width `＠` or full-width letters is
   detected.** `erika＠example.com` went out whole with pii_detected False in

@@ -295,6 +295,13 @@ def _read(value: str) -> str:
             compat = unicodedata.normalize("NFKC", char)
             if len(compat) == 1 and compat in "@._%+-":
                 folded = compat
+            else:
+                # A Latin letter with a diacritic, read as its base letter.
+                parts = unicodedata.normalize("NFD", char)
+                if len(parts) > 1 and parts[0].isascii() and parts[0].isalpha() and all(
+                    unicodedata.category(part).startswith("M") for part in parts[1:]
+                ):
+                    folded = parts[0]
         out.append(folded or char)
     return "".join(out)
 
@@ -1829,7 +1836,8 @@ def test_an_address_is_reported_as_it_was_written():
 @pytest.mark.parametrize(
     "text",
     [
-        pytest.param("Mail erika@m\u00fcller.de bitte", id="idn_domain"),
+        pytest.param("Mail erika@\u4f8b\u3048.jp bitte", id="non_latin_idn_domain"),
+        pytest.param("Mail \u202emoc.elpmaxe@akire\u202c bitte", id="right_to_left_override"),
         pytest.param("Mail \u24d4\u24e1\u24d8\u24da\u24d0@example.com bitte", id="circled_local_part"),
         pytest.param("Mail erika\uff20\nexample.com bitte", id="wrapped_after_at"),
     ],
@@ -1858,6 +1866,11 @@ HIDDEN_ADDRESSES = [
     pytest.param("erika@\u200bexample.com", id="zero_width_after_at"),
     pytest.param("erika@exam\u00adple.com", id="soft_hyphen_in_domain"),
     pytest.param("erika@example.\u2060com", id="word_joiner_before_tld"),
+    pytest.param("erika@\u0301example.com", id="mark_after_at"),
+    pytest.param("erika@example.\u0301com", id="mark_after_dot"),
+    pytest.param(_nfd("erika@m\u00fcller.de"), id="decomposed_idn_domain"),
+    pytest.param("erika@m\u00fcller.de", id="latin_idn_domain"),
+    pytest.param("erika@caf\u00e9.de", id="latin_idn_domain_acute"),
 ]
 
 
@@ -1884,6 +1897,43 @@ def test_the_gate_sees_an_address_with_marks_or_invisibles(address):
     assert any(kind == "email" for kind, _c, _w in validated_identifiers(text))
     untouched = SimpleNamespace(egress_allowed=True, overlay=text, spans=[])
     assert leaks_in(text, untouched)
+
+
+def test_a_local_part_with_a_spacing_mark_is_claimed_whole():
+    """Devanagari vowel signs are spacing marks (Mc), not letters; the sign in
+    "\u0930\u093e\u092e" ended the local part."""
+    text = "Mail \u0930\u093e\u092e@example.com bitte"
+    document = scan(text, force_text=True).documents[0]
+    assert document.overlay == "Mail [EMAIL] bitte", document.overlay
+
+
+@pytest.mark.parametrize(
+    "between",
+    [
+        pytest.param("", id="nothing"),
+        pytest.param("\u200b", id="zero_width_space"),
+        pytest.param("\u2060", id="word_joiner"),
+        pytest.param("\u00ad", id="soft_hyphen"),
+    ],
+)
+@pytest.mark.parametrize("mode", EGRESS_MODES, ids=lambda m: m.value)
+def test_two_addresses_run_together_are_both_claimed(between, mode):
+    """The first domain runs on into the second local part. Clipping the
+    second claim at the first left its local part empty, and "@firma.de"
+    went out."""
+    text = f"Mail erika@example.com{between}hans.meier@firma.de bitte"
+    assert_no_leak(text, mode=mode)
+    document = scan(text, mode=mode, force_text=True).documents[0]
+    assert _PLACEHOLDER.sub("", document.overlay) == "Mail  bitte", document.overlay
+
+
+def test_a_word_before_a_zero_width_space_goes_with_the_address():
+    """docs/limits.md: read through, a zero-width space no longer separates a
+    word from the local part after it - the over-redaction a script that
+    separates words that way pays."""
+    text = "Mail Hallo\u200berika@example.com bitte"
+    document = scan(text, force_text=True).documents[0]
+    assert document.overlay == "Mail [EMAIL] bitte", document.overlay
 
 
 def test_the_gate_sees_a_decomposed_local_part_left_behind():

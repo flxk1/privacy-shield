@@ -895,20 +895,35 @@ next round starts from this rather than rediscovering it:
   `::test_a_full_width_at_is_not_an_address_by_itself`,
   `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
 - **An address is read through combining marks and invisible characters.**
-  A local part in decomposed Unicode (NFD, as macOS file names and much
-  copied text are) is one local part: a combining mark continues it and is
-  dropped only to judge the address's shape. Invisible characters (Unicode
-  `Cf` - zero-width space, soft hyphen, word joiner) are read through, as in
-  a run, anywhere in the address. NFD `josé@…` and `erika<U+200B>@…` went out
-  whole, NFD `René.Müller＠…` kept `René.Mü`, and `eri<U+00AD>ka@…` kept
-  `eri`. The gate reads them the same way. Tested:
+  Invisible characters (Unicode `Cf` - zero-width space, soft hyphen, word
+  joiner, bidi controls) and combining marks (`M*`, spacing marks included)
+  are not there, anywhere in the address; a Latin letter with a diacritic
+  reads as its base letter. So an address in decomposed Unicode (NFD, as
+  macOS file names and much copied text are) is one address, and so is a
+  Latin-script internationalised domain in either normal form
+  (`erika@müller.de`). NFD `josé@…` and `erika<U+200B>@…` went out whole, NFD
+  `René.Müller＠…` kept `René.Mü`, `eri<U+00AD>ka@…` kept `eri`, and
+  `erika@müller.de` was not found. The gate reads addresses the same way.
+  Tested:
   `tests/test_leak_invariant.py::test_an_address_with_marks_or_invisibles_is_claimed_whole`,
   `::test_the_gate_sees_an_address_with_marks_or_invisibles`,
+  `::test_a_local_part_with_a_spacing_mark_is_claimed_whole`,
   `::test_the_gate_sees_a_decomposed_local_part_left_behind`,
   `tests/test_privacy_shield_regex_only.py::test_no_finding_of_a_validated_type_fails_its_own_validator`.
-- **Addresses not found, in any width.** An internationalised domain written
-  in its own script (`erika@müller.de` rather than its punycode); a local part
-  in circled letters; an address wrapped across a line. The gate shares these
+- **Two addresses run together are both claimed.** The first domain runs on
+  into the second local part, with nothing or only an invisible character
+  between them; the claims overlap and the redaction covers both. Clipping
+  the second claim at the end of the first left `@firma.de` in the overlay.
+  Tested: `tests/test_leak_invariant.py::test_two_addresses_run_together_are_both_claimed`.
+- **A zero-width space does not separate a word from an address.** Read
+  through, `Hallo<U+200B>erika@…` claims `Hallo` with the local part - the
+  over-redaction a text that separates words with zero-width spaces (Thai,
+  some CJK web copy) pays, as a glued word already does. Pinned by
+  `tests/test_leak_invariant.py::test_a_word_before_a_zero_width_space_goes_with_the_address`.
+- **Addresses not found, in any width.** An internationalised domain in a
+  non-Latin script (`erika@例え.jp` rather than its punycode); a local part
+  in circled letters; an address wrapped across a line; an address written
+  backwards under a right-to-left override. The gate shares these
   blind spots, and it reports a left-behind local part only when the whole
   local part survives. Pinned by
   `tests/test_leak_invariant.py::test_an_address_the_finder_cannot_read_is_a_documented_limit`,
