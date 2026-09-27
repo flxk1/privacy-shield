@@ -11,7 +11,7 @@ Sending a document to a cloud model sends every personal value in it. Detection 
 ## Install
 
 ```
-pip install "git+https://github.com/flxk1/privacy-shield.git@v2.0.0"
+pip install "git+https://github.com/flxk1/privacy-shield.git@v2.2.0"
 ```
 
 Zero required dependencies. Extras: `[national]` python-stdnum>=1.19 (23
@@ -24,12 +24,12 @@ measure, see [docs/limits.md](docs/limits.md)), `[freshness]` norm-freshness
 `privacy_shield/freshness.py`; not on PyPI as of this writing, only
 `[national]` is installable from PyPI today), `[semantic]` numpy>=1.24 +
 onnxruntime>=1.16 (embeddings/shadow ONNX), `[extract]` PyMuPDF>=1.23 +
-opencv-python-headless>=4.8 (PDF/image, PyMuPDF AGPL), `[openai]` openai>=1
+opencv-python-headless>=4.8 + Pillow>=10 (PDF/image, PyMuPDF AGPL), `[openai]` openai>=1
 (local-model client), `[dev]` pyyaml>=6 + pytest>=7 + hypothesis>=6 +
-schwifty>=2024 + python-stdnum>=1.19.
+schwifty>=2024 + python-stdnum>=1.19 + tomli>=2 (Python <3.11).
 
 State lands outside the package in `<user-state>/privacy-shield/`:
-`logs/audit.jsonl` and `privacy_skill_kg/`, lazy-made. User-state is
+`logs/audit.jsonl`, `breach_log/` and `privacy_skill_kg/`, lazy-made. User-state is
 `$XDG_STATE_HOME` (default `~/.local/state`), macOS `~/Library/Application
 Support`, Windows `%LOCALAPPDATA%`. `PRIVACY_SHIELD_AUDIT_LOG` and
 `PRIVACY_SHIELD_KG_DIR` override them.
@@ -74,7 +74,7 @@ egress. Placeholder data.
 
 ## Interface
 
-- `scan(target, *, mode, destination, redaction_mode, min_confidence, recursive, extensions, audit_log_path, tenant_id, user_id, force_text) -> ScanReport`
+- `scan(target, *, mode, destination, redaction_mode, min_confidence, hash_salt, recursive, extensions, audit_log_path, tenant_id, user_id, force_text) -> ScanReport`
 - `ScanReport(mode, destination, root, documents)` · `DocumentScan(overlay, spans, findings_by_type, egress_allowed, classification, blocked_reason, audit_id, errors)` · `SpanFinding(pii_type, start, end, confidence, layer, value, context)`
 - `PrivacyMode`: `STANDARD` · `LOCAL_ONLY` · `ANONYMOUS_JSON` · `REGEX_ONLY`. `RedactionMode`: `DETECT_ONLY` · `REDACT` · `PSEUDONYMIZE` · `HASH` · `BLOCK`.
 - egress guard: `PrivacyGate.check(data, destination) -> PrivacyGateResult` · `require_privacy_check` · `PrivacyGate.attach_enforcement_sink(sink)`
@@ -98,8 +98,12 @@ wraps this for agents: package/CLI needs nothing else; MCP requires
 
 ## Status
 
-2.0.0 · 984 tests, 974 passing (CI extras; 2 skip without httpx) · Python >=3.10 · limits and gaps:
+2.2.0 · 2087 tests, 2080 passing (CI extras; 3 skip without httpx, 4 without norm-freshness) · Python >=3.10 · limits and gaps:
 [docs/limits.md](docs/limits.md).
+
+## How this is made
+
+The code and documentation are written with Loomground agents. The maintainer reads and corrects all of it.
 
 ## License
 
