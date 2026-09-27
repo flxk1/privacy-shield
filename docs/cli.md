@@ -22,7 +22,7 @@ Keyword-only signature:
 ```
 scan(target, *, mode=PrivacyMode.STANDARD, destination="external_llm",
      redaction_mode=RedactionMode.REDACT, min_confidence=Confidence.MEDIUM,
-     recursive=True, extensions=<not passed>, audit_log_path=None,
+     hash_salt=None, recursive=True, extensions=<not passed>, audit_log_path=None,
      tenant_id="", user_id="", force_text=False) -> ScanReport
 ```
 
@@ -67,6 +67,7 @@ privacy-shield scan <path|-|text> [--mode STANDARD|LOCAL_ONLY|ANONYMOUS_JSON|REG
                                   [--audit-log PATH | --audit] [--no-recursive]
                                   [--all-files | --extensions .txt,.csv] [--text]
                                   [--include-original-values]
+                                  [--tenant-id ID] [--user-id ID]
 
 privacy-shield audit-path
 ```

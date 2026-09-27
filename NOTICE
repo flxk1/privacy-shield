@@ -12,7 +12,7 @@ and not bundled here:
   - [extract] PyMuPDF (AGPL-3.0 or Artifex commercial licence),
     opencv-python-headless (Apache-2.0). PyMuPDF is never a core dependency.
 
-Authorship: all code and documentation are authored by the project's human
-author(s), who hold the copyright. Generative AI tools assisted with development.
+The code and documentation are written with Loomground agents running on Claude
+(Anthropic). The maintainer reads and corrects all of it.
 An AI system is a tool: it is not an author or a contributor, holds no copyright
 and makes no copyright claim.
