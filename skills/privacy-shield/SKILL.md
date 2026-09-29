@@ -6,10 +6,9 @@ description: >-
   the only thing meant to leave the machine — then decide whether egress to an
   external service is allowed, by source classification. Personal data is found
   with a regex/lexicon floor plus an optional local embedding/LLM layer; the
-  value<->placeholder map stays local; this skill's own invocation always
-  passes `--audit` (or `--audit-log PATH`), so every decision it makes is
-  written to a local audit trail — the library default, used without either,
-  writes nothing. Works standalone with every Loomground plane optional. An external
+  value<->placeholder map stays local; this skill always passes `--audit` (or
+  `--audit-log PATH`), so every decision is written to a local audit trail
+  (the library alone writes none). Works standalone with every Loomground plane optional. An external
   enforcement host can attach behind the neutral sink interface
   that no-ops when absent. "Cleared" means the source class is allowed to egress,
   NOT a zero-residual certificate. Use when the user says "redact this", "clean
