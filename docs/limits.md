@@ -1960,25 +1960,34 @@ reordering a number.
 - A street with a suffix (-straße, -strasse, -str., -weg, -platz, -allee,
   -gasse, -ring, -damm, -ufer) and a house number is found alone; the number
   may carry a letter and a range ("90–92", "1-3"). So is a two-word street
-  of an adjective in -er and a street word ("Frankfurter Straße 5",
-  "Mariahilfer Straße 45"), except after Unser, Euer, Jeder and similar.
+  of a word in -er and Straße, Strasse, Str., Allee, Gasse, Chaussee,
+  Landstraße or Gürtel ("Frankfurter Straße 5", "Wiedner Gürtel 9"); Weg,
+  Platz and Ring are everyday nouns there ("Leider Platz 4") and do not count.
 - Found only before a postcode or after an address label (Anschrift,
   Adresse, wohnhaft, c/o, …): a street led by a preposition and article or
   an adjective ("Am Lindenhof", "An der Alster", "Unter den Linden", "Neuer
   Wall"), and a street ending in -hof, -markt, -kai, -wall, -graben, -steig,
-  -pfad, -stieg, -chaussee, -promenade, -deich or -kamp ("Jungfernstieg 7"),
-  since those endings also close Innenhof, Datenmarkt, Firewall and
-  Lernpfad. A postcode here is five digits, or four after "A-"/"CH-", after
-  a comma, a "·" or a line break, and its city must end the phrase (a comma,
-  a line end, a full stop or "am Main"): "Im Jahr 2024, 12000 Mitarbeiter
-  arbeiteten" has no street in it.
+  -pfad, -stieg, -chaussee, -promenade, -deich, -kamp or -gürtel
+  ("Jungfernstieg 7"), since those endings also close Innenhof, Datenmarkt,
+  Firewall and Lernpfad. A postcode here is five digits, or four after
+  "A-"/"CH-", after a comma, a "·" or a line break, and its city must end the
+  phrase (a comma, a line end, a full stop, ";" or ")").
+- Cost of that rule, measured: a compound or lead phrase before a real
+  postcode is taken for a street ("Der Datenmarkt 2025, 10115 Berlin", "Neue
+  Version 2, 10115 Berlin"), and so is a lead phrase before a count that ends
+  its phrase ("Im Jahr 2024, 12000 Mitarbeiter." becomes "[ADDRESS],
+  [LOCATION]."; main already made the count a [LOCATION]). Telling a city
+  from a plural noun would need a list of municipality names.
 - "Postfach" with a number of three or more digits, or grouped ("10 20
-  30"), is redacted as an address; "das Postfach 2 Tage" is not.
-- A four-digit postcode and city is found only directly after a found
-  street (", 1060 Wien", ", 8001 Zürich").
-- Still taken for a postcode and city, as before this change: five digits,
-  a capitalised word and one lowercase word ("12000 Mitarbeiter
-  arbeiteten" becomes [LOCATION]).
+  30"), that ends its phrase (a comma, a line end, a full stop or a
+  postcode) is an address; "das Postfach 250 ungelesene Mails" is not.
+- A four-digit postcode and city is found directly after a found street
+  (", 1060 Wien"), and any postcode with a country prefix ("CH-8640
+  Rapperswil", "A-1040 Wien", "D-10115 Berlin") is a postcode and city.
+- A German postcode and city takes a known place tail ("Frankfurt am Main",
+  "Freiburg im Breisgau", "Rothenburg ob der Tauber"), and, as before this
+  change, one lowercase word after the city, so "12000 Mitarbeiter
+  arbeiteten" is still [LOCATION]. "am Standort", "im Sommer" are not tails.
 - Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
   postcode written first ("A-1010 Wien, Am Hof 2"), house numbers written as
   words, and foreign street formats other than "12 Main Street".

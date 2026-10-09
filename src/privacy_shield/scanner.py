@@ -222,6 +222,12 @@ _H = r"[ \t]"
 # the like also end Innenhof, Datenmarkt, Firewall and Lernpfad, and are read
 # with an address around them (identifiers.find_lead_streets)
 _STREET_SUFFIX = r"straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer"
+# the place tails of German city names; "am Standort" and "im Sommer" are not
+_CITY_TAIL = (
+    r"(?:am[ \t]+(?:Main|Rhein|Neckar|Inn|Lech|See|Harz)|an[ \t]+der[ \t]+(?:Oder|Donau|Saale|Ruhr|Lahn|Havel|"
+    r"Ilm|Fils|Weinstraße|Elster|Wiese|Mosel)|im[ \t]+(?:Breisgau|Allgäu|Taunus|Odenwald|Schwarzwald|Fichtelgebirge|"
+    r"Hunsrück)|ob[ \t]+der[ \t]+Tauber|in[ \t]+der[ \t]+Oberpfalz|vor[ \t]+der[ \t]+Höhe)"
+)
 # "12a", and a range "90–92" or "1-3", which used to leave its second half
 _HOUSE_NUMBER = rf"\d+[a-z]?(?:{_H}*[-–]{_H}*\d+[a-z]?)?\b"
 
@@ -374,13 +380,21 @@ LAYER_2_PATTERNS: List[PatternDef] = [
         description="Street address",
     ),
 
+    # "CH-8640 Rapperswil", "A-1040 Wien", "D-10115 Berlin": the ticket shape took the prefix
+    PatternDef(
+        pattern=_compile(rf"\b(?:A|AT|CH|D)-\d{{4,5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+\b"),
+        pii_type=PIIType.PLZ_CITY,
+        confidence=Confidence.HIGH,
+        description="Country-prefixed postal code and city",
+    ),
+
     # German postal code + city
     PatternDef(
-        # "60311 Frankfurt am Main", "78462 Konstanz" - and, as before, one
+        # "60311 Frankfurt am Main", "79098 Freiburg im Breisgau" - and, as before, one
         # lowercase word after the city, which also takes "12000 Mitarbeiter arbeiteten"
         pattern=_compile(
             rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+"
-            rf"(?:{_H}+(?:am|an{_H}+der|im|ob{_H}+der|bei){_H}+[A-ZÄÖÜ][a-zäöüß]+|{_H}+[a-zäöüß]+)?\b"
+            rf"(?:{_H}+{_CITY_TAIL}|{_H}+[a-zäöüß]+)?\b"
         ),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,

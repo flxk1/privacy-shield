@@ -50,3 +50,29 @@ def test_compounds_and_counts_are_not_addresses(text):
 
 def test_a_count_after_a_lead_phrase_is_not_a_postcode():
     assert "Im Kapitel 3" in scan("Im Kapitel 3, 12500 Wörter genügen dafür.").documents[0].overlay
+
+
+@pytest.mark.parametrize("text", [
+    "Leider Platz 4 im Gesamtranking.", "Oder Weg 2?", "Neuer Weg 2026 für die Firma.",
+    "Das Postfach 250 ungelesene Mails enthält.", "Im Postfach 120 neue Nachrichten.",
+])
+def test_round_23_look_alikes_stay(text):
+    assert scan(text).documents[0].overlay == text
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("Wir erwarten 10000 Besucher im Sommer.", "Sommer"),
+    ("12000 Mitarbeiter am Standort arbeiten hier.", "Standort"),
+])
+def test_only_place_tails_extend_a_city(text, kept):
+    assert kept in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ("79098 Freiburg im Breisgau", "Breisgau"),
+    ("Wiedner Gürtel 9, A-1040 Wien", "Gürtel"),
+    ("Seestrasse 3, CH-8640 Rapperswil", "8640"),
+    ("Postfach 1234, 10115 Berlin", "1234"),
+])
+def test_place_tails_country_prefixes_and_po_boxes(text, hidden):
+    assert hidden not in scan(text).documents[0].overlay

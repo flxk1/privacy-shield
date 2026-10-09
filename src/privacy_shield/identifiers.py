@@ -967,13 +967,14 @@ _LEAD_STREET = re.compile(
     _STREET_LEAD + r"(?:[ \t]+[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*){1,2}" + _NUMBER
     # "Am Hof 2" leads; "Jungfernstieg 7", "Fischmarkt 4", "Neuer Wall 50" end in a street word
     + r"|\b(?:[A-ZÄÖÜ][a-zäöüß]+-)*[A-ZÄÖÜ][a-zäöüß]+"
-    r"(?:hof|markt|kai|wall|graben|steig|pfad|stieg|chaussee|promenade|deich|kamp)" + _NUMBER
+    r"(?:hof|markt|kai|wall|graben|steig|pfad|stieg|chaussee|promenade|deich|kamp|gürtel)" + _NUMBER
 )
 # "Frankfurter Straße 5", "Mariahilfer Straße 45": an adjective in -er, then
 # the street word - which names a street on its own, with no postcode needed
 _TWO_WORD_STREET = re.compile(
+    # Weg, Platz and Ring are everyday nouns ("Leider Platz 4", "Neuer Weg 2026")
     r"\b(?!(?:Unser|Euer|Ihrer|Jeder|Aller|Einer|Dieser)\b)[A-ZÄÖÜ][a-zäöüß]+er[ \t]+"
-    r"(?:Straße|Strasse|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm|Chaussee|Landstraße)" + _NUMBER
+    r"(?:Straße|Strasse|Str\.|Allee|Gasse|Chaussee|Landstraße|Gürtel)" + _NUMBER
 )
 # a city ends its phrase: "10115 Berlin," or a line end, not "12000 Mitarbeiter arbeiteten"
 _CITY_END = r"[A-ZÄÖÜ][a-zäöüß]+(?:[ \t]+(?:am|an[ \t]+der|im|ob[ \t]+der|bei)[ \t]+[A-ZÄÖÜ][a-zäöüß]+)?(?=[ \t]*(?:$|[,;\n)]|\.(?:[ \t]|$)))"
@@ -983,7 +984,10 @@ _POSTCODE_AFTER = re.compile(
 _ADDRESS_LABEL = re.compile(
     r"(?i)(?:anschrift|adresse|wohnhaft|wohnt|lieferanschrift|rechnungsanschrift|c/o|sitz)[^\n]{0,30}$")
 # "Postfach 10 20 30", "Postfach 1234"; not "das Postfach 2 Tage nicht geleert"
-_PO_BOX = re.compile(r"\bPostfach[ \t]+(?:\d{3,6}|\d{1,2}(?:[ \t]\d{2,3}){1,3})\b")
+# ... and it ends its phrase: "Postfach 250 ungelesene Mails" counts an inbox
+_PO_BOX = re.compile(
+    r"\bPostfach[ \t]+(?:\d{3,6}|\d{1,2}(?:[ \t]\d{2,3}){1,3})\b"
+    r"(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t]|$)|(?:[A-Z]{1,2}-)?\d{4,5}[ \t]))", re.MULTILINE)
 # Austrian and Swiss postcodes have four digits; one directly after a street
 _FOUR_DIGIT_CITY = re.compile(r"\A[ \t]*[,·][ \t]*((?:(?:A|CH)-)?\d{4}[ \t]+" + _CITY_END + ")", re.MULTILINE)
 
