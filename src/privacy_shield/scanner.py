@@ -36,6 +36,8 @@ class PIIType(str, Enum):
     #: Only produced when that optional extra is installed AND a country is
     #: configured; otherwise this type never appears.
     NATIONAL_ID = "national_id"
+    #: A credential: API key, access token, private key, or a password value.
+    SECRET = "secret"
 
     # Layer 2: Quasi-identifiers
     NAME = "name"
@@ -171,6 +173,8 @@ class PatternDef:
     # characters on either side; None means the match stands on its own.
     requires_context: Optional[Pattern] = None
     context_window: int = 60
+    # A match does not count when this matches the text just before it.
+    rejects_context: Optional[Pattern] = None
 
 
 def _compile(pattern: str, flags: int = re.IGNORECASE) -> Pattern:
@@ -235,6 +239,41 @@ _NOT_DIGIT_AFTER = r"(?!\d)"
 # -----------------------------------------------------------------------------
 
 LAYER_1_PATTERNS: List[PatternDef] = [
+    # Credentials, by issuer shape. A key that leaves is usable by whoever holds
+    # it, so these are claimed whole.
+    PatternDef(
+        pattern=_compile(
+            r"\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}"
+            r"|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}"
+            r"|glpat-[A-Za-z0-9_\-]{20,}"
+            r"|xox[abprs]-[A-Za-z0-9\-]{10,}"
+            r"|sk-ant-[A-Za-z0-9_\-]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_\-]{20,}"
+            r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"
+            r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,})",
+            flags=0,
+        ),
+        pii_type=PIIType.SECRET,
+        confidence=Confidence.HIGH,
+        description="API key or access token",
+    ),
+    PatternDef(
+        pattern=_compile(
+            r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY-----",
+            flags=0,
+        ),
+        pii_type=PIIType.SECRET,
+        confidence=Confidence.HIGH,
+        description="Private key block",
+    ),
+    PatternDef(
+        pattern=_compile(
+            r"\b(?:passwort|password|kennwort|passwd|pwd|api[_\-]?key|access[_\-]?token|"
+            r"client[_\-]?secret)\b[ \t]*[:=][ \t]*[\"']?[^\s\"']{6,}"
+        ),
+        pii_type=PIIType.SECRET,
+        confidence=Confidence.HIGH,
+        description="Credential value after a label",
+    ),
     # Email - RFC 5322 simplified
     PatternDef(
         pattern=_compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
@@ -411,6 +450,10 @@ LAYER_3_PATTERNS: List[PatternDef] = [
         pii_type=PIIType.ICD_CODE,
         confidence=Confidence.MEDIUM,
         description="ICD code",
+        rejects_context=_compile(
+            r"(?:Anlage|Anhang|Version|Ziffer|Nr\.|Art\.|§|Abschnitt|Kapitel|Tabelle|Abb\.|"
+            r"Annex|Appendix|Section|Table|Fig\.|Release|Build)[ \t]*$"
+        ),
     ),
     PatternDef(
         pattern=_compile(r"\b[A-Z]\d{2}\b(?![.,]\d)"),
@@ -470,7 +513,7 @@ LAYER_3_PATTERNS: List[PatternDef] = [
         confidence=Confidence.MEDIUM,
         description="Political opinion beside a political word",
         requires_context=_compile(
-            r"\b(?:Partei\w*|Wahlen|Wahlkampf\w*|Wähler\w*|(?:Bundestags|Landtags|Kommunal|Europa|Präsidentschafts|Bürgermeister)wahl(?:en)?|wählt|"
+            r"\b(?:Partei(?!en\b)\w*|Wahlen|Wahlkampf\w*|Wähler\w*|(?:Bundestags|Landtags|Kommunal|Europa|Präsidentschafts|Bürgermeister)wahl(?:en)?|wählt|"
             r"politisch\w*|Gesinnung|Abgeordnet\w*|Bundestag|Landtag|Fraktion|"
             r"extremis\w*|Demonstration\w*|party|election\w*|voter?s?|political\w*|politics)\b"
         ),
@@ -865,6 +908,10 @@ class PrivacyScanner:
 
             for match in pattern_def.pattern.finditer(haystack):
                 start, end = match.start(), match.end()
+
+                if pattern_def.rejects_context is not None:
+                    if pattern_def.rejects_context.search(haystack[max(0, start - 24):start]):
+                        continue
 
                 if pattern_def.requires_context is not None:
                     w = pattern_def.context_window

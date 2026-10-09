@@ -58,7 +58,9 @@ handling: [docs/cli.md](docs/cli.md).
 `egress_allowed` is a verdict on the source CLASS — privacy mode plus the
 confidential / professional-secrecy / special-category tiers — and not a
 certificate of zero residual. Gating on what survives in the overlay would clear
-an over-redacted privileged document, so the gate does not look there. What
+an over-redacted privileged document, so the gate does not look there. A
+document that was not fully read (an extraction error, an unsupported format,
+binary content, or a non-empty file with no text) is never cleared. What
 "cleared" does and does not cover: [docs/limits.md](docs/limits.md).
 
 ## Example

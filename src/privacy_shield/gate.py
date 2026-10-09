@@ -62,36 +62,44 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _ART9_PATTERNS: Dict[str, List[str]] = {
     "health": [
-        r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|treatment|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
-        r"\b(krankenhaus|arzt|diagnose|krankheit|behandlung|medikament|patient|therapie|symptom)\b",
+        r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
+        r"\b(krankenhaus|klinik\w*|arzt|ärztin|diagnose\w*|krankheit|erkrankung|medikament\w*|patient\w*|therapie|symptom\w*|befund\w*|depression|chemotherapie|dialyse|onkologie|psychiatrie|psychotherap\w*|arbeitsunfähig\w*|krankschreibung)\b",
     ],
     "genetic": [
-        r"\b(dna|genetic|genome|hereditary|chromosom|mutation|gene\s*test)\b",
-        r"\b(genetisch|erbkrankheit|genom)\b",
+        r"\b(dna|genetic|genome|hereditary|chromosom\w*|gene\s*test)\b",
+        r"\b(genetisch|erbkrankheit|genom|gentest)\b",
     ],
     "biometric": [
         r"\b(fingerprint|retina|iris\s*scan|face\s*recognition|biometric|voice\s*print)\b",
         r"\b(fingerabdruck|biometrisch|gesichtserkennung)\b",
     ],
     "political": [
-        r"\b(political\s*party|political\s*opinion|vote|voting|election)\b",
-        r"\b(partei|politisch|wahl)\b",
+        r"\b(political\s*party|political\s*opinion|party\s*member|voted\s*for)\b",
+        r"\b(parteimitglied\w*|politische\s*(meinung|gesinnung|zugehörigkeit)|mitglied\s+(der|in\s+der)\s+(cdu|csu|spd|afd|fdp|grünen|linken|bsw|partei))\b",
     ],
     "religious": [
-        r"\b(religion|religious|church|mosque|synagogue|temple)\b",
-        r"\b(kirche|moschee|synagoge|glaube|religiös)\b",
+        r"\b(religion|religious|church\s*member|mosque|synagogue)\b",
+        r"\b(konfession|religionszugehörigkeit|kirchensteuer\w*|kirchenaustritt|moschee|synagoge|religiös)\b",
     ],
     "union": [
-        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsrat)\b",
+        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft\w*|ig\s*metall|ver\.di|ig\s*bce)\b",
     ],
     "sexual": [
         r"\b(sexual\s*orientation|gay|lesbian|bisexual|transgender|lgbtq)\b",
-        r"\b(sexuelle\s*orientierung|geschlechtsidentität)\b",
+        r"\b(sexuelle\s*orientierung|geschlechtsidentität|homosexuell\w*)\b",
     ],
     "criminal": [
-        r"\b(criminal\s*record|conviction|offence|offense|felony|misdemeanor)\b",
-        r"\b(vorstrafe|strafregister|verurteilung)\b",
+        r"\b(criminal\s*record|felony|misdemeanor)\b",
+        r"\b(vorstrafe\w*|strafregister|führungszeugnis\s+mit\s+eintrag|verurteilung\w*)\b",
     ],
+}
+
+# Scanner findings that are Art. 9 categories; their patterns carry context gates
+# the keyword list above cannot express.
+_ART9_SCANNER_TYPES = {
+    "icd_code": "health", "health_data": "health", "biometric": "biometric",
+    "political": "political", "religious": "religious", "union": "union",
+    "sexual": "sexual", "criminal": "criminal", "genetic": "genetic",
 }
 
 # Compiled patterns for performance
@@ -109,16 +117,22 @@ _PII_REDACT_PATTERNS = [
     (re.compile(r"\b\d{11}\b"), "[ID_NUMBER]"),
 ]
 
-# Destinations considered external (data leaves the machine)
-_EXTERNAL_DESTINATIONS = frozenset({
-    "external_llm",
-    "openai",
-    "anthropic",
-    "azure_openai",
-    "datev",
-    "elster",
-    "third_party_api",
+# Destinations that keep data on this machine. Every other destination, an
+# unknown or misspelt one included, is external: an allow-list of external
+# names failed open on "OpenAI", "gemini" or " openai".
+_LOCAL_DESTINATIONS = frozenset({
+    "local", "local_only", "local_llm", "on_device", "localhost", "loopback",
+    "ollama", "lm_studio", "lmstudio", "llamacpp", "llama_cpp",
 })
+# Kept for callers that import it; no longer consulted by the gate.
+_EXTERNAL_DESTINATIONS = frozenset({
+    "external_llm", "openai", "anthropic", "azure_openai", "datev", "elster", "third_party_api",
+})
+
+
+def is_external_destination(destination: Any) -> bool:
+    name = str(destination or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return name not in _LOCAL_DESTINATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +314,7 @@ class PrivacyGate:
         mode = self._get_privacy_mode(tenant_id)
         text = self._extract_text(data)
         classification = self.classify_data(text)
-        is_external = destination in _EXTERNAL_DESTINATIONS
+        is_external = is_external_destination(destination)
 
         # --- Rule 1: LOCAL_ONLY blocks all external destinations ----------
         if mode == "local_only" and is_external:
@@ -465,6 +479,11 @@ class PrivacyGate:
                 if pat.search(text_lower):
                     hits.append(category)
                     break
+        from .scanner import PrivacyScanner
+        for finding in PrivacyScanner().scan(text).findings:
+            category = _ART9_SCANNER_TYPES.get(getattr(finding.pii_type, "value", ""))
+            if category and category not in hits:
+                hits.append(category)
         return hits
 
     def classify_data(self, text: str) -> str:
@@ -510,6 +529,11 @@ class PrivacyGate:
 
         # Art. 9 special categories → at least confidential
         if self.check_art9(text):
+            return "confidential"
+
+        # Credentials → confidential: a key that leaves is usable by the recipient
+        from .scanner import PIIType, PrivacyScanner
+        if any(f.pii_type == PIIType.SECRET for f in PrivacyScanner(layers=[1]).scan(text).findings):
             return "confidential"
 
         # Financial / tax / personal identifiers → internal

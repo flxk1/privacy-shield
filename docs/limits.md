@@ -1146,6 +1146,37 @@ next round starts from this rather than rediscovering it:
 
 ## Known gaps
 
+**Unread input is never cleared.** A document with an extraction error, an
+unsupported format, binary content (NUL after decoding), or no text from a
+non-empty file gets `egress_allowed: false` with the reason "input not fully
+read". Text files are decoded by byte-order mark (UTF-8, UTF-16, UTF-32), then
+UTF-8, then cp1252; an unmarked UTF-16 file is treated as unread, not guessed.
+
+**Destinations are external unless named local.** Only `local`, `local_only`,
+`local_llm`, `on_device`, `localhost`, `loopback`, `ollama`, `lm_studio`,
+`lmstudio`, `llamacpp` and `llama_cpp` (case, spaces and hyphens normalised)
+keep data on the machine. Any other value, an empty or misspelt one included,
+is external.
+
+**Art. 9 verdicts.** The gate counts a special category when its keyword list
+matches or when the scanner reports an Art. 9 type (with that type's context
+gates). Named inference cues: Konfession and Kirchensteuer codes, union names
+(IG Metall, ver.di, IG BCE), "Mitglied der <party>", and ward or specialty
+names (Onkologie, Psychiatrie, Dialyse, Chemotherapie). Not found: a drug
+name beside a person with no medical word, a partner's name that reveals
+orientation, a party acronym without a membership cue, and diet or prayer
+hints. A dotted code right after Anlage, Version, Ziffer, §, Abschnitt and
+similar labels is a reference, not a diagnosis.
+
+**Secrets by issuer shape.** AWS access keys (AKIA/ASIA), GitHub (ghp_,
+gho_, ghu_, ghs_, ghr_, github_pat_), GitLab (glpat-), Slack (xox?-),
+Anthropic (sk-ant-), OpenAI-style (sk-, sk-proj-, sk-svcacct-), Stripe
+(sk_/rk_ live or test), JWTs, PEM private-key blocks, and a value of six or
+more characters after Passwort / password / Kennwort / pwd / api_key /
+access_token / client_secret with ":" or "=". A secret makes the source
+confidential. Not found: generic high-entropy strings with no issuer prefix
+or label, and passwords written in prose without a label.
+
 **Two Article 9 shapes count only beside a context word.** A bare ICD code
 (`H73`) is a diagnosis only when a medical word (Diagnose, Befund, ICD,
 Patient, Arzt, Klinik, Krankenhaus, ...) lies wholly within 60 characters

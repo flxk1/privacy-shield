@@ -776,7 +776,9 @@ def test_all_files_disables_filtering_entirely(tmp_path):
     assert report.document_count == 1
     assert report.filtered_files == []
     assert report.walk_errors == []
-    assert report.all_allowed is True
+    # the file is walked but cannot be read as a spreadsheet: nothing may leave
+    assert report.all_allowed is False
+    assert "not fully read" in report.documents[0].blocked_reason
 
 
 # ---------------------------------------------------------------------------

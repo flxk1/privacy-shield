@@ -506,20 +506,9 @@ class DocumentExtractor:
     def _extract_text(self, path: Path, result: ExtractionResult) -> None:
         """Extract text from plain text file."""
         result.extraction_method = ExtractionMethod.DIRECT
-
-        # Try different encodings
-        encodings = ["utf-8", "latin-1", "cp1252"]
-        text = None
-
-        for encoding in encodings:
-            try:
-                text = path.read_text(encoding=encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-
+        text = decode_text_bytes(path.read_bytes())
         if text is None:
-            result.errors.append("Could not decode text file with any supported encoding")
+            result.errors.append("Could not decode text file: binary content or unsupported encoding")
             return
 
         result.pages.append(PageContent(
@@ -541,6 +530,39 @@ class DocumentExtractor:
             has_images=True,
             ocr_used=True,
         ))
+
+
+_BOMS = (
+    (b"\xef\xbb\xbf", "utf-8-sig"),
+    (b"\xff\xfe\x00\x00", "utf-32-le"),
+    (b"\x00\x00\xfe\xff", "utf-32-be"),
+    (b"\xff\xfe", "utf-16-le"),
+    (b"\xfe\xff", "utf-16-be"),
+)
+
+
+def decode_text_bytes(data: bytes) -> Optional[str]:
+    """Decode *data* as text, or return None when it is not text.
+
+    A byte-order mark decides the encoding. Without one, UTF-8 is tried, then
+    cp1252. NUL in the result means binary or an unmarked UTF-16/32 file: a
+    single-byte decode of those would hand the scanner text with NUL between
+    every character, and nothing in it would match.
+    """
+    for bom, encoding in _BOMS:
+        if data.startswith(bom):
+            try:
+                text = data[len(bom):].decode(encoding.replace("-sig", ""))
+            except UnicodeDecodeError:
+                return None
+            return None if "\x00" in text else text
+    for encoding in ("utf-8", "cp1252"):
+        try:
+            text = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        return None if "\x00" in text else text
+    return None
 
 
 def extract_document(

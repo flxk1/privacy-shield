@@ -1694,10 +1694,9 @@ def test_a_media_file_nobody_read_is_not_covered_by_all_allowed(tmp_path):
             "the documented aggregate still certifies a video no channel read"
         )
         assert video in report.incomplete_documents
-        # The per-document gate verdict is deliberately unchanged: it answers a
-        # different question (source classification), and is documented as
-        # answering it.
-        assert video.egress_allowed is True
+        # A document no channel read fully is never cleared to leave: the
+        # per-document verdict fails closed as well as the aggregate.
+        assert video.egress_allowed is False
 
     # A document that WAS fully read is not tainted by its neighbour.
     assert text.scan_complete is True

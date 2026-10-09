@@ -30,12 +30,13 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from ._legacy_env import reject_legacy_env
 from .utils.file_io import path_exists
 from .anonymous_json import anonymize_for_cloud
-from .gate import PrivacyGate
+from .gate import PrivacyGate, PrivacyGateResult
 from .redactor import RedactionMode, SelectionMode
 from .scanner import Confidence, ScanResult
 from .media._tools import CHANNEL_UNAVAILABLE
@@ -537,6 +538,18 @@ def _residual(source: str, overlay: str, findings) -> int:
     return misplaced + len({v for v in values if v.strip() and v in overlay})
 
 
+def _unread_reason(source: str, result: ShieldResult) -> str:
+    if result.errors:
+        return result.errors[0]
+    if not result.extracted_text:
+        try:
+            if os.path.isfile(source) and os.path.getsize(source) > 0:
+                return "no text could be extracted from a non-empty file"
+        except OSError:
+            return "file could not be inspected"
+    return ""
+
+
 def _process_one(
     shield: PrivacyShield,
     gate: PrivacyGate,
@@ -562,6 +575,12 @@ def _process_one(
         tenant_id=tenant_id,
         user_id=user_id,
     )
+    unread = _unread_reason(source, result)
+    if unread:
+        verdict = PrivacyGateResult(
+            allowed=False, mode=verdict.mode, classification="confidential",
+            blocked_reason=f"input not fully read, so nothing may leave: {unread}",
+        )
 
     return DocumentScan(
         source_residual=_residual(result.extracted_text, overlay, result.findings),

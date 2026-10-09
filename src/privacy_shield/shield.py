@@ -853,12 +853,16 @@ class PrivacyShield:
                 self._process_video(path, result)
             else:
                 # Try as text file
+                from .extractor import decode_text_bytes
                 try:
-                    text = path.read_text()
+                    text = decode_text_bytes(path.read_bytes())
+                except Exception:
+                    text = None
+                if text is None:
+                    result.errors.append(f"Unknown file type: {path.suffix}")
+                else:
                     result.extracted_text = text
                     result.extraction_method = "direct_read"
-                except Exception:
-                    result.errors.append(f"Unknown file type: {path.suffix}")
 
         except Exception as e:
             result.errors.append(f"Processing error: {str(e)}")
