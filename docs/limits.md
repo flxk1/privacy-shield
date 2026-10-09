@@ -1147,13 +1147,16 @@ next round starts from this rather than rediscovering it:
 ## Known gaps
 
 **Two Article 9 shapes count only beside a context word.** A bare ICD code
-(`H73`) is a diagnosis only within 60 characters of a medical word
-(Diagnose, Befund, ICD, Patient, ...); the dotted form (`F32.1`) stands on
-its own. The single words `links`, `rechts`, `liberal`, `gewählt` and the
-like are a political opinion only within 60 characters of a political word
-(Partei, Wahl, politisch, ...). A diagnosis list of bare codes with no
-medical word, or a political leaning stated in a single word with nothing
-political around it, is not found. Both shapes previously fired on every
+(`H73`) is a diagnosis only when a medical word (Diagnose, Befund, ICD,
+Patient, Arzt, Klinik, Krankenhaus, ...) lies wholly within 60 characters
+before or after it; the dotted form (`F32.1`, `U07.1`) stands on its own. The
+single words `links`, `rechts`, `liberal`, `conservative` and `gewählt` are a
+political opinion only beside a political word (Partei, Wahlen,
+Bundestagswahl, politisch, ...) within the same 60 characters; party nouns
+such as `Kommunist` or `socialist` stand on their own. Not found: a list or
+table of bare codes whose medical heading is more than 60 characters away
+(a diagnosis table loses every bare code), and a political leaning stated in
+one of the ambiguous words with nothing political nearby. Both shapes previously fired on every
 file number, paper size, floor plan and option choice, and a false Article 9
 finding forces the confidential tier on the whole document.
 

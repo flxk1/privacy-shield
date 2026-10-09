@@ -403,25 +403,24 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 # -----------------------------------------------------------------------------
 
 LAYER_3_PATTERNS: List[PatternDef] = [
-    # ICD-10 codes. The dotted form (F32.1) is distinctive enough on its own;
-    # the bare form (H73) is also a file number, a paper size, a vitamin, and
-    # counts only beside a medical word.
+    # ICD-10 codes. The dotted form (F32.1, U07.1) is distinctive enough on its
+    # own; the bare form (H73) is also a file number, a paper size, a vitamin,
+    # and counts only beside a medical word.
     PatternDef(
-        pattern=_compile(r"\b[A-TV-Z]\d{2}\.\d{1,2}\b", flags=0),
+        pattern=_compile(r"\b[A-Z]\d{2}\.\d{1,2}\b"),
         pii_type=PIIType.ICD_CODE,
         confidence=Confidence.MEDIUM,
         description="ICD code",
     ),
     PatternDef(
-        pattern=_compile(r"\b[A-TV-Z]\d{2}\b(?![.,]\d)", flags=0),
+        pattern=_compile(r"\b[A-Z]\d{2}\b(?![.,]\d)"),
         pii_type=PIIType.ICD_CODE,
         confidence=Confidence.MEDIUM,
         description="ICD code beside a medical word",
         requires_context=_compile(
-            r"\b(?:ICD|diagnos\w*|Befund\w*|Verdacht|Erkrankung\w*|Krankheit\w*|"
-            r"Patient\w*|ärztlich\w*|Arzt|Ärztin|Klinik\w*|Praxis|Krankschreibung|"
-            r"arbeitsunfähig\w*|AU-Bescheinigung|Anamnese|Therapie|Behandlung|"
-            r"disease|condition|physician|clinic\w*|medical)\b"
+            r"(?:ICD|diagnos|befund|erkrank|krank|patient|ärzt|arzt|klinik|"
+            r"hospital|spital|anamnese|therap|arbeitsunfähig|"
+            r"disease|doctor|physician|clinic|medical|discharge)"
         ),
     ),
 
@@ -451,27 +450,29 @@ LAYER_3_PATTERNS: List[PatternDef] = [
         description="Biometric data reference",
     ),
 
-    # Political opinions. The phrases name the category themselves; the single
-    # words are also directions, floors and option choices ("4. OG links",
-    # "Sie haben B gewählt") and count only beside a political word.
+    # Political opinions. The phrases and the party-membership nouns name the
+    # category themselves; the single words that are also directions, floors,
+    # option choices and estimates ("4. OG links", "Sie haben B gewählt",
+    # "a conservative estimate") count only beside a political word.
     PatternDef(
         pattern=_compile(
             r"\b(?:party\s+member|Parteimitglied|political\s+(?:opinion|affiliation)|"
-            r"politische\s+(?:Meinung|Zugehörigkeit)|vote[sd]?\s+for)\b"
+            r"politische\s+(?:Meinung|Zugehörigkeit)|vote[sd]?\s+for|"
+            r"kommunist\w*|communist\w*|sozialist\w*|socialist\w*)\b"
         ),
         pii_type=PIIType.POLITICAL,
         confidence=Confidence.MEDIUM,
         description="Political opinion",
     ),
     PatternDef(
-        pattern=_compile(r"\b(?:gewählt|conservative|liberal|socialist|kommunist\w*|rechts|links)\b"),
+        pattern=_compile(r"\b(?:gewählt|conservative|liberal|rechts|links)\b"),
         pii_type=PIIType.POLITICAL,
         confidence=Confidence.MEDIUM,
         description="Political opinion beside a political word",
         requires_context=_compile(
-            r"\b(?:Partei\w*|Wahl\w*|wählt\w*|politisch\w*|Gesinnung|Abgeordnet\w*|"
-            r"Bundestag|Landtag|Fraktion|extrem\w*|Demonstration\w*|"
-            r"party|election\w*|voter?s?|political\w*|politics)\b"
+            r"\b(?:Partei\w*|Wahlen|Wahlkampf\w*|Wähler\w*|(?:Bundestags|Landtags|Kommunal|Europa|Präsidentschafts|Bürgermeister)wahl(?:en)?|wählt|"
+            r"politisch\w*|Gesinnung|Abgeordnet\w*|Bundestag|Landtag|Fraktion|"
+            r"extremis\w*|Demonstration\w*|party|election\w*|voter?s?|political\w*|politics)\b"
         ),
     ),
 
