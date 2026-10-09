@@ -61,46 +61,55 @@ logger = logging.getLogger(__name__)
 # Art. 9 GDPR special category patterns (mirrored from routes/privacy_shield)
 # ---------------------------------------------------------------------------
 _ART9_PATTERNS: Dict[str, List[str]] = {
+    # main's list, minus the words that are mostly not Art. 9 in business text
+    # (treatment, vote, voting, election, partei, wahl, glaube, mutation,
+    # conviction, offence, temple, verurteilung: a civil judgment "zur Zahlung
+    # verurteilt" is not criminal-record data), plus cues shaped as a person's membership
+    # or status, which name the category themselves.
     "health": [
         r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
-        r"\b(krankenhaus|klinik\w*|arzt|ärztin|diagnose\w*|krankheit|erkrankung|medikament\w*|patient\w*|therapie|symptom\w*|befund\w*|depression|chemotherapie|dialyse|onkologie|psychiatrie|psychotherap\w*|arbeitsunfähig\w*|krankschreibung)\b",
+        r"\b(krankenhaus|arzt|diagnose|krankheit|medikament|patient|therapie|symptom)\b",
+        r"\bstation\s+(onkologie|psychiatrie|kardiologie|neurologie|dialyse|intensiv\w*|palliativ\w*|geriatrie|suchtmedizin)\b",
     ],
     "genetic": [
-        r"\b(dna|genetic|genome|hereditary|chromosom\w*|gene\s*test)\b",
-        r"\b(genetisch|erbkrankheit|genom|gentest)\b",
+        r"\b(dna|genetic|genome|hereditary|chromosom|gene\s*test)\b",
+        r"\b(genetisch|erbkrankheit|genom)\b",
     ],
     "biometric": [
         r"\b(fingerprint|retina|iris\s*scan|face\s*recognition|biometric|voice\s*print)\b",
         r"\b(fingerabdruck|biometrisch|gesichtserkennung)\b",
     ],
     "political": [
-        r"\b(political\s*party|political\s*opinion|party\s*member|voted\s*for)\b",
-        r"\b(parteimitglied\w*|politische\s*(meinung|gesinnung|zugehörigkeit)|mitglied\s+(der|in\s+der)\s+(cdu|csu|spd|afd|fdp|grünen|linken|bsw|partei))\b",
+        r"\b(political\s*party|political\s*opinion|party\s*member)\b",
+        r"\b(politisch|parteimitglied\w*)\b",
+        r"\bmitglied\s+(der|in\s+der)\s+(cdu|csu|spd|afd|fdp|grünen|linken|bsw)\b",
     ],
     "religious": [
-        r"\b(religion|religious|church\s*member|mosque|synagogue)\b",
-        r"\b(konfession|religionszugehörigkeit|kirchensteuer\w*|kirchenaustritt|moschee|synagoge|religiös)\b",
+        r"\b(religion|religious|church|mosque|synagogue)\b",
+        r"\b(kirche|moschee|synagoge|religiös)\b",
+        r"\b(konfession|religionszugehörigkeit)\s*[:=]\s*\w+",
+        r"\b(aus\s+der\s+kirche\s+ausgetreten|kirchenaustritt)\b",
+        r"\bkirchensteuermerkmal\s*[:=]?\s*(rk|ev|ak|lt|rf|fr|fb|fg|fm|fs|ib|ih|il|is|iw|jd|jh|jj|jl)\b",
     ],
     "union": [
-        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft\w*|ig\s*metall|ver\.di|ig\s*bce)\b",
+        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsrat)\b",
+        r"\bmitglied\s+(der|in\s+der|im)\s+(ig\s*metall|ver\.di|ig\s*bce|gew|ngg|evg|gewerkschaft\w*|marburger\s+bund)\b",
     ],
     "sexual": [
         r"\b(sexual\s*orientation|gay|lesbian|bisexual|transgender|lgbtq)\b",
-        r"\b(sexuelle\s*orientierung|geschlechtsidentität|homosexuell\w*)\b",
+        r"\b(sexuelle\s*orientierung|geschlechtsidentität)\b",
     ],
     "criminal": [
         r"\b(criminal\s*record|felony|misdemeanor)\b",
-        r"\b(vorstrafe\w*|strafregister|führungszeugnis\s+mit\s+eintrag|verurteilung\w*)\b",
+        r"\b(vorstrafe\w*|vorbestraft|strafregister)\b",
     ],
 }
 
-# Scanner findings that are Art. 9 categories; their patterns carry context gates
-# the keyword list above cannot express.
-_ART9_SCANNER_TYPES = {
-    "icd_code": "health", "health_data": "health", "biometric": "biometric",
-    "political": "political", "religious": "religious", "union": "union",
-    "sexual": "sexual", "criminal": "criminal", "genetic": "genetic",
-}
+# Scanner findings the gate counts as Art. 9. Only the types whose scanner
+# patterns carry a context gate: the scanner's plain health, criminal,
+# biometric and genetic keywords would block "die Diagnose der
+# Netzwerkstörung" or "die Große Depression 1929".
+_ART9_SCANNER_TYPES = {"icd_code": "health", "political": "political"}
 
 # Compiled patterns for performance
 _ART9_COMPILED: Dict[str, List[re.Pattern]] = {

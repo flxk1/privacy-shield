@@ -249,7 +249,9 @@ LAYER_1_PATTERNS: List[PatternDef] = [
             r"|xox[abprs]-[A-Za-z0-9\-]{10,}"
             r"|sk-ant-[A-Za-z0-9_\-]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_\-]{20,}"
             r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"
-            r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,})",
+            r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"
+            r"|AIza[0-9A-Za-z_\-]{35}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,}"
+            r"|xapp-[A-Za-z0-9\-]{10,})",
             flags=0,
         ),
         pii_type=PIIType.SECRET,
@@ -258,7 +260,20 @@ LAYER_1_PATTERNS: List[PatternDef] = [
     ),
     PatternDef(
         pattern=_compile(
-            r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY-----",
+            r"https://hooks\.slack\.com/services/[A-Za-z0-9/]{20,}"
+            r"|\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:[^\s/@]+@[^\s/]+"
+            r"|\bAccountKey=[A-Za-z0-9+/=]{20,}"
+            r"|\bBearer[ \t]+[A-Za-z0-9._~+/\-]{20,}=*",
+            flags=0,
+        ),
+        pii_type=PIIType.SECRET,
+        confidence=Confidence.HIGH,
+        description="Credential in a URL, connection string or Authorization header",
+    ),
+    PatternDef(
+        pattern=_compile(
+            r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----"
+            r"(?:[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----|(?:\n[A-Za-z0-9+/=:\- ]*)+)",
             flags=0,
         ),
         pii_type=PIIType.SECRET,
@@ -267,12 +282,20 @@ LAYER_1_PATTERNS: List[PatternDef] = [
     ),
     PatternDef(
         pattern=_compile(
-            r"\b(?:passwort|password|kennwort|passwd|pwd|api[_\-]?key|access[_\-]?token|"
-            r"client[_\-]?secret)\b[ \t]*[:=][ \t]*[\"']?[^\s\"']{6,}"
+            r"\b(?:passwort|password|passwd|api[_\-]?key|access[_\-]?token|"
+            r"client[_\-]?secret)\b[ \t]*[:=][ \t]*[\"']?(?![$<{/~]|vergessen|forgot|\*{3})[^\s\"'?]{6,}(?![?])"
         ),
         pii_type=PIIType.SECRET,
         confidence=Confidence.HIGH,
         description="Credential value after a label",
+    ),
+    PatternDef(
+        pattern=_compile(
+            r"\b(?:passwort|password)\s+(?:lautet|ist|is)\s+[\"']?(?=[^\s\"']*\d)[^\s\"'.,;]{8,}"
+        ),
+        pii_type=PIIType.SECRET,
+        confidence=Confidence.HIGH,
+        description="Password value in a sentence",
     ),
     # Email - RFC 5322 simplified
     PatternDef(
@@ -452,6 +475,7 @@ LAYER_3_PATTERNS: List[PatternDef] = [
         description="ICD code",
         rejects_context=_compile(
             r"(?:Anlage|Anhang|Version|Ziffer|Nr\.|Art\.|§|Abschnitt|Kapitel|Tabelle|Abb\.|"
+            r"Punkt|Artikelnummer|Art\.-Nr\.|Pos\.|Position|Seite|"
             r"Annex|Appendix|Section|Table|Fig\.|Release|Build)[ \t]*$"
         ),
     ),

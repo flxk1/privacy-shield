@@ -77,6 +77,13 @@ entities:
     default_action: review
     requires_review: true
 
+  # A credential (API key, access token, private key, labelled password value).
+  - id: secret
+    canonical_name: CREDENTIAL
+    detector_class: direct_identifier
+    default_action: block
+    requires_review: false
+
   - id: name
     canonical_name: PERSON_NAME
     detector_class: quasi_identifier

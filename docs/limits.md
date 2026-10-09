@@ -1160,22 +1160,36 @@ is external.
 
 **Art. 9 verdicts.** The gate counts a special category when its keyword list
 matches or when the scanner reports an Art. 9 type (with that type's context
-gates). Named inference cues: Konfession and Kirchensteuer codes, union names
-(IG Metall, ver.di, IG BCE), "Mitglied der <party>", and ward or specialty
-names (Onkologie, Psychiatrie, Dialyse, Chemotherapie). Not found: a drug
+gates; of the scanner's types only the context-gated ICD and political
+findings count). Named membership cues: "Konfession: <value>", "aus der
+Kirche ausgetreten", "Kirchensteuermerkmal <code>", "Station <specialty>",
+"Mitglied der <party>" and "Mitglied der/im <union>"
+(IG Metall, ver.di, IG BCE, GEW, NGG, EVG, Marburger Bund). Not found, and
+not attempted because single words are too often not about a person: a drug
 name beside a person with no medical word, a partner's name that reveals
-orientation, a party acronym without a membership cue, and diet or prayer
-hints. A dotted code right after Anlage, Version, Ziffer, §, Abschnitt and
-similar labels is a reference, not a diagnosis.
+orientation, a party, denomination or orientation stated as an adjective or
+compound ("SPD-Mitglied", "katholisch", "schwul"), pregnancy, disability
+grades, diet or prayer hints, and payroll amounts such as "KiSt 9,60". A dotted code right after Anlage, Version, Ziffer, §, Abschnitt and
+similar labels (Punkt, Artikelnummer, Pos., Seite too) is a reference, not a
+diagnosis. `Verurteilung` is not a criminal-record cue: civil judgments use it
+for every order to pay.
 
 **Secrets by issuer shape.** AWS access keys (AKIA/ASIA), GitHub (ghp_,
 gho_, ghu_, ghs_, ghr_, github_pat_), GitLab (glpat-), Slack (xox?-),
 Anthropic (sk-ant-), OpenAI-style (sk-, sk-proj-, sk-svcacct-), Stripe
-(sk_/rk_ live or test), JWTs, PEM private-key blocks, and a value of six or
-more characters after Passwort / password / Kennwort / pwd / api_key /
-access_token / client_secret with ":" or "=". A secret makes the source
-confidential. Not found: generic high-entropy strings with no issuer prefix
-or label, and passwords written in prose without a label.
+(sk_/rk_ live or test), Google (AIza), npm (npm_), Hugging Face (hf_), Slack
+app tokens (xapp-) and webhook URLs, JWTs, PEM and PGP private-key blocks
+(also without an END line), credentials inside a URL
+(`scheme://user:secret@host`), Azure `AccountKey=`, `Bearer` tokens, and a
+value of six or more characters after Passwort / password / passwd / api_key /
+access_token / client_secret with ":" or "=", unless the value is a
+placeholder (`${...}`, `<...>`), a path, or ends in "?"; and "Das Passwort
+lautet/ist <value>" when the value has eight or more characters and a digit.
+`Kennwort` is not a
+label here: in German procurement it names the bid reference. A secret makes
+the source confidential. Not found: generic high-entropy strings with no
+issuer prefix or label, keys split across lines, and passwords written in
+prose without a label.
 
 **Two Article 9 shapes count only beside a context word.** A bare ICD code
 (`H73`) is a diagnosis only when a medical word (Diagnose, Befund, ICD,

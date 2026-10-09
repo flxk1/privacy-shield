@@ -32,6 +32,10 @@ def test_health_text_to_an_unlisted_cloud_is_blocked():
     "Diagnose F32.1 Depression",
     "Long-COVID U09.9",
     "Er ist Kommunist.",
+    "Er ist Mitglied der GEW.",
+    "Sie ist Mitglied der Neuapostolischen Kirche.",
+    "Er ist aus der Kirche ausgetreten.",
+    "Er ist vorbestraft.",
 ])
 def test_art9_content_is_not_cleared(text):
     assert _verdict(text).allowed is False
@@ -43,6 +47,14 @@ def test_art9_content_is_not_cleared(text):
     "Option nach Wahl des Käufers.",
     "Siehe Anlage A12.3 und Version M51.2.",
     "Bitte rechts oben unterschreiben.",
+    "Siehe Punkt K40.2 des Leistungsverzeichnisses.",
+    "Artikelnummer F32.1 ist ausverkauft.",
+    "Das Gericht hat die Beklagte zur Zahlung verurteilt; die Verurteilung ist rechtskräftig.",
+    "Die Gewerkschaften verhandeln den Tarifvertrag.",
+    "Der Arbeitgeber behält Lohnsteuer und Kirchensteuer ein.",
+    "Das Klinikum Nordstadt schreibt die Reinigung aus.",
+    "Die Konfession spielt bei der Einstellung keine Rolle.",
+    "Die Große Depression begann 1929.",
 ])
 def test_contract_wording_is_not_art9(text):
     assert PrivacyGate().check_art9(text) == []
@@ -61,6 +73,16 @@ def test_contract_wording_is_not_art9(text):
     "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
     "Passwort: Sommer2026!",
     "api_key=abcd1234efgh",
+    "AIza" + "S" * 35,
+    "npm_" + "n" * 36,
+    "hf_" + "h" * 34,
+    "https://hooks.slack.com/services/T0000/B0000/" + "x" * 24,
+    "postgres://app:s3cretPw@db.internal:5432/main",
+    "AccountKey=" + "k" * 40 + "==",
+    "Authorization: Bearer " + "t" * 32,
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----",
+    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAA",
+    "Das Passwort lautet Xk7mPq2Lz9",
 ])
 def test_secrets_are_found_and_block_external(secret):
     text = f"Konfiguration: {secret} bitte nicht teilen"
@@ -68,8 +90,18 @@ def test_secrets_are_found_and_block_external(secret):
     assert _verdict(text).allowed is False
 
 
-def test_ordinary_words_after_password_label_need_a_value():
-    assert PIIType.SECRET not in [f.pii_type for f in PrivacyScanner().scan("Das Passwort wird separat versandt.").findings]
+@pytest.mark.parametrize("text", [
+    "Das Passwort wird separat versandt.",
+    "Kennwort: Schulneubau2026",
+    "Kennwort = Gemeindehaus",
+    "Passwort: vergessen?",
+    "pwd: /home/nutzer/projekt",
+    "api_key: ${API_KEY}",
+    "password: <your-password>",
+    "Das Passwort ist vergessen worden.",
+])
+def test_labels_without_a_credential_value_are_not_secrets(text):
+    assert PIIType.SECRET not in [f.pii_type for f in PrivacyScanner().scan(text).findings]
 
 
 def test_utf16_with_bom_is_read_and_redacted(tmp_path):
