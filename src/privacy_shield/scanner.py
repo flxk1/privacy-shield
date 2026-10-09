@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
-from . import art9, credentials, icd10gm, identifiers, names as names_module, national, pii_model
+from . import art9, credentials, icd10gm, online, identifiers, names as names_module, national, pii_model
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,12 @@ class PIIType(str, Enum):
     NAME = "name"
     ADDRESS = "address"
     PLZ_CITY = "plz_city"
+    #: GDPR Art. 4(1) "online identifier": a social-media handle or profile URL.
+    ONLINE_IDENTIFIER = "online_identifier"
+    #: A device identifier: MAC address, IMEI, vehicle identification number.
+    DEVICE_ID = "device_id"
+    #: Location coordinates (decimal or degrees-minutes-seconds).
+    GEO_LOCATION = "geo_location"
     #: A labelled personal reference number (Personalnummer, Kundennummer,
     #: Patientennummer, …; identifiers.find_labelled_ids).
     PERSON_REFERENCE = "person_reference"
@@ -1459,6 +1465,41 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    _ONLINE_TYPES = {
+        "email": "EMAIL", "ip": "IP_ADDRESS", "device": "DEVICE_ID", "imei": "DEVICE_ID",
+        "vin": "DEVICE_ID", "geo": "GEO_LOCATION", "online": "ONLINE_IDENTIFIER",
+        "account": "IBAN", "cvv": "SECRET", "card_expiry": "CREDIT_CARD",
+    }
+
+    def _merge_online(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Online, device and location identifiers and card security data (online.py)."""
+        if 1 not in self.layers:
+            return findings
+        merged = list(findings)
+        for start, end, value, kind in self._through_view(text, online.find):
+            overlapping = [f for f in merged if f.start < end and start < f.end]
+            # a label or a coordinate pair settles what the digits are, even
+            # against a Luhn-valid "card" (an IMEI is Luhn-valid by design)
+            settled = kind in online.LABELLED_KINDS or kind == "geo"
+            if not settled and any(f.checksum_validated for f in overlapping):
+                continue
+            merged = [f for f in merged if f not in overlapping]
+            merged.append(Finding(
+                pii_type=PIIType[self._ONLINE_TYPES[kind]], value=value, start=start, end=end,
+                confidence=Confidence.MEDIUM if kind == "card_expiry" else Confidence.HIGH, layer=1,
+                context=self._get_context(text, start, end), zone=zone, page=page,
+                checksum_validated=kind in ("imei", "cvv"),
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_plates(
         self,
         text: str,
@@ -1729,6 +1770,7 @@ class PrivacyScanner:
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
         findings = self._merge_svnr(text, findings, zone=zone, page=page)
         findings = self._merge_labelled_ids(text, findings, zone=zone, page=page)
+        findings = self._merge_online(text, findings, zone=zone, page=page)
         findings = self._merge_plates(text, findings, zone=zone, page=page)
         findings = self._merge_addresses(text, findings, zone=zone, page=page)
         findings = self._merge_national(text, findings, zone=zone, page=page)

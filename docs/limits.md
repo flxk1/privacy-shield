@@ -2040,3 +2040,29 @@ reordering a number.
   "+49 (0)30 …", or written "089 - 12 34 56" after Tel., Fax, Mobil or
   similar is found whole.
 
+## Online, device and location identifiers; card security data
+
+- An e-mail address written with "[at]", "(at)" or "{at}" (and "[dot]",
+  "(dot)" or "."), not with a bare " at ", is an e-mail address.
+- IPv6 addresses (validated) are IP addresses; MAC addresses, an IMEI after
+  "IMEI" (Luhn-checked) and a vehicle number after FIN/VIN/Fahrgestellnummer
+  are `device_id` [DEVICE].
+- Coordinates are `geo_location` [GEO]: a decimal pair with five or more
+  decimals, or with fewer after GPS/Koordinaten/Standort/Position/Location;
+  degrees-minutes-seconds pairs with N/S and E/O/W.
+- A social-media handle after a platform name ("Instagram: @…") and a
+  profile link (twitter.com, x.com, instagram.com, facebook.com,
+  tiktok.com, threads.net, github.com, linkedin.com/in/, xing.com/profile/)
+  are `online_identifier` [ONLINE_ID]; a site's own pages (github.com/
+  features, …/login, …) are not. A handle without a platform name, or on
+  another network, is not found.
+- An account number after Kontonummer/Konto-Nr./Kto.-Nr. is redacted as
+  [IBAN]; a bank code (BLZ) alone identifies a bank and stays as main
+  treats it.
+- A card security code after CVV/CVC/Kartenprüfnummer/Sicherheitscode is a
+  credential: redacted, and it makes the text confidential, so it does not
+  leave for an external destination. An expiry date after "gültig bis",
+  "Ablaufdatum", "valid thru" or "exp." is redacted as card data.
+- A label or a coordinate pair settles the type: an IMEI is Luhn-valid by
+  design and is no longer reported as a card number.
+

@@ -86,6 +86,27 @@ entities:
 
   # A German vehicle registration; identifies the holder through the registry.
   # A labelled personal reference number (Personalnummer, Kundennummer, ...).
+  # GDPR Art. 4(1) online identifier: social-media handle or profile URL.
+  - id: online_identifier
+    canonical_name: ONLINE_IDENTIFIER
+    detector_class: direct_identifier
+    default_action: redact
+    requires_review: false
+
+  # Device identifier: MAC address, IMEI, vehicle identification number.
+  - id: device_id
+    canonical_name: DEVICE_ID
+    detector_class: quasi_identifier
+    default_action: redact
+    requires_review: false
+
+  # Location coordinates.
+  - id: geo_location
+    canonical_name: GEO_LOCATION
+    detector_class: quasi_identifier
+    default_action: redact
+    requires_review: false
+
   - id: person_reference
     canonical_name: PERSON_REFERENCE
     detector_class: quasi_identifier
