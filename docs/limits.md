@@ -1186,12 +1186,12 @@ generic value that starts with `<`, `[` or `(`, or contains `://`, is a
 placeholder or a link and is not claimed. Issuer and structural rules run before
 the generic ones, so a key with a label in front of it ("TOKEN=ghp_…") is
 still claimed by its issuer rule and still blocks. A rule that keys on a service
-name ("Heroku … :") is skipped when the label ends in "id" and holds no
-key, token, secret, pass, auth, cred, access, Schlüssel, Zugang,
-Kennwort or geheim word, so "Heroku-App-ID: <UUID>" or
-"Datadog dashboard_id: …" pass; "ADOBE_CLIENT_ID" passes the same way. Such a
-rule still takes an ID under any other label ("Heroku App GUID: <UUID>",
-"Mailchimp-Liste: …", "Facebook Pixel-Nummer: …") for a key and blocks.
+name ("Heroku … :") is skipped only when the label ends in "<noun> ID" for a
+named non-secret thing (app, dashboard, list, page, agreement, project, …;
+`_PUBLIC_ID_NOUNS` in credentials.py) and holds no key, token, secret, pass,
+auth, cred, Schlüssel, Kennwort or geheim word. Every other ID label keeps the
+block, so an ID of an unlisted thing ("Heroku App GUID: <UUID>",
+"Mailchimp-Liste: …", "Datadog Monitor-Nummer: …") is still taken for a key.
 Only the secret is redacted, not its label. Not found: values below the entropy floor (a short or
 dictionary-like password: the generic floor is 3.5 bits per character, which
 a 12-character random password can fall under), secrets with no matching
@@ -1734,10 +1734,16 @@ without it.
   does not read it, and its special-category hits are one type,
   `special_category`, in no block set: the model names the wrong category for
   about one span in fifteen.
-- A rule finding wins any overlap with a model span.
+- Where a rule finding overlaps a model span, the rule's type stands and the
+  rest of the model span is redacted under that type, so "Bergweg 3-5" does not
+  come out as "[ADDRESS]-5".
 - A person span made only of role nouns ("Geschäftsführer", "Mandantin") is
-  dropped; the measured clean-text false positives were all of this kind. A
-  role noun outside the list is still redacted as a name.
+  dropped. A one-word person span is kept only after an honorific (Herr, Frau,
+  Dr., Prof.) or when a longer name in the same text contains it; otherwise
+  legal roles (Erblasser, Gläubiger, Notar) read as names. The cost: a bare
+  surname with neither ("Laut Albrecht …") is not redacted by this layer. A
+  multi-word role phrase the model takes for a person is still redacted.
+- The gate's own scan (layer 1) does not run the model.
 - It loads from local files only and sets `HF_HUB_OFFLINE`; a host that imported
   `huggingface_hub` before the first scan has already fixed that setting.
 - Cost measured on German business text: about 0.36 s per 1,000 characters on

@@ -1163,28 +1163,44 @@ class PrivacyScanner:
         page: Optional[int],
     ) -> List[Finding]:
         """Fold in the optional model's names, addresses and special-category spans; rules win overlaps."""
+        if 2 not in self.layers and 3 not in self.layers:
+            return findings
         if self._confidence_value(Confidence.MEDIUM) < self._confidence_value(self.min_confidence):
             return findings
         kinds = {pii_model.NAME: (PIIType.NAME, 2), pii_model.ADDRESS: (PIIType.ADDRESS, 2),
                  pii_model.SPECIAL: (PIIType.SPECIAL_CATEGORY, 3)}
         merged = list(findings)
-        for start, end, value, kind, _score in pii_model.find(text):
+        for start, end, _value, kind, _score in pii_model.find(text):
             pii_type, layer = kinds[kind]
             if layer not in self.layers:
                 continue
-            if any(f.start < end and start < f.end for f in merged):
-                continue
-            merged.append(Finding(
-                pii_type=pii_type,
-                value=value,
-                start=start,
-                end=end,
-                confidence=Confidence.MEDIUM,
-                layer=layer,
-                context=self._get_context(text, start, end),
-                zone=zone,
-                page=page,
-            ))
+            # a rule finding keeps its type, but the part of the model span it
+            # leaves uncovered ("Frau [NAME]ńska", "[ADDRESS]-5") is redacted too
+            covered = sorted((f.start, f.end) for f in merged if f.start < end and start < f.end)
+            if covered:
+                first = next(f for f in merged if f.start < end and start < f.end)
+                pii_type, layer = first.pii_type, first.layer
+            gaps, cursor = [], start
+            for c_start, c_end in covered:
+                if c_start > cursor:
+                    gaps.append((cursor, c_start))
+                cursor = max(cursor, c_end)
+            if cursor < end:
+                gaps.append((cursor, end))
+            for g_start, g_end in gaps:
+                if not text[g_start:g_end].strip(" \t-–.,;:"):
+                    continue
+                merged.append(Finding(
+                    pii_type=pii_type,
+                    value=text[g_start:g_end],
+                    start=g_start,
+                    end=g_end,
+                    confidence=Confidence.MEDIUM,
+                    layer=layer,
+                    context=self._get_context(text, g_start, g_end),
+                    zone=zone,
+                    page=page,
+                ))
         merged.sort(key=lambda f: f.start)
         return merged
 

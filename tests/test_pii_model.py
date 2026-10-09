@@ -144,3 +144,36 @@ def test_the_real_model_finds_a_bare_name(monkeypatch):
     monkeypatch.setenv(pii_model.ENV, _REAL)
     spans = pii_model.find("Bitte rufen Sie Jonas Albrecht zurück.")
     assert any(k == "name" and "Albrecht" in v for _s, _e, v, k, _c in spans)
+
+
+def test_the_gate_scan_does_not_run_the_model(model):
+    fake = model(_ENTITIES)
+    PrivacyScanner(layers=[1]).scan(TEXT)
+    assert fake.calls == 0
+
+
+@pytest.mark.parametrize("text, flagged", [
+    ("Die Zufahrt liegt am Bergweg 3-5 hinter dem Lager.", "Bergweg 3-5"),
+    ("Die Zufahrt liegt an der Industriestr. 10-14 hinter dem Lager.", "Industriestr. 10-14"),
+    ("Er leidet an Diabetes mellitus Typ 2 seit Jahren.", "Diabetes mellitus Typ 2"),
+])
+def test_no_part_of_a_flagged_span_survives_a_partial_rule_match(model, text, flagged):
+    model([("street address", flagged, 0.95), ("health condition", flagged, 0.95)])
+    overlay = scan(text).documents[0].overlay
+    tail = flagged.split()[-1]
+    assert tail not in overlay, overlay
+
+
+@pytest.mark.parametrize("text, single", [
+    ("Der Erblasser hat das Grundstück dem Gläubiger übertragen.", "Erblasser"),
+    ("Der Notar beurkundet den Vertrag.", "Notar"),
+])
+def test_a_lone_capitalised_word_is_not_a_name(model, text, single):
+    model([("person", single, 0.95)])
+    assert pii_model.find(text) == []
+
+
+def test_a_lone_surname_is_kept_after_an_honorific_or_a_full_name(model):
+    text = "Jonas Albrecht kam später. Albrecht bestätigte. Frau Weiß auch."
+    model([("person", "Jonas Albrecht", 0.95), ("person", "Albrecht", 0.9), ("person", "Weiß", 0.9)])
+    assert [v for _s, _e, v, _k, _c in pii_model.find(text)] == ["Jonas Albrecht", "Albrecht", "Weiß"]

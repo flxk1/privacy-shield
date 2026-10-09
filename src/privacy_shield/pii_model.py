@@ -49,6 +49,7 @@ auftragnehmerin gesellschafter gesellschafterin prokurist prokuristin
 empfänger empfängerin absender absenderin team kollege kollegin kollegen
 """.split())
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
+_HONORIFIC = re.compile(r"(?:\b(?:Herrn?|Frau|Dr|Prof|Mr|Mrs|Ms)\.?\s+)$")
 
 _lock = threading.Lock()
 _model = None
@@ -139,4 +140,24 @@ def find(text: str) -> List[Span]:
                     continue
                 out.append((start, end, value, kind, score))
     out.sort(key=lambda s: (s[0], -s[4]))
-    return out
+    return _confirm_single_words(text, out)
+
+
+def _confirm_single_words(text: str, spans: List[Span]) -> List[Span]:
+    # one capitalised word is as often a legal role (Erblasser, Gläubiger, Notar)
+    # as a surname: keep it after an honorific or when a longer name in the same
+    # text carries it ("Jonas Albrecht" ... "Albrecht")
+    known = {
+        w.lower()
+        for _s, _e, v, k, _c in spans if k == NAME
+        for w in _WORD.findall(v) if len(_WORD.findall(v)) > 1 and w.lower() not in _ROLE_NOUNS
+    }
+    kept = []
+    for span in spans:
+        start, _end, value, kind, _score = span
+        words = _WORD.findall(value)
+        if kind == NAME and len(words) == 1:
+            if words[0].lower() not in known and not _HONORIFIC.search(text[max(0, start - 12):start]):
+                continue
+        kept.append(span)
+    return kept
