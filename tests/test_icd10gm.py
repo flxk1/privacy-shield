@@ -88,7 +88,9 @@ def _art9(text):
 
 @pytest.mark.parametrize("text", [
     "Herr Albrecht ist wegen Migräne krankgeschrieben.",
-    "Sie hat Asthma bronchiale.",
+    "Frau Weiß kam vorbei. Sie hat Asthma bronchiale.",
+    "Info: Herr Dahl fehlt diese Woche. Ursache: Hernie.",
+    "Bei Fr. Dr. med. Weber wurde Migräne festgestellt.",
     "Der Mitarbeiter leidet an Multipler Sklerose.",
     "Name: Jonas Albrecht\nBefund: Hernie",
 ])
@@ -135,3 +137,43 @@ def test_icd_status_reports_and_exits_3_when_absent(tmp_path, monkeypatch, capsy
     monkeypatch.setenv(icd10gm.ENV, str(_write(tmp_path)))
     icd10gm._cache.clear()
     assert main(["icd-status"]) == 0
+
+
+@pytest.mark.parametrize("text", [
+    "Bitte senden Sie uns den Bericht zur Hernie der Leitung.",
+    "Wie Sie bereits erwähnt haben, ist die Migräne-Studie abgeschlossen.",
+    "Die Fernwärmeleitung zeigt eine Hernie; sie wird im März ersetzt.",
+    "Die Nordlicht GmbH meldet Verluste; sie leidet unter Migräne-Kosten.",
+    "Die Mitarbeiter erhalten eine Schulung zu Migräne.",
+    "Das Stottern des Motors deutet auf eine Hernie hin; er muss in die Werkstatt.",
+])
+def test_formal_you_things_and_groups_are_not_a_person(index, text):
+    assert "health" not in _art9(text)
+
+
+def test_a_term_inside_a_name_does_not_count(index, monkeypatch):
+    from privacy_shield import scanner
+    text = "Die Mängelanzeige stammt von Malte Hernie."
+    real = scanner.PrivacyScanner.scan
+
+    def with_name(self, t):
+        result = real(self, t)
+        start = t.find("Malte Hernie")
+        if start >= 0:
+            result.findings.append(scanner.Finding(
+                pii_type=scanner.PIIType.NAME, value="Malte Hernie", start=start, end=start + 12,
+                confidence=scanner.Confidence.MEDIUM, layer=2, context=""))
+        return result
+    monkeypatch.setattr(scanner.PrivacyScanner, "scan", with_name)
+    assert "health" not in _art9(text)
+
+
+def test_a_capital_sie_inside_a_sentence_is_the_formal_you(index):
+    text = "Herr Albrecht ruft morgen an. Das Projekt läuft gut. Wir wissen, dass Sie seit Jahren zur Hernie forschen."
+    assert "health" not in _art9(text)
+
+
+def test_an_academic_title_does_not_end_a_sentence():
+    from privacy_shield import art9
+    assert len(art9.sentences("Bei Fr. Dr. med. Weber wurde Migräne festgestellt.")) == 1
+    assert len(art9.sentences("Dipl.-Ing. Lenz kam. Danach ging er.")) == 2

@@ -60,15 +60,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Art. 9 GDPR special category patterns (mirrored from routes/privacy_shield)
 # ---------------------------------------------------------------------------
-# German case and plural endings, on words with no business sense only:
-# "Diagnosen", "Medikamente", "Vorstrafen". "Parteien", "Wahlen", "Kirchen",
-# "Behandlungen" and "Verurteilungen" are contract and business plurals.
+# German endings on two words only: "Medikamente", "Vorstrafen". "Diagnosen",
+# "Symptome", "Krankenhäuser", "Parteien" and "Wahlen" all have business uses.
 _DE = r"(?:e|en|n|s|es|er|em|in|innen)?"
 _ART9_PATTERNS: Dict[str, List[str]] = {
     "health": [
         r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|treatment|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
-        r"\b(krankenhaus|arzt|diagnose|krankheit|medikament|patient|therapie|symptom)" + _DE + r"\b",
-        r"\b(behandlung|ärzte|ärztin|ärztinnen|krankenhäuser)\b",
+        r"\b(krankenhaus|arzt|diagnose|krankheit|patient|therapie|symptom|behandlung)\b",
+        r"\bmedikament" + _DE + r"\b",
     ],
     "genetic": [
         r"\b(dna|genetic|genome|hereditary|chromosom|mutation|gene\s*test)\b",
@@ -492,7 +491,7 @@ class PrivacyGate:
                 names = [(f.start, f.end) for f in PrivacyScanner(layers=[2]).scan(text).findings
                          if f.pii_type is PIIType.NAME]
                 names_read = True
-            return art9.refers_to_person(text, art9.sentence_of(sentences, at), names)
+            return art9.refers_to_person(text, sentences, at, names)
 
         hits: List[str] = []
         model_on = pii_model.configured()
@@ -508,7 +507,10 @@ class PrivacyGate:
             ):
                 continue
             hits.append(category)
-        if "health" not in hits and any(person(s) for s, _e, _t in icd10gm.find_terms(text)):
+        if "health" not in hits and any(
+            person(s) and not any(ns < e and s < ne for ns, ne in names)
+            for s, e, _t in icd10gm.find_terms(text)
+        ):
             hits.append("health")
         for start, end, category, score in model_hits:
             if score < pii_model.special_threshold() or category in hits:

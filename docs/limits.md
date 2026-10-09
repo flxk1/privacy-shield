@@ -1733,10 +1733,9 @@ without it.
 - Names and addresses it finds are redacted at `medium` and never block.
 - Special categories (Art. 9) in the gate:
   - Main's keyword list still decides on its own without the model. German
-    endings are matched only on words with no business sense ("Diagnosen",
-    "Medikamente", "Vorstrafen"); "Parteien", "Wahlen", "Kirchen",
-    "Behandlungen", "Verurteilungen" and "genetische" are not, being contract
-    and business words. Without the model the list still blocks business uses
+    endings are matched on two words only ("Medikamente", "Vorstrafen");
+    "Diagnosen", "Symptome", "Krankenhäuser", "Parteien", "Wahlen", "Kirchen"
+    and "genetische" all have business uses. Without the model the list still blocks business uses
     of its singular words ("Partei im Sinne dieses Vertrages", "nach Wahl des
     Vermieters").
   - With the model on, a keyword in a category the model knows (health,
@@ -1751,13 +1750,22 @@ without it.
     `special_category`.
   - With the ICD-10-GM index present (below), a diagnosis term in a sentence
     that refers to a person counts as health.
-  - "Refers to a person": a name the scanner finds, Herr/Frau/Dr./Prof. before
-    a capital, er/ihm/ihn/seine/sie/ihr/ich/mein/mir/mich, "Sie" with a
-    singular verb ("Sie hat"), or a person noun (Patientin, Mitarbeiter,
-    Bewerber, Sohn, Kollegin, …). A sentence ends at . ! ? before a capital or
-    at a blank line; a form without full stops is one sentence. Missed: a
-    person named only in another sentence ("Herr Albrecht kam. Migräne seit
-    Mai." does not count the second sentence).
+  - "Refers to a person": the sentence, or the one before it, holds a name the
+    scanner finds, Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/
+    mich, or a singular person noun ("die Patientin", "der Mitarbeiter",
+    "unser Kunde", "Sohn"); so "Herr Dahl fehlt. Ursache: Hepatitis." counts.
+    A third-person pronoun (er, ihm, ihn, seine, sie, ihr, ihre) or a
+    sentence-initial "Sie" with a singular verb ("Sie hat") counts in its own
+    sentence only, and only where such an anchor stands somewhere in the text:
+    "sie" alone can be a pipe, a company or "they". A capital "Sie" inside a
+    sentence is the formal you. Plural groups ("die Mitarbeiter erhalten eine
+    Schulung") do not count. Missed: a text whose only reference is a pronoun
+    ("Sie ist Mitglied der IG Metall." with no name anywhere), and a person
+    named two or more sentences before the term.
+  - A sentence ends at . ! ? before a capital or at a blank line, not after
+    an abbreviation or title (Dr., Prof., med., jur., Dipl.-Ing., Nr., z. B.,
+    …); a form without full stops is one sentence.
+  - An index term inside a name ("Malte Gerstenkorn") does not count.
   - Found by no part: drug names ("nimmt Metformin"), treatments without a
     diagnosis ("nach der Chemo" without the model), and most data that is only
     implied (dues lines, a partner's name, a ward number).
@@ -1769,12 +1777,14 @@ without it.
   single-word diagnoses and phrases of up to four words from chapters A–T,
   matched across one German ending ("Multipler Sklerose"), plus a short
   reviewed list of first words it lists only inside longer entries (Diabetes,
-  Schwangerschaft, Stenose, Morbus, …) and nine acronyms (AIDS, HIV, ADHS,
+  Schwangerschaft, Morbus, Fibrose, …) and nine acronyms (AIDS, HIV, ADHS,
   COPD, KHK, PAVK, FSME, TBC, PCOS). Left out: chapters U and Z (circumstances
   such as "Opfer", "Verarmung", "Ausgebranntsein"), the index's other acronyms
-  (most are also business terms: IHK, SPS, CAD), and about seventy single words
-  that are everyday German or surnames (Depression, Störung, Mangel, Angst,
-  Krebs, Schock, Tod, Fraktur, Lequesne, …; `_EVERYDAY` in icd10gm.py).
+  (most are also business terms: IHK, SPS, CAD), and about one hundred single words
+  that are everyday, engineering or finance German, or surnames (Depression,
+  Störung, Mangel, Angst, Krebs, Schock, Tod, Fraktur, Fieber, Stenose,
+  Embolie, Verstopfung, Verbrennung, Insuffizienz, Lequesne, …; `_EVERYDAY`
+  in icd10gm.py), which are therefore never found as diagnoses.
   Source: ICD-10-GM, Alphabetisches Verzeichnis, herausgegeben vom
   Bundesinstitut für Arzneimittel und Medizinprodukte (BfArM) im Auftrag des
   Bundesministeriums für Gesundheit.

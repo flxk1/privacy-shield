@@ -48,6 +48,8 @@ Poltern Raserei Rauchen Rose Rotz Schock Schwäche Seufzen Siti Sorge Spotting
 Tattoo Taumel Tic Tick Tod Trance Unruhe Virago Wahn Wut Zorn Ganglion Trauma
 Störung Reaktion Abhängigkeit Mangel Depression Infektion Blockade Krise
 Erschöpfung Verletzung Lähmung Schaden Stress Sucht Wunde Narbe Tumor
+Verstopfung Verbrennung Schwindel Ausschlag Krampf Lethargie Fieber Blindheit
+Erfrierung Stenose Insuffizienz Embolie Fistel Infektion Kollaps Blutung
 """.split())
 
 _TOKEN = re.compile(r"[^\W\d_][\w-]*", re.UNICODE)
@@ -57,8 +59,7 @@ _TOKEN = re.compile(r"[^\W\d_][\w-]*", re.UNICODE)
 # Schaden, Störung, Folgen, Befall) are left out
 _HEADS = frozenset("""
 Diabetes Typ-2-Diabetes Schwangerschaft Gravidität Fehlbildung Prolaps
-Insuffizienz Hyperplasie Hypertrophie Hypoplasie Atrophie Fibrose Stenose
-Striktur Atresie Agenesie Zyste Polyp Morbus Melanoma Epidermolysis Ablatio
+Hyperplasie Hypertrophie Hypoplasie Atrophie Fibrose Striktur Atresie Agenesie Zyste Polyp Morbus Melanoma Epidermolysis Ablatio
 Mikrodeletionssyndrom Mikroduplikationssyndrom Fetusschädigung Hypersekretion
 """.split())
 # acronyms common in German correspondence that name nothing but a condition;
@@ -146,7 +147,7 @@ def _load(path: Path) -> _Lexicon:
                 words.add(parts[0])
         elif len(parts) <= 4:
             phrases.add(tuple(_norm(p) for p in parts))
-    words |= _HEADS | _ACRONYMS
+    words = (words | _HEADS | _ACRONYMS) - _EVERYDAY
     by_first: Dict[str, List[Tuple[str, ...]]] = {}
     for phrase in phrases:
         by_first.setdefault(phrase[0], []).append(phrase)
