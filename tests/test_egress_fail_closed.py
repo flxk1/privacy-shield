@@ -201,6 +201,9 @@ def test_an_id_next_to_a_service_name_is_not_a_key(line):
     "Datadog Schlüssel-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
     "Datadog Zugangs-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
     "SENDBIRD_ACCESS_ID=" + _r(40, "0123456789abcdef"),
+    "Datadog Zugriffs-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
+    "Datadog Berechtigungs-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
+    "Datadog Facebook-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
 ])
 def test_a_key_labelled_as_a_key_still_blocks(line):
     assert _verdict(f"Konfiguration: {line}").allowed is False

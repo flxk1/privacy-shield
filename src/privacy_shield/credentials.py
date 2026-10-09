@@ -44,8 +44,19 @@ _PLACEHOLDER = re.compile(r"^[<\[(]|://")
 # a service-name rule keys on "<service> ... :" and takes any value of the key's
 # shape, so "Datadog dashboard_id: <40 chars>" reads as a Datadog key
 _LABELLED = re.compile(r"^\(\?i\)\[\\w\.-\]\{0,50\}\?\(\?:")
-_ID_LABEL = re.compile(r"(?i)(?:^|[\W_])ids?[\W_]*$")
-_SECRET_WORD = re.compile(r"(?i)key|token|secret|pass|auth|cred|access|schl(?:ü|ue)ssel|zugang|kennwort|geheim")
+# skipped only for an ID of a named non-secret thing; any other "...-ID" keeps
+# the block, since a list of secret synonyms fails open on the next synonym
+_ID_LABEL = re.compile(r"(?i)([^\W\d_]+)[\W_]*ids?[\W_]*$")
+_PUBLIC_ID_NOUNS = frozenset("""
+app apps application anwendung dashboard dashboards list liste listen page pages
+seite agreement vertrag project projekt org organisation organization monitor
+campaign kampagne pixel audience zielgruppe board form formular event order
+bestellung auftrag invoice rechnung item artikel product produkt site store
+shop channel kanal group gruppe report bericht document dokument ticket
+workspace team user nutzer customer kunde kunden account konto post message
+nachricht video playlist folder ordner file datei
+""".split())
+_SECRET_WORD = re.compile(r"(?i)key|token|secret|pass|auth|cred|schl(?:ü|ue)ssel|kennwort|geheim")
 
 
 def _is_basic_credential(secret: str) -> bool:
@@ -135,7 +146,8 @@ def find_credentials(text: str) -> List[Tuple[int, int, str, str]]:
                 continue
             if _LABELLED.match(rule["regex"]):
                 label = text[match.start():start]
-                if _ID_LABEL.search(label) and not _SECRET_WORD.search(label):
+                noun = _ID_LABEL.search(label)
+                if noun and noun.group(1).lower() in _PUBLIC_ID_NOUNS and not _SECRET_WORD.search(label):
                     continue
             if any(r.search(secret) for r in _GLOBAL_REGEXES):
                 continue
