@@ -2000,10 +2000,15 @@ reordering a number.
   second capitalised word that ends the phrase ("Königs Wusterhausen,"), and
   a known place tail ("Frankfurt am Main", "Freiburg im Breisgau",
   "Rothenburg ob der Tauber"). A district after the city that does not end
-  the phrase stays ("10115 Berlin Mitte ist schön"). A capitalised noun after five digits is still taken for a city
+  the phrase stays ("10115 Berlin Mitte ist schön"). A city typed in
+  lowercase counts directly after a found street (", 80331 münchen") or
+  after in, an, nach, aus or wohnhaft ("schick es an 10115 berlin"), unless
+  the word is on a list of units, currencies and counted nouns (km, ms,
+  euro, kunden, fällen, …); a counted noun missing from that list after
+  such a word is redacted ("in 12000 vorgängen"). Elsewhere a lowercase
+  city is not found ("plz 80331 münchen"). A capitalised noun after five digits is still taken for a city
   ("12000 Mitarbeiter" becomes [LOCATION]), and a place tail that ends the
-  phrase extends it ("15000 Teilnehmer an der Ruhr."). A city written in
-  lowercase ("80331 münchen") is not found.
+  phrase extends it ("15000 Teilnehmer an der Ruhr.").
 - Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
   postcode written first ("A-1010 Wien, Am Hof 2"), house numbers written as
   words, and foreign street formats other than "12 Main Street".

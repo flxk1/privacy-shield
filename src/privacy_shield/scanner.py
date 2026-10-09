@@ -1401,6 +1401,18 @@ class PrivacyScanner:
                 confidence=Confidence.HIGH, layer=2, context=self._get_context(text, start, end),
                 zone=zone, page=page,
             ))
+        lower = list(identifiers.find_lowercase_cities(text))
+        for f in [f for f in merged if f.pii_type is PIIType.ADDRESS]:
+            after = identifiers.lowercase_city_after(text, f.end)
+            if after:
+                lower.append(after)
+        for start, end, value in lower:
+            if not any(g.start < end and start < g.end for g in merged):
+                merged.append(Finding(
+                    pii_type=PIIType.PLZ_CITY, value=value, start=start, end=end,
+                    confidence=Confidence.MEDIUM, layer=2, context=self._get_context(text, start, end),
+                    zone=zone, page=page,
+                ))
         for f in [f for f in merged if f.pii_type is PIIType.ADDRESS]:
             hit = identifiers.four_digit_city_after(text, f.end)
             if hit and not any(g.start < hit[1] and hit[0] < g.end for g in merged):

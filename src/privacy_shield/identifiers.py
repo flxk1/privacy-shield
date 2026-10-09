@@ -1076,3 +1076,36 @@ def find_labelled_ids(text: str) -> List[Tuple[int, int, str, str, bool]]:
                 ok = False
             out.append((m.start(1), m.end(1), value, kind, ok))
     return out
+
+
+# A city typed in lowercase, as in chats and logs ("schick es an 10115 berlin").
+# Five digits and a lowercase word are also "nach 30000 km" and "in 30000 ms",
+# so it counts only after a street or after in/an/nach/aus/wohnhaft, and not
+# when the word counts something.
+_COUNTED = frozenset("""
+km m cm mm kg g mg t l ml ms s sek sekunden min minuten h std stunden tage tagen wochen monate monaten
+jahre jahren euro eur usd dollar chf franken stück stk mal prozent punkte punkten kunden mitarbeiter
+mitarbeitende einwohner besucher teilnehmer nutzer user nutzern leute personen menschen zeilen seiten
+wörter zeichen bytes kb mb gb tb records items rows einträge datensätze dateien mails nachrichten
+anfragen aufrufe klicks views downloads exemplare einheiten pakete artikel produkte bestellungen
+fälle fällen schritte schritten runden versuche versuchen zyklen iterationen meter metern liter litern
+grad volt watt kwh mwh seiten euro-cent cent rappen fällen tickets aufträge aufträgen lieferungen
+""".split())
+_LOWER_CITY = r"(\d{5}[ \t]+[a-zäöüß]+(?:-[a-zäöüß]+)*)"
+_LOWER_AFTER_WORD = re.compile(r"(?i)\b(?:in|an|nach|aus|wohnhaft(?:[ \t]+in)?)[ \t]+" + _LOWER_CITY + r"(?![\w-])")
+_LOWER_AFTER_STREET = re.compile(r"\A[ \t]*(?:[,·][ \t]*|\n[ \t]*)" + _LOWER_CITY + r"(?![\w-])")
+
+
+def _lower_city_ok(match: "re.Match[str]") -> bool:
+    return match.group(1).split()[-1].lower() not in _COUNTED
+
+
+def find_lowercase_cities(text: str) -> List[Tuple[int, int, str]]:
+    return [(m.start(1), m.end(1), m.group(1)) for m in _LOWER_AFTER_WORD.finditer(text) if _lower_city_ok(m)]
+
+
+def lowercase_city_after(text: str, end: int) -> Optional[Tuple[int, int, str]]:
+    m = _LOWER_AFTER_STREET.match(text[end:end + 60])
+    if not m or not _lower_city_ok(m):
+        return None
+    return end + m.start(1), end + m.end(1), m.group(1)

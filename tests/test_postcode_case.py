@@ -32,3 +32,18 @@ def test_a_postcode_and_city_is_still_found(text, hidden):
 ])
 def test_a_multi_word_city_is_masked_whole(text, hidden):
     assert hidden not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ("gartenweg 4, 80331 münchen", "münchen"),
+    ("schick es an 10115 berlin bitte", "berlin"),
+    ("wohnhaft in 50667 köln", "köln"),
+    ("komme aus 04109 leipzig", "leipzig"),
+])
+def test_a_lowercase_city_after_a_street_or_preposition_is_found(text, hidden):
+    assert hidden not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text", ["nach 30000 km", "timeout in 30000 ms", "an 50000 kunden", "in 12000 fällen"])
+def test_a_counted_quantity_after_a_preposition_is_not_a_city(text):
+    assert scan(text).documents[0].overlay == text
