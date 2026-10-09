@@ -44,15 +44,13 @@ def _allowed(text):
     "Nach Wahl des Vermieters wird die Kaution angelegt.",
 ])
 def test_a_keyword_the_model_does_not_back_no_longer_blocks(model, monkeypatch, text):
-    monkeypatch.delenv(pii_model.ENV, raising=False)
-    assert _allowed(text) is False
     model([])
     assert _allowed(text) is True
 
 
 def test_a_keyword_the_model_backs_weakly_still_blocks(model):
     model([("health condition", "Diabetes", 0.6)])
-    assert _allowed("Der Patient hat Diabetes.") is False
+    assert _allowed("Herr Albrecht ist Patient und hat Diabetes.") is False
 
 
 def test_a_confident_model_hit_blocks_without_a_keyword(model):
@@ -65,7 +63,7 @@ def test_a_weak_model_hit_without_a_keyword_does_not_block(model):
     assert _allowed("Er geht nach der Chemo wieder arbeiten.") is True
 
 
-@pytest.mark.parametrize("text", ["Der Befund ist genetisch bedingt.", "Der Fingerabdruck wurde erfasst."])
+@pytest.mark.parametrize("text", ["Bei Herrn Albrecht ist der Befund genetisch bedingt.", "Der Fingerabdruck von Frau Weiß wurde erfasst."])
 def test_categories_the_model_lacks_stay_keyword_only(model, text):
     model([])
     assert _allowed(text) is False
@@ -73,7 +71,18 @@ def test_categories_the_model_lacks_stay_keyword_only(model, text):
 
 def test_without_the_model_the_keywords_decide_alone(monkeypatch):
     monkeypatch.delenv(pii_model.ENV, raising=False)
-    assert _allowed("Jede Partei im Sinne dieses Vertrages kann kündigen.") is False
+    assert _allowed("Herr Albrecht ist Mitglied einer Partei.") is False
+
+
+@pytest.mark.parametrize("text", [
+    "Jede Partei im Sinne dieses Vertrages kann kündigen.",
+    "Die Diagnose der Netzwerkstörung liegt vor.",
+    "Die Behandlung Ihres Antrags dauert zwei Wochen.",
+    "Die Kirche am Marktplatz wird renoviert.",
+])
+def test_a_keyword_about_nobody_does_not_count(monkeypatch, text):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert PrivacyGate().check_art9(text) == []
 
 
 def test_scan_and_gate_share_one_model_run(model):
@@ -84,8 +93,8 @@ def test_scan_and_gate_share_one_model_run(model):
 
 
 @pytest.mark.parametrize("text", [
-    "Er nimmt mehrere Medikamente gegen Bluthochdruck.",
-    "Sie hat zwei Vorstrafen.",
+    "Herr Albrecht nimmt mehrere Medikamente gegen Bluthochdruck.",
+    "Frau Weiß hat zwei Vorstrafen.",
 ])
 def test_inflected_german_keywords_are_found(monkeypatch, text):
     monkeypatch.delenv(pii_model.ENV, raising=False)

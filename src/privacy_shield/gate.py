@@ -506,6 +506,10 @@ class PrivacyGate:
                 for k in starts for h in model_hits
             ):
                 continue
+            # Art. 9 covers data about a person: a keyword counts only in a
+            # sentence about one ("Die Diagnose der Netzwerkstörung" is not)
+            if not any(person(k) for k in starts):
+                continue
             hits.append(category)
         if "health" not in hits and any(
             person(s) and not any(ns < e and s < ne for ns, ne in names)

@@ -19,13 +19,14 @@ from typing import Iterable, List, Sequence, Tuple
 _ABBREVIATIONS = frozenset(
     "dr prof nr str hr fr ca bzw vgl ggf z.b u.a abs art med jur rer nat phil dipl ing univ habil".split())
 _BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-ZÄÖÜ\"„(])|\n\s*\n")
-_HONORIFIC = re.compile(r"\b(?:Herrn?|Frau|Hr\.|Fr\.|Dr\.|Prof\.)\s+[A-ZÄÖÜ]")
+_HONORIFIC = re.compile(r"\b(?:Herrn?|Frau|Hr\.|Fr\.|Dr\.|Prof\.|Mr\.?|Mrs\.?|Ms\.?)\s+[A-ZÄÖÜ]")
 # only people say "ich"
-_FIRST_PERSON = re.compile(r"\b(?:[Ii]ch|[Mm]ein|[Mm]eine[mnrs]?|[Mm]ir|[Mm]ich)\b")
+_FIRST_PERSON = re.compile(r"\b(?:[Ii]ch|[Mm]ein|[Mm]eine[mnrs]?|[Mm]ir|[Mm]ich|I|[Mm]y|[Mm]e)\b")
 # a third-person pronoun can be a pipe, a company or "they"; it counts only
 # where the text names a person somewhere. "Sie"/"Ihr" with a capital inside a
 # sentence is the letter's formal you; at the start, "Sie hat" is she
-_THIRD_PERSON = re.compile(r"\b(?:[Ee]r|[Ii]hm|[Ii]hn|[Ss]eine[mnrs]?|sie|ihr|ihre[mnrs]?)\b")
+_THIRD_PERSON = re.compile(
+    r"\b(?:[Ee]r|[Ii]hm|[Ii]hn|[Ss]eine[mnrs]?|sie|ihr|ihre[mnrs]?|[Hh]e|[Hh]im|[Hh]is|[Ss]he|[Hh]er)\b")
 _SHE = re.compile(
     r"^\W*Sie\s+(?:hat|ist|war|wird|kann|muss|soll|will|darf|mag|"
     r"(?!nicht\b|jetzt\b|erst\b|selbst\b|oft\b|gut\b|bereits\b|bitte\b)[a-zäöüß]+t)\b")
@@ -38,6 +39,9 @@ _PERSON_NOUN = re.compile(
     r"Ehegatte|Mutter|Vater)\b|\b" + _SINGULAR + r"\s+(?:\w+e[nrms]?\s+)?"
     r"(?:Patienten?|Mitarbeiters?|Arbeitnehmers?|Bewerbers?|Mandanten?|Versicherten?|Kollegen?|"
     r"Schülers?|Mieters?|Kunden?|Klienten?|Beschäftigten?|Angestellten?|Kind(?:es)?)\b"
+    # a form's field label, and the English record and staff nouns
+    r"|\bPatient(?:in)?\s*:|\b[Pp]atient(?:'s)?\b(?=\s+[a-z])"
+    r"|\b(?:[Tt]he|[Oo]ur|[Tt]his)\s+(?:employee|applicant|client|tenant|customer|child)\b"
 )
 
 

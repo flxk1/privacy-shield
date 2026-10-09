@@ -23,7 +23,7 @@ def test_named_local_destinations_are_local(destination):
 
 
 def test_health_text_to_an_unlisted_cloud_is_blocked():
-    assert _verdict("Diagnose: Depression, Behandlung läuft.", "gemini").allowed is False
+    assert _verdict("Herr Albrecht. Diagnose: Depression, Behandlung läuft.", "gemini").allowed is False
 
 
 _RND = random.Random(20261009)
