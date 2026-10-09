@@ -1931,3 +1931,20 @@ package records the controller's word for them.
   "BS-EN 1090", "MS-AB 2024", "CAT-E 6", "HR-IT 2026"). Redaction only; no
   verdict changes. Foreign plates are not found.
 
+## Altered spellings
+
+When a text holds invisible characters (zero-width space, soft hyphen, word
+joiner), decomposed accents ("Mu" + combining diaeresis), or full-width or
+other compatibility forms of letters, digits, punctuation or spaces
+("０１７１", a no-break space), the patterns and the name finder read a compact
+view in which those are removed, composed or mapped to ASCII. Every finding
+is reported at the original offsets, and the marks that follow are included.
+Symbols are not folded: a circled "Ⓐ" is not a letter. Names may carry any
+Latin letter with a diacritic ("Joséfa", "Łukasz Wiśniewski"), not only ä, ö
+and ü.
+
+Not handled: an address, number or name broken by a line wrap ("max.muster" +
+newline + "mann@example.org" leaves the first line); homoglyphs from other
+scripts (a Cyrillic "а" in a Latin name); right-to-left override characters
+reordering a number.
+

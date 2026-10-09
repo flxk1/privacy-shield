@@ -904,3 +904,49 @@ def find_plates(text: str) -> List[Tuple[int, int, str]]:
             continue
         out.append((m.start(), m.end(), m.group(0)))
     return out
+
+
+def compact_view(text: str) -> Optional[Tuple[str, List[int]]]:
+    """*text* as the pattern finders should read it, with each character's original offset.
+
+    Invisible characters go (a zero-width space split "0171\\u200b2345678" so
+    no phone pattern saw it), a decomposed letter is composed again ("Mu\\u0308ller"
+    reads "Müller"), and a full-width or other compatibility form of an ASCII
+    character becomes that character ("０１７１"). None when nothing changes,
+    which is nearly every text.
+    """
+    if text.isascii():
+        return None
+    out: List[str] = []
+    index: List[int] = []
+    changed = False
+    for i, char in enumerate(text):
+        category = unicodedata.category(char)
+        if category == "Cf":
+            changed = True
+            continue
+        if category.startswith("M"):
+            changed = True
+            if out:
+                composed = unicodedata.normalize("NFC", out[-1] + char)
+                if len(composed) == 1:
+                    out[-1] = composed
+            continue
+        # letters, digits, punctuation and spaces only: a circled "Ⓐ" is a
+        # symbol NFKC spells as a letter, and is not one (see _identifier_char)
+        if not char.isascii() and category[0] in "LNPZ":
+            compat = unicodedata.normalize("NFKC", char)
+            if len(compat) == 1 and compat.isascii() and compat != char:
+                char = compat
+                changed = True
+        out.append(char)
+        index.append(i)
+    return ("".join(out), index) if changed else None
+
+
+def original_span(text: str, index: List[int], start: int, end: int) -> Tuple[int, int]:
+    """The span of *text* that the compact view's [start, end) came from, trailing marks included."""
+    s, e = index[start], index[end - 1] + 1
+    while e < len(text) and unicodedata.category(text[e])[0] in "MC" and unicodedata.category(text[e]) != "Cc":
+        e += 1
+    return s, e

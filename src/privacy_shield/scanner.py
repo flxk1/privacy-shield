@@ -906,6 +906,27 @@ class PrivacyScanner:
                 ))
         return findings
 
+    def _match_folded(
+        self,
+        text: str,
+        masked: str,
+        allowlist_spans,
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> Optional[List[Finding]]:
+        """The patterns over the compact view (identifiers.compact_view), reported against *text*; None without one."""
+        view = identifiers.compact_view(masked)
+        if view is None:
+            return None
+        folded, index = view
+        out: List[Finding] = []
+        for f in self._match_patterns(folded, folded, zone=zone, page=page):
+            start, end = identifiers.original_span(text, index, f.start, f.end)
+            out.append(replace(f, start=start, end=end, value=text[start:end],
+                               context=self._get_context(text, start, end)))
+        return out
+
     def _confidence_value(self, conf: Confidence) -> int:
         """Convert confidence to numeric value for comparison."""
         return {"high": 3, "medium": 2, "low": 1}.get(conf.value, 0)
@@ -1102,7 +1123,18 @@ class PrivacyScanner:
             return findings
 
         merged = list(findings)
-        for start, end, value in names_module.find_names(text):
+        # read the names from the compact view when there is one: on the raw
+        # text a decomposed "Ju\u0308rgen" is cut to "Ju" and claims the span
+        view = identifiers.compact_view(text)
+        if view is None:
+            found = list(names_module.find_names(text))
+        else:
+            folded, index = view
+            found = []
+            for s, e, _v in names_module.find_names(folded):
+                os_, oe = identifiers.original_span(text, index, s, e)
+                found.append((os_, oe, text[os_:oe]))
+        for start, end, value in found:
             if any(
                 f.pii_type is PIIType.NAME and f.start < end and start < f.end
                 for f in merged
@@ -1377,7 +1409,10 @@ class PrivacyScanner:
         allowlist_spans = self._allowlist_spans(text)
         masked = self._mask(text, allowlist_spans)
 
-        findings = self._match_patterns(masked, text, zone=zone, page=page)
+        # with invisible, decomposed or full-width characters in the text the
+        # patterns read the compact view, which differs from the text only there
+        folded = self._match_folded(text, masked, allowlist_spans, zone=zone, page=page)
+        findings = folded if folded is not None else self._match_patterns(masked, text, zone=zone, page=page)
         findings = [
             f for f in findings
             if not self._is_allowlisted(f.start, f.end, allowlist_spans)

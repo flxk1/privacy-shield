@@ -49,8 +49,13 @@ from typing import List, Tuple
 from . import registry
 from .shared import Exclusions, Ruleset, Span
 
+# Latin letters with diacritics, so "José", "Łukasz" and "Zoë" are not cut
+# at their first non-German letter
+_UPPER = "A-Z" + "".join(c for c in map(chr, range(0xC0, 0x250)) if c.isalpha() and c.isupper())
+_LOWER = "a-z" + "".join(c for c in map(chr, range(0xC0, 0x250)) if c.isalpha() and c.islower())
+
 #: A capitalised word, including hyphenated surnames (Mueller-Lang).
-_WORD = r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?"
+_WORD = rf"[{_UPPER}][{_LOWER}]+(?:-[{_UPPER}][{_LOWER}]+)?"
 
 #: Nobiliary and toponymic particles, which are lowercase and sit INSIDE a
 #: surname: "Karl-Heinz von der Tann", "Ludwig van Beethoven", "Anna de Vries".
