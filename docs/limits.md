@@ -1185,9 +1185,11 @@ centre or a form field, and a false block withholds the whole document. A
 generic value that starts with `<`, `[` or `(`, or contains `://`, is a
 placeholder or a link and is not claimed. Issuer and structural rules run before
 the generic ones, so a key with a label in front of it ("TOKEN=ghp_…") is
-still claimed by its issuer rule and still blocks. An issuer rule can claim a
-non-secret that has the key's shape next to the service name: gitleaks'
-Heroku rule takes a Heroku app ID (a UUID) for an API key.
+still claimed by its issuer rule and still blocks. A rule that keys on a service
+name ("Heroku … :") is skipped when the label ends in "id" and holds no
+key, token, secret, pass, auth or cred word, so "Heroku-App-ID: <UUID>" or
+"Datadog dashboard_id: …" pass; "ADOBE_CLIENT_ID" passes the same way. Such a
+rule still takes an ID under any other label ("heroku app: <UUID>") for a key.
 Only the secret is redacted, not its label. Not found: values below the entropy floor (a short or
 dictionary-like password: the generic floor is 3.5 bits per character, which
 a 12-character random password can fall under), secrets with no matching

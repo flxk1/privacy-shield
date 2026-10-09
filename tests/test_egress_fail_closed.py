@@ -182,3 +182,22 @@ def test_only_the_secret_is_redacted_not_its_label():
 ])
 def test_a_labelled_issuer_key_still_blocks(line):
     assert _verdict(f"Konfiguration: {line}").allowed is False
+
+
+@pytest.mark.parametrize("line", [
+    "Datadog dashboard_id: " + _r(40),
+    "Mailchimp list_id: " + _r(32, "0123456789abcdef") + "-us21",
+    "Facebook page_id: " + _r(32, "0123456789abcdef"),
+    "Heroku-App-ID: 01234567-89ab-cdef-0123-456789abcdef",
+])
+def test_an_id_next_to_a_service_name_is_not_a_key(line):
+    assert _verdict(f"Konfiguration: {line}").allowed is True
+
+
+@pytest.mark.parametrize("line", [
+    "HEROKU_API_KEY=01234567-89ab-cdef-0123-456789abcdef",
+    "facebook_secret: " + _r(32, "0123456789abcdef"),
+    "aws_access_key_id = AKIA" + _r(16, _B32),
+])
+def test_a_key_labelled_as_a_key_still_blocks(line):
+    assert _verdict(f"Konfiguration: {line}").allowed is False

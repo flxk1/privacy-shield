@@ -41,6 +41,11 @@ _LOCAL_RULES = [
 ]
 
 _PLACEHOLDER = re.compile(r"^[<\[(]|://")
+# a service-name rule keys on "<service> ... :" and takes any value of the key's
+# shape, so "Datadog dashboard_id: <40 chars>" reads as a Datadog key
+_LABELLED = re.compile(r"^\(\?i\)\[\\w\.-\]\{0,50\}\?\(\?:")
+_ID_LABEL = re.compile(r"(?i)(?:^|[\W_])ids?[\W_]*$")
+_SECRET_WORD = re.compile(r"(?i)key|token|secret|pass|auth|cred")
 
 
 def _is_basic_credential(secret: str) -> bool:
@@ -128,6 +133,10 @@ def find_credentials(text: str) -> List[Tuple[int, int, str, str]]:
                 continue
             if rule["id"] == "basic-auth-header" and not _is_basic_credential(secret):
                 continue
+            if _LABELLED.match(rule["regex"]):
+                label = text[match.start():start]
+                if _ID_LABEL.search(label) and not _SECRET_WORD.search(label):
+                    continue
             if any(r.search(secret) for r in _GLOBAL_REGEXES):
                 continue
             if any(w in secret.lower() for w in _GLOBAL_STOPWORDS):
