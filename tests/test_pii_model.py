@@ -288,3 +288,10 @@ def test_a_genitive_is_the_same_person(model):
     model([])
     text = "Herr Hollmann klagt. Hollmanns Anwalt widerspricht."
     assert "Hollmann" not in scan(text).documents[0].overlay
+
+
+def test_a_model_hit_after_an_article_is_a_noun_even_when_the_name_is_known(model):
+    text = "Der Wolf frisst. Herr Wolf kam."
+    model([("person", "Wolf", 0.95), ("person", "Herr Wolf", 0.95)])
+    overlay = scan(text).documents[0].overlay
+    assert overlay.startswith("Der Wolf frisst.") and overlay.count("Wolf") == 1

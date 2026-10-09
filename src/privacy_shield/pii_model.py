@@ -204,7 +204,7 @@ def _confirm_single_words(text: str, spans: List[Span]) -> List[Span]:
             last = _LAST_WORD.search(before)
             confirmed = (words[0].lower() in known or _HONORIFIC.search(before)
                          or (last and _is_role(last.group(1)) and not _is_rank(words[0])))
-            if not confirmed:
+            if not confirmed or (_DETERMINER.search(before[-8:]) and _particle(text, start) is None):
                 continue
         kept.append(span)
     return kept

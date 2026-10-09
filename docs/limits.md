@@ -1754,7 +1754,8 @@ without it.
   mention right after an article or a fused preposition ("der Wolf", "eine
   Rose", "am Bach"), unless that is the particle the name was seeded with
   ("von der Leyen", "zur Linde"). A genitive is matched ("Hollmanns"). A
-  colloquial article before a surname ("Der Wendehals hat …") is not matched. A surname that is also a common noun is still redacted
+  colloquial article before a surname ("Der Wendehals hat …") is not matched,
+  and a one-word model hit after an article is dropped the same way. A surname that is also a common noun is still redacted
   where no article precedes it ("Wolf entschuldigte sich" and "Wolf und Hund").
 - A lone word after a role is not taken for a name when it is itself a role,
   or a rank built from an office prefix and a rank ending ("Zeuge
