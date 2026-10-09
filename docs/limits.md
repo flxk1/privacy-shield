@@ -1750,10 +1750,14 @@ without it.
     `special_category`.
   - With the ICD-10-GM index present (below), a diagnosis term in a sentence
     that refers to a person counts as health.
-  - "Refers to a person": the sentence, or the one before it, holds a name the
-    scanner finds, Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/
-    mich, or a singular person noun ("die Patientin", "der Mitarbeiter",
-    "unser Kunde", "Sohn"); so "Herr Dahl fehlt. Ursache: Hepatitis." counts.
+  - "Refers to a person": the sentence holds a name the scanner finds,
+    Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/mich, or a
+    definite or possessive singular person noun ("die Patientin", "der
+    Mitarbeiter", "unser Kunde", "Sohn"; "ein Mitarbeiter" in a policy is
+    anyone and does not count). The sentence before counts too when this one
+    is a follow-up of six words or fewer ("Herr Dahl fehlt. Ursache:
+    Hepatitis."), not otherwise ("Herr Kraus hat angerufen. Die Grippe geht
+    um, …").
     A third-person pronoun (er, ihm, ihn, seine, sie, ihr, ihre) or a
     sentence-initial "Sie" with a singular verb ("Sie hat") counts in its own
     sentence only, and only where such an anchor stands somewhere in the text:
@@ -1761,7 +1765,14 @@ without it.
     sentence is the formal you. Plural groups ("die Mitarbeiter erhalten eine
     Schulung") do not count. Missed: a text whose only reference is a pronoun
     ("Sie ist Mitglied der IG Metall." with no name anywhere), and a person
-    named two or more sentences before the term.
+    named two or more sentences before the term, and the letter's reader as
+    the subject ("Sie haben uns mitgeteilt, dass Sie an Epilepsie leiden.":
+    the formal you is not counted as a person, since most business letters
+    address one).
+  - Every one of these refinements was measured on unseen sentences; the
+    index still over-blocks business text that names a person next to a
+    medical-sounding term with a medical ending, and recall stays well short
+    of complete. It is a strong filter, not a classifier.
   - A sentence ends at . ! ? before a capital or at a blank line, not after
     an abbreviation or title (Dr., Prof., med., jur., Dipl.-Ing., Nr., z. B.,
     …); a form without full stops is one sentence.
@@ -1774,8 +1785,14 @@ without it.
   conditions, and the scanner reads it unchanged from `PRIVACY_SHIELD_ICD10GM`,
   the user-state folder `privacy-shield/icd10gm/`, or a BfArM ZIP in
   `~/Downloads`; `privacy-shield icd-status` shows which. Used from it:
-  single-word diagnoses and phrases of up to four words from chapters A–T,
-  matched across one German ending ("Multipler Sklerose"), plus a short
+  phrases of up to four words from chapters A–T, matched across one German
+  ending ("Multipler Sklerose"); single words only with a medical ending
+  (-itis, -ose, -om, -ämie, -pathie, -algie, -plegie, -karzinom, -sarkom,
+  -infarkt, -sklerose, -syndrom, -krankheit: Hepatitis, Arthrose, Melanom,
+  Herzinfarkt, Psychose), because the index also lists Überlastung,
+  Übergewicht, Hysterie, Atemnot and Grippe, each with a business sense; so
+  Migräne, Asthma, Gicht, Epilepsie and Bandscheibenvorfall are not found by
+  the index (the model finds some of them); plus a short
   reviewed list of first words it lists only inside longer entries (Diabetes,
   Schwangerschaft, Morbus, Fibrose, …) and nine acronyms (AIDS, HIV, ADHS,
   COPD, KHK, PAVK, FSME, TBC, PCOS). Left out: chapters U and Z (circumstances

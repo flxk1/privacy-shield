@@ -59,9 +59,17 @@ _TOKEN = re.compile(r"[^\W\d_][\w-]*", re.UNICODE)
 # Schaden, Störung, Folgen, Befall) are left out
 _HEADS = frozenset("""
 Diabetes Typ-2-Diabetes Schwangerschaft Gravidität Fehlbildung Prolaps
-Hyperplasie Hypertrophie Hypoplasie Atrophie Fibrose Striktur Atresie Agenesie Zyste Polyp Morbus Melanoma Epidermolysis Ablatio
+Hyperplasie Hypertrophie Hypoplasie Fibrose Striktur Atresie Agenesie Zyste Morbus Melanoma Epidermolysis Ablatio
 Mikrodeletionssyndrom Mikroduplikationssyndrom Fetusschädigung Hypersekretion
 """.split())
+# a single index word blocks only with a medical ending: the index holds
+# Überlastung, Übergewicht, Hysterie, Atemnot and Grippe too, and each of
+# them has a business sense an exclusion list will never finish naming
+_MEDICAL_ENDINGS = (
+    "itis", "ose", "osis", "om", "oma", "ämie", "pathie", "algie", "plegie",
+    "karzinom", "sarkom", "infarkt", "sklerose", "syndrom", "krankheit",
+)
+
 # acronyms common in German correspondence that name nothing but a condition;
 # the index has some 400, most of which are also business terms (IHK, SPS, CAD)
 _ACRONYMS = frozenset("AIDS HIV ADHS COPD KHK PAVK FSME TBC PCOS".split())
@@ -143,7 +151,7 @@ def _load(path: Path) -> _Lexicon:
         if not parts or term.isupper() or not term[0].isupper():
             continue
         if len(parts) == 1:
-            if len(parts[0]) >= 4 and parts[0] not in _EVERYDAY:
+            if len(parts[0]) >= 4 and parts[0].lower().endswith(_MEDICAL_ENDINGS):
                 words.add(parts[0])
         elif len(parts) <= 4:
             phrases.add(tuple(_norm(p) for p in parts))

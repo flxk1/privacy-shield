@@ -30,7 +30,8 @@ _SHE = re.compile(
     r"^\W*Sie\s+(?:hat|ist|war|wird|kann|muss|soll|will|darf|mag|"
     r"(?!nicht\b|jetzt\b|erst\b|selbst\b|oft\b|gut\b|bereits\b|bitte\b)[a-zäöüß]+t)\b")
 # singular only: "die Mitarbeiter erhalten eine Schulung" is staff as a group
-_SINGULAR = r"(?:[Dd]er|[Dd]em|[Dd]en|[Dd]es|[Ee]in|[Ee]inem|[Ee]inen|[Ee]ines|[Uu]nser(?:em|en)?|Ihr(?:em|en)?|[Dd]ieser|[Dd]iesem|[Dd]iesen)"
+# definite or possessive only: "ein Mitarbeiter" in a policy is anyone
+_SINGULAR = r"(?:[Dd]er|[Dd]em|[Dd]en|[Dd]es|[Uu]nser(?:em|en)?|Ihr(?:em|en)?|[Dd]ieser|[Dd]iesem|[Dd]iesen)"
 _PERSON_NOUN = re.compile(
     r"\b(?:Patientin|Mitarbeiterin|Arbeitnehmerin|Bewerberin|Mandantin|Versicherte|Kollegin|"
     r"Schülerin|Mieterin|Kundin|Klientin|Beschäftigte|Angestellte|Sohn|Tochter|Ehefrau|Ehemann|"
@@ -38,6 +39,9 @@ _PERSON_NOUN = re.compile(
     r"(?:Patienten?|Mitarbeiters?|Arbeitnehmers?|Bewerbers?|Mandanten?|Versicherten?|Kollegen?|"
     r"Schülers?|Mieters?|Kunden?|Klienten?|Beschäftigten?|Angestellten?|Kind(?:es)?)\b"
 )
+
+
+_FOLLOW_UP_WORDS = 6
 
 
 def sentences(text: str) -> List[Tuple[int, int]]:
@@ -73,13 +77,20 @@ def refers_to_person(text: str, spans: Sequence[Tuple[int, int]], at: int,
     """Whether the sentence holding *at*, or the one before it, is about a person.
 
     A name, an honorific, "ich" or a singular person noun counts in the
-    sentence or the one before ("Herr Dahl fehlt. Ursache: Hepatitis."); a
+    sentence, or in the one before when this one is a short follow-up
+    ("Herr Dahl fehlt. Ursache: Hepatitis."); a
     third-person pronoun counts in the sentence itself, and only when such an
     anchor stands somewhere in the text.
     """
     current = sentence_of(spans, at)
     index = list(spans).index(current) if current in spans else -1
-    if _anchor(text, current, names) or (index > 0 and _anchor(text, spans[index - 1], names)):
+    if _anchor(text, current, names):
+        return True
+    # the sentence before counts for a short follow-up ("Ursache: Hepatitis.",
+    # "Grund ist eine Gehirnerschütterung."), not for a sentence of its own
+    # ("Herr Kraus hat angerufen. Die Grippe geht um, bitte …")
+    follow_up = len(text[current[0]:current[1]].split()) <= _FOLLOW_UP_WORDS
+    if follow_up and index > 0 and _anchor(text, spans[index - 1], names):
         return True
     sentence = text[current[0]:current[1]]
     if not (_THIRD_PERSON.search(sentence) or _SHE.search(sentence)):
