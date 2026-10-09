@@ -60,37 +60,43 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Art. 9 GDPR special category patterns (mirrored from routes/privacy_shield)
 # ---------------------------------------------------------------------------
+# German case and plural endings: "Diagnosen", "Medikamente", "genetische".
+# Not on "glaube", which would take the verb "glauben".
+_DE = r"(?:e|en|n|s|es|er|em|in|innen)?"
 _ART9_PATTERNS: Dict[str, List[str]] = {
     "health": [
         r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|treatment|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
-        r"\b(krankenhaus|arzt|diagnose|krankheit|behandlung|medikament|patient|therapie|symptom)\b",
+        r"\b(krankenhaus|arzt|diagnose|krankheit|behandlung|medikament|patient|therapie|symptom)" + _DE + r"\b",
+        r"\b(ärzte|ärztin|ärztinnen|krankenhäuser)\b",
     ],
     "genetic": [
         r"\b(dna|genetic|genome|hereditary|chromosom|mutation|gene\s*test)\b",
-        r"\b(genetisch|erbkrankheit|genom)\b",
+        r"\b(genetisch|erbkrankheit|genom)" + _DE + r"\b",
     ],
     "biometric": [
         r"\b(fingerprint|retina|iris\s*scan|face\s*recognition|biometric|voice\s*print)\b",
-        r"\b(fingerabdruck|biometrisch|gesichtserkennung)\b",
+        r"\b(fingerabdruck|biometrisch|gesichtserkennung)" + _DE + r"\b",
     ],
     "political": [
         r"\b(political\s*party|political\s*opinion|vote|voting|election)\b",
-        r"\b(partei|politisch|wahl)\b",
+        r"\b(partei|politisch|wahl)" + _DE + r"\b",
     ],
     "religious": [
         r"\b(religion|religious|church|mosque|synagogue|temple)\b",
-        r"\b(kirche|moschee|synagoge|glaube|religiös)\b",
+        r"\b(kirche|moschee|synagoge|religiös)" + _DE + r"\b",
+        r"\bglaube\b",
     ],
     "union": [
-        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsrat)\b",
+        r"\b(trade\s*union|union\s*member|labor\s*union)\b",
+        r"\b(gewerkschaft|betriebsrat)" + _DE + r"\b",
     ],
     "sexual": [
         r"\b(sexual\s*orientation|gay|lesbian|bisexual|transgender|lgbtq)\b",
-        r"\b(sexuelle\s*orientierung|geschlechtsidentität)\b",
+        r"\b(sexuelle\s*orientierung|geschlechtsidentität)" + _DE + r"\b",
     ],
     "criminal": [
         r"\b(criminal\s*record|conviction|offence|offense|felony|misdemeanor)\b",
-        r"\b(vorstrafe|strafregister|verurteilung)\b",
+        r"\b(vorstrafe|strafregister|verurteilung)" + _DE + r"\b",
     ],
 }
 

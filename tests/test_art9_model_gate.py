@@ -81,3 +81,21 @@ def test_scan_and_gate_share_one_model_run(model):
     fake = model([("health condition", "Diabetes", 0.95)])
     scan("Der Mitarbeiter hat Diabetes und fehlt.")
     assert fake.calls == 1
+
+
+@pytest.mark.parametrize("text", [
+    "Die Diagnosen liegen der Personalabteilung vor.",
+    "Er nimmt mehrere Medikamente gegen Bluthochdruck.",
+    "Sie hat zwei Vorstrafen.",
+    "Die genetische Analyse ist abgeschlossen.",
+    "Beide Ärzte haben ihn krankgeschrieben.",
+])
+def test_inflected_german_keywords_are_found(monkeypatch, text):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert PrivacyGate().check_art9(text)
+
+
+@pytest.mark.parametrize("text", ["Wir glauben, dass der Termin passt.", "Die Glaubensfrage stellt sich nicht."])
+def test_the_verb_glauben_is_not_religion(monkeypatch, text):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert "religious" not in PrivacyGate().check_art9(text)

@@ -1731,6 +1731,13 @@ names and street addresses at confidence 0.7 and special-category mentions at
 without it.
 
 - Names and addresses it finds are redacted at `medium` and never block.
+- Without the model, the gate's Art. 9 keywords are main's list, matched with
+  German case and plural endings ("Diagnosen", "Medikamente", "genetische",
+  "Vorstrafen"); "glaube" stays exact so the verb "glauben" does not count.
+  The list still blocks business uses of its words ("Partei im Sinne dieses
+  Vertrages", "Behandlung Ihres Antrags", "nach Wahl des Vermieters") and the
+  endings add their plurals; it misses drug names, treatments, union and party
+  names and religious practice.
 - Special categories (Art. 9) with the model on: the gate blocks external
   egress when the model holds a special category at 0.9 or more, and a keyword
   in a category the model knows (health, religion, politics, union, sexual
