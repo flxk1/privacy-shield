@@ -1993,9 +1993,14 @@ reordering a number.
   phrase is not ("Bauteil A-1234 Teil der Lieferung").
 - A German postcode and city is five digits and a capitalised word, matched
   case-sensitively ("Umsatz 25000 euro", "Gewicht 10000 kg" and "0.67890
-  mg/l" are no longer a postcode and city), with a known place tail
-  ("Frankfurt am Main", "Freiburg im Breisgau", "Rothenburg ob der
-  Tauber"). A capitalised noun after five digits is still taken for a city
+  mg/l" are no longer a postcode and city). The city may have a first word
+  from a list (Bad, Sankt, St., Neu, Alt, Groß, Klein, Königs, Bergisch,
+  Hann., Lutherstadt, Ostseebad, Schwäbisch, …), hyphenated parts
+  ("Garmisch-Partenkirchen"), a bracketed river ("Frankfurt (Oder)"), a
+  second capitalised word that ends the phrase ("Königs Wusterhausen,"), and
+  a known place tail ("Frankfurt am Main", "Freiburg im Breisgau",
+  "Rothenburg ob der Tauber"). A district after the city that does not end
+  the phrase stays ("10115 Berlin Mitte ist schön"). A capitalised noun after five digits is still taken for a city
   ("12000 Mitarbeiter" becomes [LOCATION]), and a place tail that ends the
   phrase extends it ("15000 Teilnehmer an der Ruhr."). A city written in
   lowercase ("80331 münchen") is not found.

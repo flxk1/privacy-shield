@@ -233,6 +233,19 @@ _H = r"[ \t]"
 _STREET_SUFFIX = r"straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer"
 # a phrase ends at a comma, ";", ")", a line end, or a full stop before a space
 _PHRASE_END = r"(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t\n]|$)))"
+# A German place name: an optional first word ("Bad Homburg", "St. Ingbert",
+# "Bergisch Gladbach"), hyphenated parts ("Garmisch-Partenkirchen"), a
+# bracketed river ("Frankfurt (Oder)"), or a second capitalised word that
+# ends the phrase ("Königs Wusterhausen,")
+_CITY_WORD = r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*"
+_CITY_LEAD = (
+    r"(?:Bad|Sankt|St\.|Neu|Alt|Groß|Klein|Königs|Bergisch|Hann\.|Lutherstadt|Hansestadt|Ostseebad|"
+    r"Nordseebad|Schwäbisch|Bayerisch|Märkisch|Ober|Nieder|Hohen|Markt)[ \t]+"
+)
+_CITY = (
+    rf"(?:{_CITY_LEAD})?{_CITY_WORD}(?:[ \t]*\([A-ZÄÖÜ][a-zäöüß]+\))?"
+    rf"(?:[ \t]+{_CITY_WORD}(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t\n]|$))))?"
+)
 # the place tails of German city names; "am Standort" and "im Sommer" are not
 _CITY_TAIL = (
     r"(?:am[ \t]+(?:Main|Rhein|Neckar|Inn|Lech|See|Harz)|an[ \t]+der[ \t]+(?:Oder|Donau|Saale|Ruhr|Lahn|Havel|"
@@ -433,7 +446,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
         # under the default IGNORECASE "Umsatz 25000 euro" and "10000 kg" were a
         # postcode and a city, and a lowercase word after the city went too
         pattern=_compile(
-            rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+(?:{_H}+{_CITY_TAIL}{_PHRASE_END})?\b",
+            rf"\b\d{{5}}{_H}+{_CITY}(?:{_H}+{_CITY_TAIL}{_PHRASE_END})?(?![A-Za-zÄÖÜäöüß])",
             re.MULTILINE,
         ),
         pii_type=PIIType.PLZ_CITY,
