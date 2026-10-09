@@ -403,6 +403,14 @@ def _cmd_audit_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_icd_status(args: argparse.Namespace) -> int:
+    """Where the ICD-10-GM index was found, or where it was looked for. Reads, writes nothing."""
+    from . import icd10gm
+    status = icd10gm.status()
+    print(json.dumps(status, ensure_ascii=False, indent=2))
+    return 0 if status["found"] else 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="privacy-shield",
@@ -518,6 +526,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the standard audit path (audit_log.audit_log_path()) and exit. Writes nothing.",
     )
     audit_path_p.set_defaults(func=_cmd_audit_path)
+
+    icd_p = sub.add_parser(
+        "icd-status",
+        help="Show whether the ICD-10-GM index is found and where; exit 3 when it is not. Writes nothing.",
+    )
+    icd_p.set_defaults(func=_cmd_icd_status)
 
     return parser
 

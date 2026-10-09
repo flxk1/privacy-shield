@@ -1731,24 +1731,53 @@ names and street addresses at confidence 0.7 and special-category mentions at
 without it.
 
 - Names and addresses it finds are redacted at `medium` and never block.
-- Without the model, the gate's Art. 9 keywords are main's list, matched with
-  German case and plural endings ("Diagnosen", "Medikamente", "genetische",
-  "Vorstrafen"); "glaube" stays exact so the verb "glauben" does not count.
-  The list still blocks business uses of its words ("Partei im Sinne dieses
-  Vertrages", "Behandlung Ihres Antrags", "nach Wahl des Vermieters") and the
-  endings add their plurals; it misses drug names, treatments, union and party
-  names and religious practice.
-- Special categories (Art. 9) with the model on: the gate blocks external
-  egress when the model holds a special category at 0.9 or more, and a keyword
-  in a category the model knows (health, religion, politics, union, sexual
-  orientation, criminal) blocks only when the model sees any special category
-  in the text at 0.5 or more. So "Partei im Sinne dieses Vertrages", "nach Wahl
-  des Vermieters" and "ich glaube" no longer block, and "Mitglied der IG Metall"
-  or "in der CDU aktiv" do. Genetic and biometric keywords block as before. The
-  category the gate names can be wrong (the model calls IG Metall a religion
-  about as often as a union); the verdict does not depend on it. Missed: drug
-  names and treatments without a diagnosis ("nimmt Metformin", "nach der
-  Chemo"). The redacted spans are one type, `special_category`.
+- Special categories (Art. 9) in the gate:
+  - Main's keyword list still decides on its own without the model. German
+    endings are matched only on words with no business sense ("Diagnosen",
+    "Medikamente", "Vorstrafen"); "Parteien", "Wahlen", "Kirchen",
+    "Behandlungen", "Verurteilungen" and "genetische" are not, being contract
+    and business words. Without the model the list still blocks business uses
+    of its singular words ("Partei im Sinne dieses Vertrages", "nach Wahl des
+    Vermieters").
+  - With the model on, a keyword in a category the model knows (health,
+    religion, politics, union, sexual orientation, criminal) counts only when
+    the model has a special-category hit at 0.5 or more in the same sentence.
+    Genetic and biometric keywords count alone.
+  - With the model on, a model hit at 0.9 or more counts without a keyword when
+    its sentence refers to a person and the hit is not itself a name
+    ("Nachname: Ostendorf" does not count). The category the gate names can
+    be wrong (IG Metall comes out as a religion about as often as a union); the
+    verdict does not depend on it. Its spans are redacted as one type,
+    `special_category`.
+  - With the ICD-10-GM index present (below), a diagnosis term in a sentence
+    that refers to a person counts as health.
+  - "Refers to a person": a name the scanner finds, Herr/Frau/Dr./Prof. before
+    a capital, er/ihm/ihn/seine/sie/ihr/ich/mein/mir/mich, "Sie" with a
+    singular verb ("Sie hat"), or a person noun (Patientin, Mitarbeiter,
+    Bewerber, Sohn, Kollegin, …). A sentence ends at . ! ? before a capital or
+    at a blank line; a form without full stops is one sentence. Missed: a
+    person named only in another sentence ("Herr Albrecht kam. Migräne seit
+    Mai." does not count the second sentence).
+  - Found by no part: drug names ("nimmt Metformin"), treatments without a
+    diagnosis ("nach der Chemo" without the model), and most data that is only
+    implied (dues lines, a partner's name, a ward number).
+- The ICD-10-GM index is BfArM's work and is not shipped: the user downloads
+  "Alphabet EDV-Fassung TXT (CSV)" from bfarm.de, accepting BfArM's download
+  conditions, and the scanner reads it unchanged from `PRIVACY_SHIELD_ICD10GM`,
+  the user-state folder `privacy-shield/icd10gm/`, or a BfArM ZIP in
+  `~/Downloads`; `privacy-shield icd-status` shows which. Used from it:
+  single-word diagnoses and phrases of up to four words from chapters A–T,
+  matched across one German ending ("Multipler Sklerose"), plus a short
+  reviewed list of first words it lists only inside longer entries (Diabetes,
+  Schwangerschaft, Stenose, Morbus, …) and nine acronyms (AIDS, HIV, ADHS,
+  COPD, KHK, PAVK, FSME, TBC, PCOS). Left out: chapters U and Z (circumstances
+  such as "Opfer", "Verarmung", "Ausgebranntsein"), the index's other acronyms
+  (most are also business terms: IHK, SPS, CAD), and about seventy single words
+  that are everyday German or surnames (Depression, Störung, Mangel, Angst,
+  Krebs, Schock, Tod, Fraktur, Lequesne, …; `_EVERYDAY` in icd10gm.py).
+  Source: ICD-10-GM, Alphabetisches Verzeichnis, herausgegeben vom
+  Bundesinstitut für Arzneimittel und Medizinprodukte (BfArM) im Auftrag des
+  Bundesministeriums für Gesundheit.
 - Where a rule finding overlaps a model span, the rule's type stands and the
   rest of the model span is redacted under that type, so "Bergweg 3-5" does not
   come out as "[ADDRESS]-5".

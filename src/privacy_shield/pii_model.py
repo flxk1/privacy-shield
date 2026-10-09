@@ -194,19 +194,16 @@ def _raw(text: str) -> List[Tuple[int, int, str, float]]:
     return hits
 
 
-def special_signal(text: str) -> Tuple[List[str], bool]:
-    """(gate categories the model holds at the SPECIAL threshold, any special hit at _WEAK); ([], False) when off."""
+def special_threshold() -> float:
+    return _THRESHOLD[SPECIAL]
+
+
+def special_hits(text: str) -> List[Tuple[int, int, str, float]]:
+    """Every special-category hit at or above _WEAK as (start, end, gate category, score); [] when off."""
     if not configured() or not text.strip():
-        return [], False
-    strong, weak = [], False
-    for _s, _e, label, score in _raw(text):
-        if _LABELS[label] != SPECIAL:
-            continue
-        weak = True
-        category = _GATE_CATEGORY[label]
-        if score >= _THRESHOLD[SPECIAL] and category not in strong:
-            strong.append(category)
-    return strong, weak
+        return []
+    return [(s, e, _GATE_CATEGORY[label], score) for s, e, label, score in _raw(text)
+            if _LABELS[label] == SPECIAL]
 
 
 def find(text: str, known_names: Iterable[Tuple[int, int]] = ()) -> List[Span]:

@@ -41,7 +41,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import Tuple, TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from ._legacy_env import reject_legacy_env
 from .enforcement import (
@@ -60,43 +60,43 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Art. 9 GDPR special category patterns (mirrored from routes/privacy_shield)
 # ---------------------------------------------------------------------------
-# German case and plural endings: "Diagnosen", "Medikamente", "genetische".
-# Not on "glaube", which would take the verb "glauben".
+# German case and plural endings, on words with no business sense only:
+# "Diagnosen", "Medikamente", "Vorstrafen". "Parteien", "Wahlen", "Kirchen",
+# "Behandlungen" and "Verurteilungen" are contract and business plurals.
 _DE = r"(?:e|en|n|s|es|er|em|in|innen)?"
 _ART9_PATTERNS: Dict[str, List[str]] = {
     "health": [
         r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|treatment|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
-        r"\b(krankenhaus|arzt|diagnose|krankheit|behandlung|medikament|patient|therapie|symptom)" + _DE + r"\b",
-        r"\b(ärzte|ärztin|ärztinnen|krankenhäuser)\b",
+        r"\b(krankenhaus|arzt|diagnose|krankheit|medikament|patient|therapie|symptom)" + _DE + r"\b",
+        r"\b(behandlung|ärzte|ärztin|ärztinnen|krankenhäuser)\b",
     ],
     "genetic": [
         r"\b(dna|genetic|genome|hereditary|chromosom|mutation|gene\s*test)\b",
-        r"\b(genetisch|erbkrankheit|genom)" + _DE + r"\b",
+        r"\b(genetisch|erbkrankheit|genom)\b",
     ],
     "biometric": [
         r"\b(fingerprint|retina|iris\s*scan|face\s*recognition|biometric|voice\s*print)\b",
-        r"\b(fingerabdruck|biometrisch|gesichtserkennung)" + _DE + r"\b",
+        r"\b(fingerabdruck|biometrisch|gesichtserkennung)\b",
     ],
     "political": [
         r"\b(political\s*party|political\s*opinion|vote|voting|election)\b",
-        r"\b(partei|politisch|wahl)" + _DE + r"\b",
+        r"\b(partei|politisch|wahl)\b",
     ],
     "religious": [
         r"\b(religion|religious|church|mosque|synagogue|temple)\b",
-        r"\b(kirche|moschee|synagoge|religiös)" + _DE + r"\b",
-        r"\bglaube\b",
+        r"\b(kirche|moschee|synagoge|glaube|religiös)\b",
     ],
     "union": [
-        r"\b(trade\s*union|union\s*member|labor\s*union)\b",
-        r"\b(gewerkschaft|betriebsrat)" + _DE + r"\b",
+        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsrat)\b",
     ],
     "sexual": [
         r"\b(sexual\s*orientation|gay|lesbian|bisexual|transgender|lgbtq)\b",
-        r"\b(sexuelle\s*orientierung|geschlechtsidentität)" + _DE + r"\b",
+        r"\b(sexuelle\s*orientierung|geschlechtsidentität)\b",
     ],
     "criminal": [
         r"\b(criminal\s*record|conviction|offence|offense|felony|misdemeanor)\b",
-        r"\b(vorstrafe|strafregister|verurteilung)" + _DE + r"\b",
+        r"\b(vorstrafe|strafregister)" + _DE + r"\b",
+        r"\bverurteilung\b",
     ],
 }
 
@@ -474,23 +474,50 @@ class PrivacyGate:
         """
         if not text:
             return []
+        from . import art9, icd10gm, pii_model
         text_lower = text.lower()
-        hits: List[str] = []
+        keyword_at: Dict[str, List[int]] = {}
         for category, patterns in _ART9_COMPILED.items():
             for pat in patterns:
-                if pat.search(text_lower):
-                    hits.append(category)
-                    break
-        from . import pii_model
-        if not pii_model.configured():
-            return hits
-        # with the model on, a keyword in a category the model knows needs the
-        # model to see some special category in the text ("Partei im Sinne
-        # dieses Vertrages" has the keyword and nothing else); the model's own
-        # confident hits count on their own
-        strong, weak = pii_model.special_signal(text)
-        kept = [c for c in hits if c not in _MODEL_CATEGORIES or weak]
-        return kept + [c for c in strong if c not in kept]
+                keyword_at.setdefault(category, []).extend(m.start() for m in pat.finditer(text_lower))
+        model_hits = pii_model.special_hits(text)
+        sentences = art9.sentences(text)
+        names: List[Tuple[int, int]] = []
+        names_read = False
+
+        def person(at: int) -> bool:
+            nonlocal names, names_read
+            if not names_read:
+                from .scanner import PIIType, PrivacyScanner
+                names = [(f.start, f.end) for f in PrivacyScanner(layers=[2]).scan(text).findings
+                         if f.pii_type is PIIType.NAME]
+                names_read = True
+            return art9.refers_to_person(text, art9.sentence_of(sentences, at), names)
+
+        hits: List[str] = []
+        model_on = pii_model.configured()
+        for category, starts in keyword_at.items():
+            if not starts:
+                continue
+            # with the model on, a keyword the model knows needs a model hit in
+            # its own sentence: "Partei im Sinne dieses Vertrages" has the
+            # keyword and nothing else
+            if model_on and category in _MODEL_CATEGORIES and not any(
+                art9.sentence_of(sentences, k) == art9.sentence_of(sentences, h[0])
+                for k in starts for h in model_hits
+            ):
+                continue
+            hits.append(category)
+        if "health" not in hits and any(person(s) for s, _e, _t in icd10gm.find_terms(text)):
+            hits.append("health")
+        for start, end, category, score in model_hits:
+            if score < pii_model.special_threshold() or category in hits:
+                continue
+            # a confident hit alone counts in a sentence about a person, and
+            # not on a span that is itself a name ("Nachname: Ostendorf")
+            if person(start) and not any(s < end and start < e for s, e in names):
+                hits.append(category)
+        return hits
 
     def classify_data(self, text: str) -> str:
         """Classify *text* into a data sensitivity tier.

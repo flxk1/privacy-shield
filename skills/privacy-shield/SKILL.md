@@ -106,6 +106,31 @@ path above — see `degrade_gracefully_without_optional_extras` below.
 3. Continue only from the overlay. If the scan result carries
    `overlay_withheld`, detected values are still in it: do not use it.
 
+## Health data and the ICD-10-GM list
+
+Health data (GDPR Art. 9) is found far better with BfArM's ICD-10-GM
+alphabetical index, about 89,000 diagnosis terms and synonyms. The index is
+not part of this package: BfArM's download conditions forbid changing it and
+require citing it, so each user keeps their own copy and the scanner reads it
+unchanged.
+
+1. Before a scan of anything that may hold health data, run
+   `privacy-shield icd-status`. It prints where the index was found, or every
+   place it looked, and exits `3` when it is missing. It writes nothing.
+2. Where it is looked for, in order: the file or folder in
+   `PRIVACY_SHIELD_ICD10GM`; `<user state>/privacy-shield/icd10gm/` (on macOS
+   `~/Library/Application Support/privacy-shield/icd10gm/`); a BfArM ZIP in
+   `~/Downloads`. The ZIP works as downloaded; unpacking is not needed.
+3. When it is missing, tell the user before the scan that health terms will
+   be found only by the short built-in keyword list, and how to get the index:
+   bfarm.de > Kodiersysteme > Services > Downloads > ICD-10-GM >
+   "Alphabet EDV-Fassung TXT (CSV)", which forms a usage contract with BfArM.
+   The user accepts those terms and downloads it; this skill does not.
+4. A diagnosis term counts only in a sentence that also refers to a person (a
+   name, Herr/Frau, er/sie, Patientin, Mitarbeiter): "Migräne ist häufig" is
+   not health data about anyone. Drug names are not in the index and are not
+   found. In the report, say whether the index was used.
+
 ## Reporting a scan
 
 - Report what was found, by type, and say that the scan can miss values. It

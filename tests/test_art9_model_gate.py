@@ -87,7 +87,6 @@ def test_scan_and_gate_share_one_model_run(model):
     "Die Diagnosen liegen der Personalabteilung vor.",
     "Er nimmt mehrere Medikamente gegen Bluthochdruck.",
     "Sie hat zwei Vorstrafen.",
-    "Die genetische Analyse ist abgeschlossen.",
     "Beide Ärzte haben ihn krankgeschrieben.",
 ])
 def test_inflected_german_keywords_are_found(monkeypatch, text):
@@ -95,7 +94,38 @@ def test_inflected_german_keywords_are_found(monkeypatch, text):
     assert PrivacyGate().check_art9(text)
 
 
+@pytest.mark.parametrize("text", [
+    "Die Parteien vereinbaren Stillschweigen.", "Die Wahlen zum Aufsichtsrat finden im Mai statt.",
+    "Genetische Algorithmen optimieren die Tourenplanung.", "Kirchen sind von der Grundsteuer befreit.",
+    "Die Behandlungen der Reklamationen dauern an.", "Verurteilungen zur Unterlassung sind vollstreckbar.",
+])
+def test_business_plurals_of_cue_words_do_not_count(monkeypatch, text):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert PrivacyGate().check_art9(text) == []
+
+
 @pytest.mark.parametrize("text", ["Wir glauben, dass der Termin passt.", "Die Glaubensfrage stellt sich nicht."])
 def test_the_verb_glauben_is_not_religion(monkeypatch, text):
     monkeypatch.delenv(pii_model.ENV, raising=False)
     assert "religious" not in PrivacyGate().check_art9(text)
+
+
+def test_a_confident_hit_on_a_name_does_not_count(model):
+    model([("person", "Ostendorf", 0.95), ("religion", "Ostendorf", 0.95)])
+    assert PrivacyGate().check_art9("Vorname: Henrike\nNachname: Ostendorf") == []
+
+
+def test_a_confident_hit_about_nobody_does_not_count(model):
+    model([("religion", "Testament", 0.95)])
+    assert PrivacyGate().check_art9("Der Erblasser kann durch Testament den Erben bestimmen.") == []
+
+
+def test_model_support_counts_only_in_the_keywords_own_sentence(model):
+    model([("health condition", "Diabetes", 0.6)])
+    hits = PrivacyGate().check_art9("Die Partei tagt morgen. Herr Albrecht hat Diabetes.")
+    assert "political" not in hits and "health" in hits
+
+
+def test_a_confident_hit_on_a_name_in_a_sentence_about_a_person_does_not_count(model):
+    model([("person", "Henrike Ostendorf", 0.95), ("religion", "Ostendorf", 0.95)])
+    assert PrivacyGate().check_art9("Frau Henrike Ostendorf ist neu im Team.") == []
