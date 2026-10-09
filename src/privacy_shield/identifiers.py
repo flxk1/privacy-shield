@@ -962,19 +962,34 @@ _STREET_LEAD = (
     r"Unter\s+(?:der|den|dem)|Hinter\s+(?:der|den|dem)|Vor\s+(?:der|den|dem)|Bei\s+(?:der|den|dem)|"
     r"Über\s+(?:der|den|dem)|Neuer|Neue|Alter|Alte|Großer|Große|Kleiner|Kleine|Hoher|Hohe|Langer|Lange)"
 )
+_NUMBER = r"[ \t]+\d+[a-z]?(?:[ \t]*[-–][ \t]*\d+[a-z]?)?\b"
 _LEAD_STREET = re.compile(
-    _STREET_LEAD + r"(?:[ \t]+[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*){1,2}[ \t]+\d+[a-z]?(?:[ \t]*[-–][ \t]*\d+[a-z]?)?\b"
+    _STREET_LEAD + r"(?:[ \t]+[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*){1,2}" + _NUMBER
+    # "Am Hof 2" leads; "Jungfernstieg 7", "Fischmarkt 4", "Neuer Wall 50" end in a street word
+    + r"|\b(?:[A-ZÄÖÜ][a-zäöüß]+-)*[A-ZÄÖÜ][a-zäöüß]+"
+    r"(?:hof|markt|kai|wall|graben|steig|pfad|stieg|chaussee|promenade|deich|kamp)" + _NUMBER
 )
-_POSTCODE_AFTER = re.compile(r"[ \t]*,?[ \t]*(?:\n[ \t]*)?(?:[A-Z]{1,2}-)?\d{4,5}[ \t]+[A-ZÄÖÜ]")
+# "Frankfurter Straße 5", "Mariahilfer Straße 45": an adjective in -er, then
+# the street word - which names a street on its own, with no postcode needed
+_TWO_WORD_STREET = re.compile(
+    r"\b(?!(?:Unser|Euer|Ihrer|Jeder|Aller|Einer|Dieser)\b)[A-ZÄÖÜ][a-zäöüß]+er[ \t]+"
+    r"(?:Straße|Strasse|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm|Chaussee|Landstraße)" + _NUMBER
+)
+# a city ends its phrase: "10115 Berlin," or a line end, not "12000 Mitarbeiter arbeiteten"
+_CITY_END = r"[A-ZÄÖÜ][a-zäöüß]+(?:[ \t]+(?:am|an[ \t]+der|im|ob[ \t]+der|bei)[ \t]+[A-ZÄÖÜ][a-zäöüß]+)?(?=[ \t]*(?:$|[,;\n)]|\.(?:[ \t]|$)))"
+_POSTCODE_AFTER = re.compile(
+    r"[ \t]*[,·][ \t]*(?:\n[ \t]*)?(?:(?:A|CH|AT|D)-\d{4,5}|\d{5})[ \t]+" + _CITY_END
+    + r"|[ \t]*\n[ \t]*(?:(?:A|CH|AT|D)-\d{4,5}|\d{5})[ \t]+" + _CITY_END, re.MULTILINE)
 _ADDRESS_LABEL = re.compile(
     r"(?i)(?:anschrift|adresse|wohnhaft|wohnt|lieferanschrift|rechnungsanschrift|c/o|sitz)[^\n]{0,30}$")
-_PO_BOX = re.compile(r"\bPostfach[ \t]+\d{1,6}(?:[ \t]\d{2,3}){0,3}\b")
+# "Postfach 10 20 30", "Postfach 1234"; not "das Postfach 2 Tage nicht geleert"
+_PO_BOX = re.compile(r"\bPostfach[ \t]+(?:\d{3,6}|\d{1,2}(?:[ \t]\d{2,3}){1,3})\b")
 # Austrian and Swiss postcodes have four digits; one directly after a street
-_FOUR_DIGIT_CITY = re.compile(r"\A[ \t]*,[ \t]*(\d{4}[ \t]+[A-ZÄÖÜ][a-zäöüß]+)")
+_FOUR_DIGIT_CITY = re.compile(r"\A[ \t]*[,·][ \t]*((?:(?:A|CH)-)?\d{4}[ \t]+" + _CITY_END + ")", re.MULTILINE)
 
 
 def find_lead_streets(text: str) -> List[Tuple[int, int, str]]:
-    out = []
+    out = [(m.start(), m.end(), m.group(0)) for m in _TWO_WORD_STREET.finditer(text)]
     for m in _LEAD_STREET.finditer(text):
         if _POSTCODE_AFTER.match(text, m.end()) or _ADDRESS_LABEL.search(text[max(0, m.start() - 40):m.start()]):
             out.append((m.start(), m.end(), m.group(0)))

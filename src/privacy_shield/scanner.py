@@ -218,10 +218,10 @@ _MASK_CHAR = "\x00"
 # right, because nothing is being merged with a neighbour that belongs to
 # someone else.
 _H = r"[ \t]"
-_STREET_SUFFIX = (
-    r"straße|str\.|weg|platz|allee|gasse|ring|damm|ufer|hof|markt|kai|wall|graben|steig|"
-    r"pfad|stieg|chaussee|promenade|deich|kamp"
-)
+# suffixes that end a street name on their own; -hof, -markt, -wall, -pfad and
+# the like also end Innenhof, Datenmarkt, Firewall and Lernpfad, and are read
+# with an address around them (identifiers.find_lead_streets)
+_STREET_SUFFIX = r"straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer"
 # "12a", and a range "90–92" or "1-3", which used to leave its second half
 _HOUSE_NUMBER = rf"\d+[a-z]?(?:{_H}*[-–]{_H}*\d+[a-z]?)?\b"
 
@@ -376,7 +376,12 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # German postal code + city
     PatternDef(
-        pattern=_compile(rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+(?:{_H}+[a-zäöüß]+)?\b"),
+        # "60311 Frankfurt am Main", "78462 Konstanz" - and, as before, one
+        # lowercase word after the city, which also takes "12000 Mitarbeiter arbeiteten"
+        pattern=_compile(
+            rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+"
+            rf"(?:{_H}+(?:am|an{_H}+der|im|ob{_H}+der|bei){_H}+[A-ZÄÖÜ][a-zäöüß]+|{_H}+[a-zäöüß]+)?\b"
+        ),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,
         description="German postal code and city",

@@ -1957,20 +1957,28 @@ reordering a number.
 
 ## Address forms
 
-- A street with a suffix (-straße, -str., -weg, -platz, -allee, -gasse,
-  -ring, -damm, -ufer, -hof, -markt, -kai, -wall, -graben, -steig, -pfad,
-  -stieg, -chaussee, -promenade, -deich, -kamp) and a house number is found
-  alone; the number may carry a letter and a range ("90–92", "1-3").
-- A street named without a suffix, led by a preposition and article or an
-  adjective ("Am Lindenhof", "An der Alster", "Unter den Linden", "Zur
-  Mühle", "Neuer Wall"), is found only before a postcode (same line or the
-  next) or after an address label (Anschrift, Adresse, wohnhaft, c/o, …).
-  So "Im Jahr 2024" stays, and a business phrase of that shape before a
-  postcode is taken for a street ("Neue Version 2, 10115 Berlin").
-- "Postfach" with its number is redacted as an address.
-- A four-digit postcode and city is found only directly after a street
-  (", 1010 Wien"); alone it is not ("1010 Wien" could be a year and a city).
-- Not found: a street with neither suffix nor lead word ("Jungfernstieg"
-  is, "Bergstraße" is, "Dorfmitte 3" is not), house numbers written as words,
-  and foreign street formats other than the English "12 Main Street".
-
+- A street with a suffix (-straße, -strasse, -str., -weg, -platz, -allee,
+  -gasse, -ring, -damm, -ufer) and a house number is found alone; the number
+  may carry a letter and a range ("90–92", "1-3"). So is a two-word street
+  of an adjective in -er and a street word ("Frankfurter Straße 5",
+  "Mariahilfer Straße 45"), except after Unser, Euer, Jeder and similar.
+- Found only before a postcode or after an address label (Anschrift,
+  Adresse, wohnhaft, c/o, …): a street led by a preposition and article or
+  an adjective ("Am Lindenhof", "An der Alster", "Unter den Linden", "Neuer
+  Wall"), and a street ending in -hof, -markt, -kai, -wall, -graben, -steig,
+  -pfad, -stieg, -chaussee, -promenade, -deich or -kamp ("Jungfernstieg 7"),
+  since those endings also close Innenhof, Datenmarkt, Firewall and
+  Lernpfad. A postcode here is five digits, or four after "A-"/"CH-", after
+  a comma, a "·" or a line break, and its city must end the phrase (a comma,
+  a line end, a full stop or "am Main"): "Im Jahr 2024, 12000 Mitarbeiter
+  arbeiteten" has no street in it.
+- "Postfach" with a number of three or more digits, or grouped ("10 20
+  30"), is redacted as an address; "das Postfach 2 Tage" is not.
+- A four-digit postcode and city is found only directly after a found
+  street (", 1060 Wien", ", 8001 Zürich").
+- Still taken for a postcode and city, as before this change: five digits,
+  a capitalised word and one lowercase word ("12000 Mitarbeiter
+  arbeiteten" becomes [LOCATION]).
+- Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
+  postcode written first ("A-1010 Wien, Am Hof 2"), house numbers written as
+  words, and foreign street formats other than "12 Main Street".
