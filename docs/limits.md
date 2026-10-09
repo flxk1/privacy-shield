@@ -1743,8 +1743,11 @@ without it.
   "Herrn Notar" is a role. A role outside the list is still redacted.
 - A one-word person span is kept only after an honorific or a listed role
   ("Frau Weiß", "Zeugin Brandhorst") or when a longer name in the same text
-  contains it. A bare surname with none of these ("Laut Albrecht …") is not
-  redacted by this layer.
+  contains it. Not redacted by this layer: a bare surname with none of these
+  ("Laut Albrecht …"), a surname on the role list without an honorific
+  ("Die Zeugin Richter", "Kläger Pfleger"), and a name split across form
+  fields ("Nachname: Ostendorf"). Measured on the gold set: surname only 1 of
+  6, split 1 of 4.
 - Once a name is confirmed, later whole-word mentions of its surname (the last
   word) in the same text are redacted ("Herr Wendehals … hat Wendehals"), found
   by the model or not; names the rules found seed this too. Not seeded: a name
@@ -1755,17 +1758,30 @@ without it.
   Rose", "am Bach"), unless that is the particle the name was seeded with
   ("von der Leyen", "zur Linde"). A genitive is matched ("Hollmanns"). A
   colloquial article before a surname ("Der Wendehals hat …") is not matched,
-  and a one-word model hit after an article is dropped the same way. A surname that is also a common noun is still redacted
-  where no article precedes it ("Wolf entschuldigte sich" and "Wolf und Hund").
+  and a one-word model hit after an article is dropped the same way.
+- Over-redaction from that matching, kept: a surname that is also a common
+  noun, adverb or place is redacted wherever no article precedes it ("Wolf und
+  Hund"), its genitive-looking form included ("Frau Morgen" … "Morgens ist die
+  Tür zu" → "[NAME] ist die Tür zu"). A particle surname also redacts a place
+  written with the same particle ("Herr zur Linde" … "Gasthaus zur [NAME]",
+  "Herr von Bergen" … "von [NAME] nach Oslo"). Nothing leaks and no egress
+  decision changes; the text loses the word.
 - A lone word after a role is not taken for a name when it is itself a role,
   or a rank built from an office prefix and a rank ending ("Zeuge
   Polizeiobermeister"); a surname with only the ending ("Kläger Baumeister") is
   a name.
+- Text goes to the model in pieces of about 1,500 characters, cut at a line or
+  sentence end where one is near; a name across a cut can be missed.
 - This layer does not change what the rules redact: main's rules already take
-  "Herr Präsident" for a name.
+  "Herr Präsident" for a name, and on clean legal text lose 12 % of the
+  characters with or without the model.
+- These name rules are frozen: each further surface rule measured closed one
+  case and opened a neighbouring one. Better recall needs a better model or a
+  German business-correspondence corpus to fit one on.
 - The gate's own scan (layer 1) does not run the model.
 - It loads from local files only and sets `HF_HUB_OFFLINE`; a host that imported
   `huggingface_hub` before the first scan has already fixed that setting.
-- Cost measured on German business text: about 0.36 s per 1,000 characters on
-  CPU, and a 2.1 GB model download made once by the user.
+- Cost measured on German business text: about 0.2–0.4 s per 1,000 characters
+  on CPU, a load of about 10 s per process, and a 2.1 GB model download made
+  once by the user.
 
