@@ -1,0 +1,83 @@
+import collections
+
+import pytest
+
+from privacy_shield import pii_model
+from privacy_shield.gate import PrivacyGate
+
+
+class _Fake:
+    def __init__(self, hits):
+        self.hits = hits
+        self.calls = 0
+
+    def extract_entities(self, chunk, labels, **_):
+        self.calls += 1
+        out = {}
+        for label, needle, score in self.hits:
+            if needle in chunk:
+                start = chunk.index(needle)
+                out.setdefault(label, []).append(
+                    {"text": needle, "confidence": score, "start": start, "end": start + len(needle)})
+        return {"entities": out}
+
+
+@pytest.fixture
+def model(monkeypatch):
+    def install(hits):
+        fake = _Fake(hits)
+        monkeypatch.setenv(pii_model.ENV, "fake")
+        monkeypatch.setattr(pii_model, "_load", lambda spec: fake)
+        monkeypatch.setattr(pii_model, "_model", None)
+        monkeypatch.setattr(pii_model, "_cache", collections.OrderedDict())
+        return fake
+    return install
+
+
+def _allowed(text):
+    return PrivacyGate()._decide_local({"text": text}, "external_llm").allowed
+
+
+@pytest.mark.parametrize("text", [
+    "Jede Partei im Sinne dieses Vertrages kann kündigen.",
+    "Die Behandlung Ihres Antrags dauert zwei Wochen.",
+    "Nach Wahl des Vermieters wird die Kaution angelegt.",
+])
+def test_a_keyword_the_model_does_not_back_no_longer_blocks(model, monkeypatch, text):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert _allowed(text) is False
+    model([])
+    assert _allowed(text) is True
+
+
+def test_a_keyword_the_model_backs_weakly_still_blocks(model):
+    model([("health condition", "Diabetes", 0.6)])
+    assert _allowed("Der Patient hat Diabetes.") is False
+
+
+def test_a_confident_model_hit_blocks_without_a_keyword(model):
+    model([("health condition", "Chemo", 0.95)])
+    assert _allowed("Er geht nach der Chemo wieder arbeiten.") is False
+
+
+def test_a_weak_model_hit_without_a_keyword_does_not_block(model):
+    model([("health condition", "Chemo", 0.6)])
+    assert _allowed("Er geht nach der Chemo wieder arbeiten.") is True
+
+
+@pytest.mark.parametrize("text", ["Der Befund ist genetisch bedingt.", "Der Fingerabdruck wurde erfasst."])
+def test_categories_the_model_lacks_stay_keyword_only(model, text):
+    model([])
+    assert _allowed(text) is False
+
+
+def test_without_the_model_the_keywords_decide_alone(monkeypatch):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert _allowed("Jede Partei im Sinne dieses Vertrages kann kündigen.") is False
+
+
+def test_scan_and_gate_share_one_model_run(model):
+    from privacy_shield.runner import scan
+    fake = model([("health condition", "Diabetes", 0.95)])
+    scan("Der Mitarbeiter hat Diabetes und fehlt.")
+    assert fake.calls == 1

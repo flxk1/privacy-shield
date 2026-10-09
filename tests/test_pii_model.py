@@ -40,6 +40,7 @@ def model(monkeypatch):
         monkeypatch.setenv(pii_model.ENV, "fake")
         monkeypatch.setattr(pii_model, "_load", lambda spec: fake)
         monkeypatch.setattr(pii_model, "_model", None)
+        monkeypatch.setattr(pii_model, "_cache", __import__("collections").OrderedDict())
         return fake
     return install
 
@@ -117,22 +118,32 @@ def test_a_rule_finding_wins_an_overlap(model):
     assert [f.pii_type for f in hits] == [PIIType.EMAIL]
 
 
-def test_model_findings_are_redacted_and_never_block(model):
-    model(_ENTITIES)
+_NAMES_ONLY = [e for e in _ENTITIES if e[0] in ("person", "street address")]
+
+
+def test_names_and_addresses_are_redacted_and_never_block(model):
+    model(_NAMES_ONLY)
     doc = scan(TEXT).documents[0]
     assert doc.egress_allowed is True
-    for value in ("Jonas Albrecht", "Lindenweg 4", "Chemo"):
+    for value in ("Jonas Albrecht", "Lindenweg 4"):
         assert value not in doc.overlay
     assert "Geschäftsführer" in doc.overlay
 
 
-def test_the_gate_verdict_does_not_change(model, monkeypatch):
+def test_names_and_addresses_do_not_change_the_gate_verdict(model, monkeypatch):
     monkeypatch.delenv(pii_model.ENV, raising=False)
     before = PrivacyGate()._decide_local({"text": TEXT}, "external_llm")
-    model(_ENTITIES)
+    model(_NAMES_ONLY)
     after = PrivacyGate()._decide_local({"text": TEXT}, "external_llm")
     assert before.allowed is True
     assert (before.allowed, before.classification) == (after.allowed, after.classification)
+
+
+def test_a_confident_special_category_hit_blocks_and_is_redacted(model):
+    model(_ENTITIES)
+    doc = scan(TEXT).documents[0]
+    assert doc.egress_allowed is False
+    assert "Chemo" not in doc.overlay
 
 
 # conftest clears PRIVACY_SHIELD_*, so the real model comes in under its own name

@@ -94,6 +94,10 @@ _ART9_PATTERNS: Dict[str, List[str]] = {
     ],
 }
 
+# Categories the optional model (pii_model.py) has a label for; genetic and
+# biometric stay keyword-only.
+_MODEL_CATEGORIES = frozenset({"health", "religious", "political", "union", "sexual", "criminal"})
+
 # Compiled patterns for performance
 _ART9_COMPILED: Dict[str, List[re.Pattern]] = {
     cat: [re.compile(p, re.IGNORECASE) for p in pats]
@@ -471,7 +475,16 @@ class PrivacyGate:
                 if pat.search(text_lower):
                     hits.append(category)
                     break
-        return hits
+        from . import pii_model
+        if not pii_model.configured():
+            return hits
+        # with the model on, a keyword in a category the model knows needs the
+        # model to see some special category in the text ("Partei im Sinne
+        # dieses Vertrages" has the keyword and nothing else); the model's own
+        # confident hits count on their own
+        strong, weak = pii_model.special_signal(text)
+        kept = [c for c in hits if c not in _MODEL_CATEGORIES or weak]
+        return kept + [c for c in strong if c not in kept]
 
     def classify_data(self, text: str) -> str:
         """Classify *text* into a data sensitivity tier.

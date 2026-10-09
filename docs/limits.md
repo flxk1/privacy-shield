@@ -1730,10 +1730,18 @@ names and street addresses at confidence 0.7 and special-category mentions at
 0.9. Off by default. Set but not loadable, the scan raises instead of running
 without it.
 
-- Everything it finds is redacted at `medium`; nothing it finds blocks. The gate
-  does not read it, and its special-category hits are one type,
-  `special_category`, in no block set: the model names the wrong category for
-  about one span in fifteen.
+- Names and addresses it finds are redacted at `medium` and never block.
+- Special categories (Art. 9) with the model on: the gate blocks external
+  egress when the model holds a special category at 0.9 or more, and a keyword
+  in a category the model knows (health, religion, politics, union, sexual
+  orientation, criminal) blocks only when the model sees any special category
+  in the text at 0.5 or more. So "Partei im Sinne dieses Vertrages", "nach Wahl
+  des Vermieters" and "ich glaube" no longer block, and "Mitglied der IG Metall"
+  or "in der CDU aktiv" do. Genetic and biometric keywords block as before. The
+  category the gate names can be wrong (the model calls IG Metall a religion
+  about as often as a union); the verdict does not depend on it. Missed: drug
+  names and treatments without a diagnosis ("nimmt Metformin", "nach der
+  Chemo"). The redacted spans are one type, `special_category`.
 - Where a rule finding overlaps a model span, the rule's type stands and the
   rest of the model span is redacted under that type, so "Bergweg 3-5" does not
   come out as "[ADDRESS]-5".

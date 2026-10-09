@@ -13,9 +13,11 @@ type rather than a verdict.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import threading
+from collections import OrderedDict
 from typing import Iterable, List, Optional, Tuple
 
 ENV = "PRIVACY_SHIELD_PII_MODEL"
@@ -34,6 +36,18 @@ _LABELS = {
     "ethnic origin": SPECIAL,
 }
 _THRESHOLD = {NAME: 0.7, ADDRESS: 0.7, SPECIAL: 0.9}
+# a special-category hit at or above _WEAK corroborates a keyword in the gate
+_WEAK = 0.5
+_GATE_CATEGORY = {
+    "health condition": "health",
+    "religion": "religious",
+    "political opinion": "political",
+    "trade union membership": "union",
+    "sexual orientation": "sexual",
+    "criminal record": "criminal",
+    "ethnic origin": "ethnic",
+}
+_CACHE_SIZE = 8
 _CHUNK = 1500
 
 # the measured clean-text false positives were all role nouns taken for a person
@@ -103,6 +117,7 @@ def _get(spec: str):
         if _model is None or _loaded_for != spec:
             _model = _load(spec)
             _loaded_for = spec
+            _cache.clear()
         return _model
 
 
@@ -149,35 +164,68 @@ def _chunks(text: str):
         start = end
 
 
+_cache: "OrderedDict[str, List[Tuple[int, int, str, float]]]" = OrderedDict()
+
+
+def _raw(text: str) -> List[Tuple[int, int, str, float]]:
+    """Every model hit at or above _WEAK as (start, end, label, score); one model run per text."""
+    key = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+    with _lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    model = _get(configured())
+    hits: List[Tuple[int, int, str, float]] = []
+    for offset, chunk in _chunks(text):
+        result = model.extract_entities(
+            chunk, list(_LABELS), threshold=_WEAK,
+            include_confidence=True, include_spans=True,
+        )
+        for label, found in (result.get("entities") or {}).items():
+            if label not in _LABELS:
+                continue
+            for hit in found:
+                hits.append((offset + int(hit["start"]), offset + int(hit["end"]), label,
+                             float(hit.get("confidence", 0.0))))
+    with _lock:
+        _cache[key] = hits
+        while len(_cache) > _CACHE_SIZE:
+            _cache.popitem(last=False)
+    return hits
+
+
+def special_signal(text: str) -> Tuple[List[str], bool]:
+    """(gate categories the model holds at the SPECIAL threshold, any special hit at _WEAK); ([], False) when off."""
+    if not configured() or not text.strip():
+        return [], False
+    strong, weak = [], False
+    for _s, _e, label, score in _raw(text):
+        if _LABELS[label] != SPECIAL:
+            continue
+        weak = True
+        category = _GATE_CATEGORY[label]
+        if score >= _THRESHOLD[SPECIAL] and category not in strong:
+            strong.append(category)
+    return strong, weak
+
+
 def find(text: str, known_names: Iterable[Tuple[int, int]] = ()) -> List[Span]:
     """Every model span in *text* as (start, end, value, kind, score); [] when off.
 
     *known_names* are (start, end) of names other layers found; their surnames
     seed the same-text coreference below.
     """
-    spec = configured()
-    if not spec or not text.strip():
+    if not configured() or not text.strip():
         return []
-    model = _get(spec)
     out: List[Span] = []
-    for offset, chunk in _chunks(text):
-        result = model.extract_entities(
-            chunk, list(_LABELS), threshold=min(_THRESHOLD.values()),
-            include_confidence=True, include_spans=True,
-        )
-        for label, hits in (result.get("entities") or {}).items():
-            kind = _LABELS.get(label)
-            if kind is None:
-                continue
-            for hit in hits:
-                score = float(hit.get("confidence", 0.0))
-                if score < _THRESHOLD[kind]:
-                    continue
-                start, end = offset + int(hit["start"]), offset + int(hit["end"])
-                value = text[start:end]
-                if not value.strip() or (kind == NAME and _is_role_noun(value)):
-                    continue
-                out.append((start, end, value, kind, score))
+    for start, end, label, score in _raw(text):
+        kind = _LABELS[label]
+        if score < _THRESHOLD[kind]:
+            continue
+        value = text[start:end]
+        if not value.strip() or (kind == NAME and _is_role_noun(value)):
+            continue
+        out.append((start, end, value, kind, score))
     out.sort(key=lambda s: (s[0], -s[4]))
     return _corefer(text, _confirm_single_words(text, out), known_names)
 
