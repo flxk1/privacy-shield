@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
-from . import credentials, identifiers, names as names_module, national
+from . import credentials, identifiers, names as names_module, national, pii_model
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,9 @@ class PIIType(str, Enum):
     SEXUAL = "sexual"
     CRIMINAL = "criminal"
     GENETIC = "genetic"
+    #: A special-category mention found by the optional model (pii_model.py):
+    #: redacted, never blocking, one type because the model confuses categories.
+    SPECIAL_CATEGORY = "special_category"
 
     # Layer 4: Internal references
     FILE_PATH = "file_path"
@@ -1151,6 +1154,40 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    def _merge_model(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Fold in the optional model's names, addresses and special-category spans; rules win overlaps."""
+        if self._confidence_value(Confidence.MEDIUM) < self._confidence_value(self.min_confidence):
+            return findings
+        kinds = {pii_model.NAME: (PIIType.NAME, 2), pii_model.ADDRESS: (PIIType.ADDRESS, 2),
+                 pii_model.SPECIAL: (PIIType.SPECIAL_CATEGORY, 3)}
+        merged = list(findings)
+        for start, end, value, kind, _score in pii_model.find(text):
+            pii_type, layer = kinds[kind]
+            if layer not in self.layers:
+                continue
+            if any(f.start < end and start < f.end for f in merged):
+                continue
+            merged.append(Finding(
+                pii_type=pii_type,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.MEDIUM,
+                layer=layer,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_national(
         self,
         text: str,
@@ -1361,6 +1398,7 @@ class PrivacyScanner:
         findings = self._merge_national(text, findings, zone=zone, page=page)
         findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
+        findings = self._merge_model(text, findings, zone=zone, page=page)
         findings = self._yield_to_validated(findings, text)
 
         # min_confidence, applied to the confidence a finding ENDS UP WITH.

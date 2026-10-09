@@ -1721,3 +1721,25 @@ files/directories and `__pycache__` are pruned from the walk with a bare
 silently drops any non-regular path — a broken symlink, a FIFO, a socket —
 with no record either. Both are a document going unaccounted for exactly the
 way the extension filter was; neither is exercised by the fix above.
+
+## Optional model layer (names, addresses, special categories)
+
+With the `model` extra installed and `PRIVACY_SHIELD_PII_MODEL` naming a GLiNER2
+model on disk (measured: `fastino/gliner2-privacy-filter-PII-multi`), a scan adds
+names and street addresses at confidence 0.7 and special-category mentions at
+0.9. Off by default. Set but not loadable, the scan raises instead of running
+without it.
+
+- Everything it finds is redacted at `medium`; nothing it finds blocks. The gate
+  does not read it, and its special-category hits are one type,
+  `special_category`, in no block set: the model names the wrong category for
+  about one span in fifteen.
+- A rule finding wins any overlap with a model span.
+- A person span made only of role nouns ("Geschäftsführer", "Mandantin") is
+  dropped; the measured clean-text false positives were all of this kind. A
+  role noun outside the list is still redacted as a name.
+- It loads from local files only and sets `HF_HUB_OFFLINE`; a host that imported
+  `huggingface_hub` before the first scan has already fixed that setting.
+- Cost measured on German business text: about 0.36 s per 1,000 characters on
+  CPU, and a 2.1 GB model download made once by the user.
+

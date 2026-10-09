@@ -232,6 +232,7 @@ class Redactor:
             PIIType.SEXUAL: "[SEXUAL]",
             PIIType.CRIMINAL: "[CRIMINAL]",
             PIIType.GENETIC: "[GENETIC]",
+            PIIType.SPECIAL_CATEGORY: "[SPECIAL_CATEGORY]",
             PIIType.FILE_PATH: "[PATH]",
             PIIType.INTERNAL_URL: "[URL]",
             PIIType.TICKET_ID: "[TICKET]",

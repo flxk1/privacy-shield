@@ -38,6 +38,10 @@ national = ["python-stdnum>=1.19"]
 # not offered, while the staleness check itself still runs off `national`.
 # The base package keeps dependencies = [].
 freshness = ["norm-freshness"]
+# Names, street addresses and special-category mentions from a local GLiNER2
+# model (privacy_shield/pii_model.py). OFF unless PRIVACY_SHIELD_PII_MODEL names
+# a model already on disk; its findings are redacted and never block.
+model = ["gliner2>=2.0"]
 # Config layer + tests. hypothesis drives the property-based half of the
 # leak invariant (tests/test_leak_invariant.py); the deterministic battery
 # in the same file runs without it. schwifty is the external IBAN registry

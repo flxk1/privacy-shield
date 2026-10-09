@@ -120,6 +120,13 @@ entities:
     default_action: review
     requires_review: true
 
+  # A special-category mention from the optional model; advisory, never blocks.
+  - id: special_category
+    canonical_name: SPECIAL_CATEGORY
+    detector_class: special_category
+    default_action: redact
+    requires_review: true
+
   - id: icd_code
     canonical_name: MEDICAL_CODE
     detector_class: special_category
