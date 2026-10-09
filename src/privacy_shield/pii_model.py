@@ -118,6 +118,15 @@ def _is_role(word: str) -> bool:
     return False
 
 
+_RANK_SUFFIXES = ("meister", "kommissar", "inspektor", "sekretär", "direktor", "präsident",
+                  "rat", "rätin", "leiter", "leiterin", "beamter", "beamtin", "offizier", "hauptmann")
+
+
+def _is_rank(word: str) -> bool:
+    w = word.lower()
+    return _is_role(word) or any(w.endswith(x) and len(w) > len(x) + 2 for x in _RANK_SUFFIXES)
+
+
 def _is_role_noun(value: str) -> bool:
     words = _WORD.findall(value)
     return not words or all(_is_role(w) for w in words)
@@ -135,11 +144,11 @@ def _chunks(text: str):
         start = end
 
 
-def find(text: str, known_names: Iterable[str] = ()) -> List[Span]:
+def find(text: str, known_names: Iterable[Tuple[int, int]] = ()) -> List[Span]:
     """Every model span in *text* as (start, end, value, kind, score); [] when off.
 
-    *known_names* are names other layers found; their words seed the same-text
-    coreference below.
+    *known_names* are (start, end) of names other layers found; their surnames
+    seed the same-text coreference below.
     """
     spec = configured()
     if not spec or not text.strip():
@@ -189,25 +198,62 @@ def _confirm_single_words(text: str, spans: List[Span]) -> List[Span]:
             before = text[max(0, start - 40):start]
             last = _LAST_WORD.search(before)
             confirmed = (words[0].lower() in known or _HONORIFIC.search(before)
-                         or (last and _is_role(last.group(1))))
+                         or (last and _is_role(last.group(1)) and not _is_rank(words[0])))
             if not confirmed:
                 continue
         kept.append(span)
     return kept
 
 
-def _corefer(text: str, spans: List[Span], known_names: Iterable[str]) -> List[Span]:
+_HEAD_NOUNS = frozenset("""
+institut stiftung universität hochschule allee straße strasse platz weg ring
+gasse gesellschaft gmbh ag kg schule gymnasium klinik klinikum krankenhaus
+haus preis zentrum verlag museum halle werk werke team bank kasse verein
+verband kirche brücke park bahnhof
+""".split())
+_HEAD_AFTER = re.compile(r"[\s-]*([^\W\d_]+)")
+_DETERMINER = re.compile(
+    r"(?i)\b(?:der|die|das|den|dem|des|ein|eine|einen|einem|einer|eines|im|am|beim|zum|zur|vom|ins|ans)\s+$")
+_HONORIFIC_WORDS = frozenset({"herr", "herrn", "frau", "dr", "prof", "mr", "mrs", "ms"})
+
+
+def _seed(text: str, start: int, end: int) -> Optional[str]:
+    # only the surname position seeds, and never a name that is the front of an
+    # institution ("Robert Koch-Institut", "Hans Böckler Stiftung")
+    words = _WORD.findall(text[start:end])
+    if not words:
+        return None
+    last = words[-1]
+    if len(last) < 3 or not last[0].isupper() or last.lower() in _HEAD_NOUNS:
+        return None
+    head = _HEAD_AFTER.match(text, end)
+    if head and head.group(1).lower() in _HEAD_NOUNS:
+        return None
+    if _is_role(last):
+        # "Frau Richter": a role-list word an honorific confirms is a surname
+        before = [w.lower() for w in words[:-1]] or [
+            w.lower() for w in _WORD.findall(text[max(0, start - 12):start])[-1:]]
+        if not before or before[-1] not in _HONORIFIC_WORDS:
+            return None
+    return last
+
+
+def _corefer(text: str, spans: List[Span], known_names: Iterable[Tuple[int, int]]) -> List[Span]:
     # a name confirmed once ("Herr Wendehals") is redacted at every later bare
-    # mention ("hat Wendehals die Frist versäumt"), found by the model or not
-    words = {w for _s, _e, v, k, _c in spans if k == NAME for w in _name_words(v)}
-    words |= {w for v in known_names for w in _name_words(v)}
+    # mention ("hat Wendehals die Frist versäumt"), found by the model or not;
+    # never after an article, where the word is a noun ("der Wolf", "eine Rose")
+    seeds = [_seed(text, s, e) for s, e, _v, k, _c in spans if k == NAME]
+    seeds += [_seed(text, s, e) for s, e in known_names]
+    words = {w for w in seeds if w}
     if not words:
         return spans
     taken = [(s, e) for s, e, _v, _k, _c in spans]
     extra: List[Span] = []
     for word in sorted(words):
-        for m in re.finditer(r"(?<![^\W\d_])" + re.escape(word) + r"(?![^\W\d_])", text):
+        for m in re.finditer(r"(?<![^\W\d_-])" + re.escape(word) + r"(?![^\W\d_-])", text):
             if any(m.start() < e and s < m.end() for s, e in taken):
+                continue
+            if _DETERMINER.search(text[max(0, m.start() - 8):m.start()]):
                 continue
             taken.append((m.start(), m.end()))
             extra.append((m.start(), m.end(), word, NAME, _THRESHOLD[NAME]))

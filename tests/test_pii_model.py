@@ -194,7 +194,9 @@ def test_a_name_confirmed_by_an_honorific_is_redacted_at_later_mentions(model):
 
 def test_a_name_the_rules_found_seeds_later_mentions(model):
     model([])
-    assert pii_model.find("Später kam Brandhorst.", ["Dr. Ilse Brandhorst"])[0][2] == "Brandhorst"
+    text = "Dr. Ilse Brandhorst kam. Später sprach Brandhorst."
+    spans = pii_model.find(text, [(0, 19)])
+    assert _covered(text, spans, "Brandhorst")[1]
 
 
 @pytest.mark.parametrize("text, flagged", [
@@ -221,3 +223,41 @@ def test_feminine_and_plural_roles_are_roles(value):
 def test_a_surname_after_a_role_or_title_is_kept(model, text, surname):
     model([("person", surname, 0.95)])
     assert surname not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("Herr Wolf kam. Der Wolf im Märchen frisst.", "Der Wolf"),
+    ("Frau Koch kocht. Am Abend kam ein Koch.", "ein Koch"),
+    ("Ernst Lindemann schreibt: Der Ernst der Lage ist klar.", "Der Ernst"),
+    ("Rose Hartwig pflanzt eine Rose.", "eine Rose"),
+])
+def test_a_surname_after_an_article_is_a_noun(model, text, kept):
+    model([("person", text.split(" kam")[0].split(" kocht")[0].split(" schreibt")[0].split(" pflanzt")[0], 0.95)])
+    assert kept in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("Das Robert Koch-Institut empfiehlt Masken. Laut Koch-Team gilt das.", "Koch-Team"),
+    ("Die Hans Böckler Stiftung fördert Studien. Böckler war Gewerkschafter.", "Böckler war"),
+    ("Die Karl Marx Allee ist gesperrt. Jede Allee ist voll.", "Jede Allee"),
+])
+def test_an_institution_named_after_a_person_seeds_nothing(text, kept):
+    span = text.index(text.split()[1]), text.index(text.split()[2].split("-")[0]) + len(text.split()[2].split("-")[0])
+    assert all(v not in kept for _s, _e, v, _k, _c in pii_model._corefer(text, [], [span]))
+
+
+def test_an_honorific_confirms_a_role_word_as_a_surname(model):
+    text = "Laut Frau Richter ist die Akte vollständig. Richter bestätigte das."
+    spans = pii_model._corefer(text, [], [(5, 17)])
+    assert _covered(text, spans, "Richter")[1]
+
+
+def test_a_rank_after_a_role_is_not_a_name(model):
+    model([("person", "Polizeiobermeister", 0.95)])
+    assert pii_model.find("Der Zeuge Polizeiobermeister wurde vernommen.") == []
+
+
+def test_a_surname_on_the_role_list_is_redacted_at_later_mentions(model):
+    model([])
+    text = "Laut Frau Richter ist die Akte vollständig. Richter bestätigte das."
+    assert "Richter" not in scan(text).documents[0].overlay

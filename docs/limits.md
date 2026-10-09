@@ -1745,10 +1745,17 @@ without it.
   ("Frau Weiß", "Zeugin Brandhorst") or when a longer name in the same text
   contains it. A bare surname with none of these ("Laut Albrecht …") is not
   redacted by this layer.
-- Once a name is confirmed, every later whole-word mention of its words in the
-  same text is redacted ("Herr Wendehals … hat Wendehals"), found by the model
-  or not; names the rules found seed this too. A surname that is also a common
-  capitalised word ("Wolf", "Koch") is then redacted wherever it appears.
+- Once a name is confirmed, later whole-word mentions of its surname (the last
+  word) in the same text are redacted ("Herr Wendehals … hat Wendehals"), found
+  by the model or not; names the rules found seed this too. Not seeded: a name
+  that is the front of an institution ("Robert Koch-Institut", "Hans Böckler
+  Stiftung") or ends in such a noun, and a role word unless an honorific stands
+  before it ("Frau Richter" seeds, "Richter" alone does not). Not matched: a
+  mention right after an article or a fused preposition ("der Wolf", "eine
+  Rose", "am Bach"). A surname that is also a common noun is still redacted
+  where no article precedes it ("Wolf entschuldigte sich" and "Wolf und Hund").
+- A lone word after a role is not taken for a name when it is itself a role or
+  rank ("Zeuge Polizeiobermeister").
 - This layer does not change what the rules redact: main's rules already take
   "Herr Präsident" for a name.
 - The gate's own scan (layer 1) does not run the model.
