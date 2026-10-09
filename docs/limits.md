@@ -1955,3 +1955,22 @@ newline + "mann@example.org" leaves the first line); homoglyphs from other
 scripts (a Cyrillic "а" in a Latin name); right-to-left override characters
 reordering a number.
 
+## Address forms
+
+- A street with a suffix (-straße, -str., -weg, -platz, -allee, -gasse,
+  -ring, -damm, -ufer, -hof, -markt, -kai, -wall, -graben, -steig, -pfad,
+  -stieg, -chaussee, -promenade, -deich, -kamp) and a house number is found
+  alone; the number may carry a letter and a range ("90–92", "1-3").
+- A street named without a suffix, led by a preposition and article or an
+  adjective ("Am Lindenhof", "An der Alster", "Unter den Linden", "Zur
+  Mühle", "Neuer Wall"), is found only before a postcode (same line or the
+  next) or after an address label (Anschrift, Adresse, wohnhaft, c/o, …).
+  So "Im Jahr 2024" stays, and a business phrase of that shape before a
+  postcode is taken for a street ("Neue Version 2, 10115 Berlin").
+- "Postfach" with its number is redacted as an address.
+- A four-digit postcode and city is found only directly after a street
+  (", 1010 Wien"); alone it is not ("1010 Wien" could be a year and a city).
+- Not found: a street with neither suffix nor lead word ("Jungfernstieg"
+  is, "Bergstraße" is, "Dorfmitte 3" is not), house numbers written as words,
+  and foreign street formats other than the English "12 Main Street".
+

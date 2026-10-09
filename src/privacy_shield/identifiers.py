@@ -951,3 +951,42 @@ def original_span(text: str, index: List[int], start: int, end: int) -> Tuple[in
     while e < len(text) and unicodedata.category(text[e])[0] in "MC" and unicodedata.category(text[e]) != "Cc":
         e += 1
     return s, e
+
+
+# Streets named without a suffix: a preposition and article, or an adjective,
+# before the name ("Am Lindenhof", "Unter den Linden", "Neuer Wall"). The same
+# shape writes "Im Jahr 2024", so it counts only before a postcode or after an
+# address label.
+_STREET_LEAD = (
+    r"(?:Am|Im|Zum|Zur|Beim|An\s+(?:der|den|dem)|Auf\s+(?:der|dem|den)|In\s+(?:der|den|dem)|"
+    r"Unter\s+(?:der|den|dem)|Hinter\s+(?:der|den|dem)|Vor\s+(?:der|den|dem)|Bei\s+(?:der|den|dem)|"
+    r"Über\s+(?:der|den|dem)|Neuer|Neue|Alter|Alte|Großer|Große|Kleiner|Kleine|Hoher|Hohe|Langer|Lange)"
+)
+_LEAD_STREET = re.compile(
+    _STREET_LEAD + r"(?:[ \t]+[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*){1,2}[ \t]+\d+[a-z]?(?:[ \t]*[-–][ \t]*\d+[a-z]?)?\b"
+)
+_POSTCODE_AFTER = re.compile(r"[ \t]*,?[ \t]*(?:\n[ \t]*)?(?:[A-Z]{1,2}-)?\d{4,5}[ \t]+[A-ZÄÖÜ]")
+_ADDRESS_LABEL = re.compile(
+    r"(?i)(?:anschrift|adresse|wohnhaft|wohnt|lieferanschrift|rechnungsanschrift|c/o|sitz)[^\n]{0,30}$")
+_PO_BOX = re.compile(r"\bPostfach[ \t]+\d{1,6}(?:[ \t]\d{2,3}){0,3}\b")
+# Austrian and Swiss postcodes have four digits; one directly after a street
+_FOUR_DIGIT_CITY = re.compile(r"\A[ \t]*,[ \t]*(\d{4}[ \t]+[A-ZÄÖÜ][a-zäöüß]+)")
+
+
+def find_lead_streets(text: str) -> List[Tuple[int, int, str]]:
+    out = []
+    for m in _LEAD_STREET.finditer(text):
+        if _POSTCODE_AFTER.match(text, m.end()) or _ADDRESS_LABEL.search(text[max(0, m.start() - 40):m.start()]):
+            out.append((m.start(), m.end(), m.group(0)))
+    return out
+
+
+def find_po_boxes(text: str) -> List[Tuple[int, int, str]]:
+    return [(m.start(), m.end(), m.group(0)) for m in _PO_BOX.finditer(text)]
+
+
+def four_digit_city_after(text: str, end: int) -> Optional[Tuple[int, int, str]]:
+    m = _FOUR_DIGIT_CITY.match(text[end:end + 40])
+    if not m:
+        return None
+    return end + m.start(1), end + m.end(1), m.group(1)

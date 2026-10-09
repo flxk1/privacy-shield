@@ -218,6 +218,12 @@ _MASK_CHAR = "\x00"
 # right, because nothing is being merged with a neighbour that belongs to
 # someone else.
 _H = r"[ \t]"
+_STREET_SUFFIX = (
+    r"straße|str\.|weg|platz|allee|gasse|ring|damm|ufer|hof|markt|kai|wall|graben|steig|"
+    r"pfad|stieg|chaussee|promenade|deich|kamp"
+)
+# "12a", and a range "90–92" or "1-3", which used to leave its second half
+_HOUSE_NUMBER = rf"\d+[a-z]?(?:{_H}*[-–]{_H}*\d+[a-z]?)?\b"
 
 
 # A digit-run identifier is bounded by DIGITS, not by word characters.
@@ -352,8 +358,8 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     # German street address
     PatternDef(
         pattern=_compile(
-            rf"\b(?:[A-ZÄÖÜ][a-zäöüß]+-)*(?:[A-ZÄÖÜ][a-zäöüß]+(?:straße|str\.|weg|platz|allee|gasse|ring|damm|ufer)"
-            rf"|(?<=-)(?:Straße|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm|Ufer)){_H}+\d+[a-z]?\b"
+            rf"\b(?:[A-ZÄÖÜ][a-zäöüß]+-)*(?:[A-ZÄÖÜ][a-zäöüß]+(?:{_STREET_SUFFIX})"
+            rf"|(?<=-)(?:{_STREET_SUFFIX.title()})){_H}+{_HOUSE_NUMBER}"
         ),
         pii_type=PIIType.ADDRESS,
         confidence=Confidence.HIGH,
@@ -1288,6 +1294,44 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    def _merge_addresses(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Streets without a suffix, PO boxes, and a four-digit postcode after a street (identifiers.py)."""
+        if 2 not in self.layers:
+            return findings
+        merged = list(findings)
+        found = [*self._through_view(text, identifiers.find_lead_streets),
+                 *self._through_view(text, identifiers.find_po_boxes)]
+        for start, end, value in found:
+            # "Am Lindenhof 4": the suffix pattern took "Lindenhof 4"; widen it
+            same = [f for f in merged if f.pii_type is PIIType.ADDRESS and f.start < end and start < f.end]
+            if any(f.start < end and start < f.end for f in merged if f not in same):
+                continue
+            for f in same:
+                merged.remove(f)
+                start, end = min(start, f.start), max(end, f.end)
+            merged.append(Finding(
+                pii_type=PIIType.ADDRESS, value=text[start:end], start=start, end=end,
+                confidence=Confidence.HIGH, layer=2, context=self._get_context(text, start, end),
+                zone=zone, page=page,
+            ))
+        for f in [f for f in merged if f.pii_type is PIIType.ADDRESS]:
+            hit = identifiers.four_digit_city_after(text, f.end)
+            if hit and not any(g.start < hit[1] and hit[0] < g.end for g in merged):
+                merged.append(Finding(
+                    pii_type=PIIType.PLZ_CITY, value=hit[2], start=hit[0], end=hit[1],
+                    confidence=Confidence.HIGH, layer=2, context=self._get_context(text, hit[0], hit[1]),
+                    zone=zone, page=page,
+                ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_plates(
         self,
         text: str,
@@ -1558,6 +1602,7 @@ class PrivacyScanner:
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
         findings = self._merge_svnr(text, findings, zone=zone, page=page)
         findings = self._merge_plates(text, findings, zone=zone, page=page)
+        findings = self._merge_addresses(text, findings, zone=zone, page=page)
         findings = self._merge_national(text, findings, zone=zone, page=page)
         findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
