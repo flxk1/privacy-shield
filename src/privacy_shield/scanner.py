@@ -460,10 +460,9 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # Age with context
     PatternDef(
-        pattern=_compile(
-            r"\b(?:age|Alter)[: \t]+\d{1,3}\b|\b\d{1,3}[ \t]+Jahre[ \t]+alt\b"
-            r"|\bim[ \t]+Alter[ \t]+von[ \t]+\d{1,3}\b|\b\d{1,3}[ \t]+years[ \t]+old\b"
-        ),
+        # "54 Jahre alt" and "im Alter von 54" are in _merge_ages: a building and
+        # a machine are years old too
+        pattern=_compile(r"\b(?:age|Alter)[: \t]+\d{1,3}\b"),
         pii_type=PIIType.AGE,
         confidence=Confidence.MEDIUM,
         description="Age",
@@ -1424,6 +1423,42 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    _AGE = re.compile(
+        r"\b\d{1,3}[ \t]+Jahre[ \t]+alt\b|\bim[ \t]+Alter[ \t]+von[ \t]+\d{1,3}\b|\b\d{1,3}[ \t]+years[ \t]+old\b",
+        re.IGNORECASE,
+    )
+
+    def _merge_ages(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """An age in a sentence about a person (art9.refers_to_person), not "Die Anlage ist 15 Jahre alt"."""
+        if 2 not in self.layers:
+            return findings
+        hits = list(self._AGE.finditer(text))
+        if not hits:
+            return findings
+        names = [(f.start, f.end) for f in findings if f.pii_type is PIIType.NAME]
+        sentences = art9.sentences(text)
+        merged = list(findings)
+        for m in hits:
+            start, end = m.span()
+            if any(f.start < end and start < f.end for f in merged):
+                continue
+            if not art9.refers_to_person(text, sentences, start, names):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.AGE, value=m.group(0), start=start, end=end,
+                confidence=Confidence.MEDIUM, layer=2,
+                context=self._get_context(text, start, end), zone=zone, page=page,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_plates(
         self,
         text: str,
@@ -1699,6 +1734,7 @@ class PrivacyScanner:
         findings = self._merge_national(text, findings, zone=zone, page=page)
         findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
+        findings = self._merge_ages(text, findings, zone=zone, page=page)
         findings = self._merge_model(text, findings, zone=zone, page=page)
         findings = self._merge_icd(text, findings, zone=zone, page=page)
         findings = self._yield_to_validated(findings, text)

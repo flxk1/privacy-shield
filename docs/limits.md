@@ -2016,14 +2016,24 @@ reordering a number.
     Mitarbeiternummer, Kundennummer, Kd.-Nr., Mitgliedsnummer,
     Patientennummer, Mandantennummer, Matrikelnummer, Bewerbernummer; any
     3-20 character code with a digit.
-  Without its label none of these is found by this rule. Contract, order,
-  invoice and case numbers (Aktenzeichen) are not personal references here.
+  Labels match in any case ("KUNDENNUMMER:"); the value must follow the
+  label directly ("Dokumentennummer des Ausweises: …" is not found). Without
+  its label none of these is found by this rule. Contract, order, invoice and
+  case numbers (Aktenzeichen) are not personal references here. Measured
+  cost on constructed look-alikes: a label next to a year or count is taken
+  for the number ("Kundennummer 2024 wurde vergeben", "Reisepass 123456789
+  Exemplare").
 - A birth date is found after geboren (am), geb. (am), Geburtsdatum,
   Geburtstag, DOB, date of birth or born (on), and after "(*"; a bare "*"
-  only before a 19xx year ("*12.04.2024" is a footnote). Dates may be
+  only before a 19xx year ("*12.04.2024" is a footnote, "(* 12.04.2024)" is
+  taken for a birth). Dates may be
   12.04.1971, 1971-04-12 or 12. April 1971.
-- An age is found as "54 Jahre alt", "im Alter von 54", "Alter: 54" and "54
-  years old"; not as "54-jährig" (which also writes guarantees).
+- An age is found as "Alter: 54", and as "54 Jahre alt", "im Alter von 54"
+  or "54 years old" in a sentence about a person (the rule in "Special
+  categories"): "Die Anlage ist 15 Jahre alt" and "Unser Unternehmen ist 25
+  Jahre alt" stay. Not found: "54-jährig" (which also writes guarantees),
+  and an age whose only person reference is a pronoun with no one named in
+  the text.
 - A phone number with a bracketed area code ("(030) 123 456-78"), with
   "+49 (0)30 …", or written "089 - 12 34 56" after Tel., Fax, Mobil or
   similar is found whole.

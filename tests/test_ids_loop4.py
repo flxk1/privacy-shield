@@ -20,7 +20,8 @@ def test_the_check_digits():
     ("Herr Albrecht (* 12.04.1971) ist neu.", "1971", "ist neu"),
     ("geb. am 12. April 1971", "April", ""),
     ("Geburtsdatum: 1971-04-12", "1971", ""),
-    ("Er ist 54 Jahre alt.", "54", "Er ist"),
+    ("Herr Albrecht ist 54 Jahre alt.", "54", "ist"),
+    ("KUNDENNUMMER: 4471123", "4471123", "KUNDENNUMMER"),
     ("Tel. (030) 123 456-78", "-78", "Tel."),
     ("Tel. +49 (0)30 1234567", "(0)", "Tel."),
     ("Fax: 089 - 12 34 56", "34 56", "Fax"),
@@ -33,6 +34,8 @@ def test_loop4_identifier_is_masked_and_its_label_kept(text, hidden, kept):
 @pytest.mark.parametrize("text", [
     "Kundennummer anbei", "Seite 089 - 12 34 im Bericht",
     "Fußnote *12.04.2024 geändert", "Die Garantie gilt 5 Jahre.", "(2024) 123 Seiten",
+    "Die Anlage ist 15 Jahre alt und muss ersetzt werden.", "Das Gebäude ist über 100 Jahre alt.",
+    "Unser Unternehmen ist 25 Jahre alt geworden.", "Die Geräte sind im Alter von 5 Jahren auszutauschen.",
 ])
 def test_loop4_look_alikes_stay(text):
     assert scan(text).documents[0].overlay == text

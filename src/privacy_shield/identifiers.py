@@ -1054,7 +1054,8 @@ _LABELLED_IDS = [
      r"(?=[A-Z0-9/-]*\d)[A-Z0-9][A-Z0-9/-]{2,19}", None),
 ]
 _LABELLED_RES = [
-    (kind, re.compile(r"\b" + label + r"[ \t]*[:.#]?[ \t]*(" + value + r")(?![A-Za-z0-9])"), check)
+    # the label in any case ("KUNDENNUMMER:" on a form), the value as written
+    (kind, re.compile(r"\b(?i:" + label + r")[ \t]*[:.#]?[ \t]*(" + value + r")(?![A-Za-z0-9])"), check)
     for kind, label, value, check in _LABELLED_IDS
 ]
 
