@@ -26,7 +26,7 @@ _LOCAL_RULES = [
      "keywords": ["://"],
      "regex": r"\b[a-z][a-z0-9+.\-]*://[^\s/:@]*:([^\s/@]{6,})@[^\s/]+",
      "allow": []},
-    {"id": "generic-bearer-token", "group": 1, "entropy": 3.5,
+    {"id": "bearer-token", "group": 1, "entropy": 3.5,
      "keywords": ["bearer"],
      "regex": r"(?i)\bbearer[ \t]+([A-Za-z0-9._~+/\-]{20,}=*)",
      "allow": []},
@@ -40,14 +40,12 @@ _LOCAL_RULES = [
      "allow": []},
 ]
 
-_HYPHEN_WORDS = re.compile(r"[A-Za-zÄÖÜäöüß]{3,}")
+_PLACEHOLDER = re.compile(r"^[<\[(]|://")
 
 
-def _is_word_chain(secret: str) -> bool:
-    """A value of hyphen-joined words ("KA-Vertrieb-Sued-2026") is a label, not a token."""
-    parts = [p for p in re.split(r"[-_.]", secret) if p]
-    words = [p for p in parts if _HYPHEN_WORDS.fullmatch(p) and any(c.islower() for c in p)]
-    return len(parts) >= 3 and len(words) >= 2
+def is_generic(rule_id: str) -> bool:
+    """A label-and-entropy guess, as opposed to an issuer prefix or a structural match."""
+    return rule_id.startswith("generic") and rule_id != "generic-url-credential"
 
 
 def _is_basic_credential(secret: str) -> bool:
@@ -124,7 +122,7 @@ def find_credentials(text: str) -> List[Tuple[int, int, str, str]]:
                 continue
             if rule["id"].startswith("generic") and not any(ch.isdigit() for ch in secret):
                 continue
-            if rule["id"].startswith("generic") and _is_word_chain(secret):
+            if is_generic(rule["id"]) and _PLACEHOLDER.search(secret):
                 continue
             if rule["id"] == "basic-auth-header" and not _is_basic_credential(secret):
                 continue

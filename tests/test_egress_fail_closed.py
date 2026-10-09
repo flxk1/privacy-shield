@@ -45,19 +45,41 @@ _SECRETS = [
     "sk_live_" + _r(24),
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI" + _r(20) + "In0." + _r(43),
     "-----BEGIN RSA PRIVATE KEY-----\n" + _r(64) + "\n" + _r(64) + "\n-----END RSA PRIVATE KEY-----",
-    'password = "' + _r(16) + '"',
     "AIza" + _r(35),
     "npm_" + _r(36),
     "https://hooks.slack.com/services/T" + _r(8, _B32) + "/B" + _r(10, _B32) + "/" + _r(24),
     "postgres://app:" + _r(14) + "@db.internal:5432/main",
     "redis://:" + _r(16) + "@cache:6379",
     "Authorization: Bearer " + _r(40),
+    "Authorization: Basic " + base64.b64encode(("alice:" + _r(14)).encode()).decode(),
+]
+
+
+_GUESSES = [
+    'password = "' + _r(16) + '"',
     "Passwort: " + _r(18),
     "DB_PASSWORD=" + _r(10) + "#!" + _r(6) + "3",
     "Server=db;User Id=sa;Password=" + _r(12) + "%" + _r(3) + "5;",
     "client_secret: " + _r(12) + "@" + _r(5) + "1",
-    "Authorization: Basic " + base64.b64encode(("alice:" + _r(14)).encode()).decode(),
 ]
+
+
+@pytest.mark.parametrize("guess", _GUESSES)
+def test_label_and_entropy_guesses_are_redacted_but_do_not_block(guess):
+    text = f"Konfiguration: {guess} bitte nicht teilen"
+    findings = [f for f in PrivacyScanner().scan(text).findings if f.pii_type == PIIType.SECRET]
+    assert findings and all(f.confidence.value == "medium" for f in findings)
+    assert _verdict(text).allowed is True
+
+
+@pytest.mark.parametrize("text", [
+    "Key-Account: KA-Vertrieb-Sued-2026",
+    "Access-Point: AP-Nord-3OG-07-Flur",
+    "password: <Ihr-Passwort-2026>",
+    "Passwort: https://intranet.example/pw-reset?ticket=42",
+])
+def test_german_look_alikes_never_block(text):
+    assert _verdict(text).allowed is True
 
 
 @pytest.mark.parametrize("secret", _SECRETS)
@@ -135,8 +157,8 @@ def test_a_pdf_without_a_parser_is_never_cleared(tmp_path, monkeypatch):
     'password = "Xq7Xq7Xq7Xq7Xq7Xq"',
     'password = "TrQvLmZpXkWbNcYdHs"',
     "Passwort: TrQvLmZpXkWbNcYdHs",
-    "Key-Account: KA-Vertrieb-Sued-2026",
-    "Access-Point: AP-Nord-3OG-07-Flur",
+    "password: <Ihr-Passwort-2026>",
+    "Passwort: https://intranet.example/pw-reset?ticket=42",
     "Basic Einstellungen: Standardwerte2026",
     "Authorization: Basic " + base64.b64encode(b"no-colon-here-2026").decode(),
 ])

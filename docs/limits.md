@@ -1176,10 +1176,15 @@ password or secret labels (also `DB_PASSWORD=`, `client_secret:`,
 `Password=` in a connection string) with a value of any printable characters,
 which the upstream generic rule limits to letters, digits and `.=-`.
 `Authorization: Basic` counts only when the value decodes to `user:password`.
-A generic value made of hyphen-joined words ("KA-Vertrieb-Sued-2026") is a
-label, not a token, so a passphrase written that way is not found.
-Only the secret is redacted, not its label. A secret makes the source
-confidential. Not found: values below the entropy floor (a short or
+Two kinds of hit are handled differently. An issuer-prefixed or structural
+credential (a gitleaks rule for a named service, a private key, a password in
+a URL, Bearer or Basic auth) makes the source confidential and blocks it. A
+label-and-entropy guess (the generic rules) is redacted in the overlay but does
+not block: on German business text such a guess is often a reference, a cost
+centre or a form field, and a false block withholds the whole document. A
+generic value that starts with `<`, `[` or `(`, or contains `://`, is a
+placeholder or a link and is not claimed.
+Only the secret is redacted, not its label. Not found: values below the entropy floor (a short or
 dictionary-like password: the generic floor is 3.5 bits per character, which
 a 12-character random password can fall under), secrets with no matching
 rule or label, keys split across lines, and passwords in prose.

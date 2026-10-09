@@ -1140,12 +1140,12 @@ class PrivacyScanner:
                 value=value,
                 start=start,
                 end=end,
-                confidence=Confidence.HIGH,
+                confidence=Confidence.MEDIUM if credentials.is_generic(rule_id) else Confidence.HIGH,
                 layer=1,
                 context=self._get_context(text, start, end),
                 zone=zone,
                 page=page,
-                checksum_validated=True,
+                checksum_validated=not credentials.is_generic(rule_id),
             ))
             logger.debug("credential %s claimed at [%d,%d)", rule_id, start, end)
         merged.sort(key=lambda f: f.start)

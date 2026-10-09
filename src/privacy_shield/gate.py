@@ -518,9 +518,13 @@ class PrivacyGate:
         if self.check_art9(text):
             return "confidential"
 
-        # Credentials → confidential: a key that leaves is usable by the recipient
-        from .scanner import PIIType, PrivacyScanner
-        if any(f.pii_type == PIIType.SECRET for f in PrivacyScanner(layers=[1]).scan(text).findings):
+        # An issuer-shaped or structural credential → confidential: a key that leaves
+        # is usable by the recipient. A label-and-entropy guess is redacted, not gated.
+        from .scanner import Confidence, PIIType, PrivacyScanner
+        if any(
+            f.pii_type == PIIType.SECRET and f.confidence == Confidence.HIGH
+            for f in PrivacyScanner(layers=[1]).scan(text).findings
+        ):
             return "confidential"
 
         # Financial / tax / personal identifiers → internal
