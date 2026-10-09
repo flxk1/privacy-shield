@@ -144,3 +144,46 @@ def test_the_cli_summary_shows_the_release(approved, monkeypatch, capsys):
     assert main(["scan", HEALTH, "--text", "--destination", "openai", "--audit", "--release-basis", "a",
                  "--release-ref", "Einwilligung 2026-114", "--released-by", "Dr. Weber"]) == 0
     assert "released: Art. 9(2)(a) GDPR, ref Einwilligung 2026-114, by Dr. Weber" in capsys.readouterr().out
+
+
+def test_the_reason_names_art9_and_the_release(approved):
+    doc = _doc(HEALTH, approved, release=None)
+    assert "Art. 9 special categories about a person: health" in doc.blocked_reason
+    assert "a recorded release can lift this" in doc.blocked_reason
+
+
+def test_a_secret_reason_says_no_release_lifts_it(approved):
+    doc = _doc(HEALTH + " Zugang: ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8", approved, release=None)
+    assert "no release lifts this" in doc.blocked_reason
+
+
+def test_a_released_document_is_not_logged_or_reported_as_blocked(approved, caplog):
+    import logging
+    from privacy_shield.gate import PrivacyGate
+    seen = []
+
+    class Detector:
+        def detect_anomaly(self, event_type, details):
+            seen.append(event_type)
+
+    gate = PrivacyGate(audit_log=approved, breach_detector=Detector())
+    with caplog.at_level(logging.WARNING, logger="privacy_shield.gate"):
+        result = gate.check({"text": HEALTH}, "openai", release=CONSENT)
+    assert result.allowed and result.released
+    assert "BLOCKED" not in caplog.text and seen == []
+
+
+def test_a_refused_release_is_still_logged_and_reported(approved, caplog):
+    import logging
+    from privacy_shield.gate import PrivacyGate
+    seen = []
+
+    class Detector:
+        def detect_anomaly(self, event_type, details):
+            seen.append(event_type)
+
+    gate = PrivacyGate(audit_log=approved, breach_detector=Detector())
+    with caplog.at_level(logging.WARNING, logger="privacy_shield.gate"):
+        result = gate.check({"text": HEALTH}, "gemini", release=CONSENT)
+    assert not result.allowed
+    assert "BLOCKED" in caplog.text and seen == ["classification_external_blocked"]

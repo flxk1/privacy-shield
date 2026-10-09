@@ -39,6 +39,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple, TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
@@ -57,6 +58,9 @@ if TYPE_CHECKING:
     from .release import Release
 
 logger = logging.getLogger(__name__)
+
+# block notices held back while a release is being decided (PrivacyGate.check)
+_held = threading.local()
 
 # ---------------------------------------------------------------------------
 # Art. 9 GDPR special category patterns (mirrored from routes/privacy_shield)
@@ -305,11 +309,20 @@ class PrivacyGate:
             :class:`PrivacyGateResult` with the decision and reason.
         """
         reject_legacy_env()
-        result = self._decide_local(data, destination, tenant_id, user_id)
+        # with a release on the table, a block is not yet a block: hold the
+        # notice (log line, breach detector) until the release is decided
+        _held.notices = [] if release is not None else None
+        try:
+            result = self._decide_local(data, destination, tenant_id, user_id)
+        finally:
+            held, _held.notices = _held.notices, None
         if release is not None and not result.allowed:
             result = self._apply_release(result, data, destination, release, tenant_id, user_id)
-            if result.released:
-                return self._finalize(result, destination, tenant_id, user_id, data, audit=False)
+        if not result.allowed:
+            for notice in held or ():
+                self._on_blocked(*notice)
+        if result.released:
+            return self._finalize(result, destination, tenant_id, user_id, data, audit=False)
         return self._finalize(result, destination, tenant_id, user_id, data)
 
     def _apply_release(
@@ -411,7 +424,7 @@ class PrivacyGate:
                 mode=mode,
                 classification=classification,
                 blocked_reason=(
-                    f"Data classified as '{classification}' cannot be sent "
+                    f"Data classified as '{classification}' ({self._why(text)}) cannot be sent "
                     f"to external destination '{destination}'"
                 ),
             )
@@ -700,6 +713,18 @@ class PrivacyGate:
             result = pat.sub(replacement, result)
         return result
 
+    def _why(self, text: str) -> str:
+        """The cause of a confidential classification, in words a user can act on."""
+        reason = self._classify(text)[1]
+        categories = ", ".join(self.check_art9(text))
+        return {
+            "art9": f"Art. 9 special categories about a person: {categories}; a recorded release can lift this",
+            "art9+secret": f"Art. 9 special categories ({categories}) and a credential; no release lifts this",
+            "secret": "a credential such as an API key or token",
+            "berufsgeheimnis": "a professional-secrecy marker",
+            "confidential_marker": "a confidentiality marker",
+        }.get(reason, reason)
+
     def _on_blocked(
         self,
         event_type: str,
@@ -714,6 +739,9 @@ class PrivacyGate:
         configured, notifies it so that repeated violations are surfaced.
         Default (none configured): logs only, no breach escalation.
         """
+        if getattr(_held, "notices", None) is not None:
+            _held.notices.append((event_type, destination, tenant_id, user_id, data))
+            return
         logger.warning(
             "PrivacyGate BLOCKED: event=%s dest=%s tenant=%s user=%s",
             event_type, destination, tenant_id, user_id,
