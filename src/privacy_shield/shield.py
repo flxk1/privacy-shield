@@ -40,7 +40,7 @@ from .extractor import (
     ExtractionResult,
     detect_document_type,
 )
-from .utils.file_io import path_exists
+from .utils.file_io import path_exists, require_regular_file
 from .redactor import (
     Clause,
     Redactor,
@@ -564,6 +564,7 @@ class PrivacyShield:
             log_entry_json = json.dumps(log_entry)
 
             Path(self.audit_log_path).parent.mkdir(parents=True, exist_ok=True)
+            require_regular_file(self.audit_log_path)
             with open(self.audit_log_path, "a") as f:
                 f.write(log_entry_json + "\n")
 

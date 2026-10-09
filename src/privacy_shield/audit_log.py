@@ -118,6 +118,8 @@ def log_audit_event(
     }
 
     try:
+        from .utils.file_io import require_regular_file
+        require_regular_file(path)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as exc:

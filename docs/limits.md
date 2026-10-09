@@ -1760,7 +1760,17 @@ without it.
     Medikation, Vorerkrankungen, Anamnese, Religion, Konfession, Sexuelle
     Orientierung, Vorstrafen, Diagnosis, Findings, Treatment, Medication, …
     followed by ":"), or a sentence with a diagnosis code ("F32.1",
-    "(J45.9)"). A field label inside a sentence is not a record field.
+    "(J45.9)"). A field word may carry a short qualifier before the colon
+    ("Befund vom 12.03.:"), and "Diagnose"/"Diagnosis" opening a line before
+    a capitalised term counts ("Diagnose Morbus Crohn seit 2019."). A field
+    label inside a sentence is not a record field.
+  - Missed, against main, which blocked them on any keyword: clinical prose
+    with no person, no record field and no code ("Die Diagnose lautet Morbus
+    Crohn, Therapie mit Mesalazin.", "Im Befund zeigt sich eine Krankheit der
+    Leber.", "The diagnosis is type 1 diabetes; treatment continues."). On
+    one unseen set this was 7 of 7 such sentences; they are not flagged in
+    `art9_suspected` either. A document that also names the patient is caught
+    through the name.
   - "Refers to a person": the sentence holds a name the scanner finds,
     Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/mich, or a
     definite or possessive singular person noun ("die Patientin", "der
@@ -1879,9 +1889,14 @@ overlay leave despite an Art. 9 block.
 - The release is written to the audit log with fsync before it takes effect.
   No audit log, or a failed write, refuses it.
 - It never lifts a professional-secrecy marker (Berufsgeheimnis,
-  Schweigepflicht, Arztgeheimnis, Mandantengeheimnis, …), a confidentiality
-  marker, a credential, LOCAL_ONLY mode, or a folder scan.
+  Arztgeheimnis, Mandantengeheimnis, …), a confidentiality marker, a
+  credential, LOCAL_ONLY mode, or a folder scan, and it is refused when the
+  text names a secrecy duty (Schweigepflicht, Patientengeheimnis). Those two
+  words do not classify the text by themselves: every Art. 28 contract
+  names a Schweigepflicht.
 - The audit log must be a regular file: `/dev/null` or a pipe refuses it.
+  Every audit and breach log write in the package refuses a target that
+  is not a regular file, since a FIFO would block the write forever.
 
 What the release does not establish: that the basis exists, that the consent
 covers this destination, or that medical secrecy (§ 203 StGB) is released.

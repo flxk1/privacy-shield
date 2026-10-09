@@ -71,9 +71,17 @@ def load_jsonl(path: Path, limit: int = 0) -> List[dict]:
     return rows
 
 
+def require_regular_file(path: object) -> None:
+    """Raise unless *path* is absent or a regular file: a FIFO blocks the open forever, /dev/null keeps nothing."""
+    target = Path(path)
+    if target.exists() and not target.is_file():
+        raise OSError(f"{target} is not a regular file")
+
+
 def append_jsonl(path: Path, payload: dict) -> None:
     """Append a single JSON object as a new line to a JSONL file."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    require_regular_file(path)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 

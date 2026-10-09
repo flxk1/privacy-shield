@@ -148,6 +148,8 @@ def test_a_confident_hit_on_a_name_in_a_sentence_about_a_person_does_not_count(m
     "Diagnosis: HIV positive. Treatment ongoing.",
     "Religion: muslimisch",
     "Name: Lina Vogt\nVorerkrankungen: Diabetes",
+    "Befund vom 12.03.: Krankheit der Leber bekannt.",
+    "Diagnose Morbus Crohn seit 2019, Krankheit stabil.",
 ])
 def test_a_record_field_is_about_the_records_subject(monkeypatch, text):
     monkeypatch.delenv(pii_model.ENV, raising=False)

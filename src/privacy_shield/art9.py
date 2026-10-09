@@ -74,7 +74,11 @@ def sentence_of(spans: Sequence[Tuple[int, int]], at: int) -> Tuple[int, int]:
 _RECORD_FIELD = re.compile(
     r"(?im)^[ \t]*(?:Diagnosen?|Befund|Therapie(?:plan)?|Medikation|Vorerkrankungen|Anamnese|Laborwerte?|"
     r"Krankheitsbild|Religion|Konfession|Religionszugehörigkeit|Sexuelle Orientierung|Vorstrafen?|"
-    r"Diagnosis|Findings?|Treatment|Medication|Medical history|Lab results?|Religion|Criminal record)\s*:")
+    r"Diagnosis|Findings?|Treatment|Medication|Medical history|Lab results?|Religion|Criminal record)"
+    # "Befund vom 12.03.:" - the field word, then at most a date or a short qualifier
+    r"\b[^:\n]{0,24}:"
+    # "Diagnose Morbus Crohn seit 2019." - the field word opening a line before a term
+    r"|^[ \t]*(?:Diagnose|Diagnosis)[ \t]+[A-ZÄÖÜ]")
 _ICD_CODE = re.compile(r"\b[A-TV-Z]\d{2}\.\d{1,2}\b|\([A-TV-Z]\d{2}(?:\.\d{1,2})?\)")
 
 

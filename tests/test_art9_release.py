@@ -115,6 +115,24 @@ def test_a_device_as_audit_log_means_no_release(approved):
 
 
 def test_medical_secrecy_is_never_lifted(approved):
-    doc = _doc("Unterliegt der Schweigepflicht. " + HEALTH, approved)
+    doc = _doc("Unterliegt der ärztlichen Schweigepflicht. " + HEALTH, approved)
     assert doc.egress_allowed is False
-    assert "not an Art. 9 block" in doc.blocked_reason
+    assert "duty of professional secrecy" in doc.blocked_reason
+
+
+def test_a_secrecy_clause_alone_does_not_block(approved):
+    assert _doc("Der Auftragnehmer unterliegt der Schweigepflicht nach Ziffer 9.", approved,
+                release=None).egress_allowed is True
+
+
+def test_a_fifo_audit_path_never_hangs_and_refuses_the_release(approved, tmp_path):
+    import os
+    import threading
+    fifo = tmp_path / "audit.fifo"
+    os.mkfifo(fifo)
+    out = {}
+    worker = threading.Thread(target=lambda: out.setdefault("doc", _doc(HEALTH, fifo)), daemon=True)
+    worker.start()
+    worker.join(30)
+    assert not worker.is_alive(), "scan hung on a FIFO audit path"
+    assert out["doc"].egress_allowed is False

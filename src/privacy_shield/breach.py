@@ -352,6 +352,8 @@ class BreachDetector:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"breaches_{now.strftime('%Y_%m')}.jsonl"
         try:
+            from .utils.file_io import require_regular_file
+            require_regular_file(log_file)
             with open(log_file, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(asdict(breach), default=str) + "\n")
         except Exception as exc:

@@ -100,6 +100,9 @@ _ART9_PATTERNS: Dict[str, List[str]] = {
     ],
 }
 
+# Secrecy duties that refuse a release (release.py) without classifying the text.
+_RELEASE_REFUSING_MARKERS = ("schweigepflicht", "patientengeheimnis", "ärztliche verschwiegenheit")
+
 # Categories the optional model (pii_model.py) has a label for; genetic and
 # biometric stay keyword-only.
 _MODEL_CATEGORIES = frozenset({"health", "religious", "political", "union", "sexual", "criminal"})
@@ -327,6 +330,10 @@ class PrivacyGate:
         why = release.problems(destination)
         if result.mode == "local_only":
             why.append("privacy mode LOCAL_ONLY")
+        # a secrecy duty named in the text is the controller's to lift, not a
+        # release's; as a marker it would block every Art. 28 contract
+        if any(m in text.lower() for m in _RELEASE_REFUSING_MARKERS):
+            why.append("the text names a duty of professional secrecy")
         if self._classify(text)[1] != "art9":
             why.append(f"the block is not an Art. 9 block ({result.classification})")
         audit_log = self._resolve_audit_log()
@@ -606,8 +613,6 @@ class PrivacyGate:
                 "steuergeheimnis",
                 "anwaltsgeheimnis",
                 "arztgeheimnis",
-                "schweigepflicht",
-                "patientengeheimnis",
                 "attorney-client",
                 "legal privilege",
                 "tax secrecy",
