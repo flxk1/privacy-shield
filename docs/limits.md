@@ -1769,8 +1769,12 @@ without it.
     Crohn, Therapie mit Mesalazin.", "Im Befund zeigt sich eine Krankheit der
     Leber.", "The diagnosis is type 1 diabetes; treatment continues."). On
     one unseen set this was 7 of 7 such sentences; they are not flagged in
-    `art9_suspected` either. A document that also names the patient is caught
-    through the name.
+    `art9_suspected` either. A name catches it only in the same sentence,
+    or in the sentence before when the clinical sentence is a follow-up of
+    six words or fewer: "Herr Krause war heute in der Klinik. Die Diagnose
+    lautet Morbus Crohn, Therapie mit Mesalazin." is not caught.
+  - A record field's qualifier may be at most 24 characters before the colon:
+    "Befund der Kontrolluntersuchung:" (25) is not a record field.
   - "Refers to a person": the sentence holds a name the scanner finds,
     Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/mich, or a
     definite or possessive singular person noun ("die Patientin", "der
