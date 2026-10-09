@@ -37,6 +37,7 @@ from ._legacy_env import reject_legacy_env
 from .utils.file_io import path_exists
 from .anonymous_json import anonymize_for_cloud
 from .gate import PrivacyGate, PrivacyGateResult
+from .release import Release
 from .redactor import RedactionMode, SelectionMode
 from .scanner import Confidence, ScanResult
 from .media._tools import CHANNEL_UNAVAILABLE
@@ -179,6 +180,10 @@ class DocumentScan:
     placeholder_count: int = 0
     audit_id: Optional[str] = None
     errors: List[str] = field(default_factory=list)
+    # Special-category evidence that did not decide the verdict (gate.art9_evidence).
+    art9_suspected: List[str] = field(default_factory=list)
+    # The recorded release that lifted an Art. 9 block, if one did (release.py).
+    released: Dict[str, str] = field(default_factory=dict)
     # Set by the runner, which still holds the source text; a count, never an original.
     source_residual: int = field(default=0, repr=False)
 
@@ -245,6 +250,8 @@ class DocumentScan:
             "placeholder_count": self.placeholder_count,
             "audit_id": self.audit_id,
             "errors": self.errors,
+            "art9_suspected": self.art9_suspected,
+            "released": self.released,
             "scan_complete": self.scan_complete,
             "incomplete_channels": self.incomplete_channels,
         }
@@ -560,6 +567,7 @@ def _process_one(
     destination: str,
     tenant_id: str,
     user_id: str,
+    release: Optional[Release] = None,
 ) -> DocumentScan:
     """Turn a raw ShieldResult into a DocumentScan + egress verdict."""
     overlay, placeholder_count = _build_overlay(mode, result)
@@ -574,6 +582,7 @@ def _process_one(
         destination=destination,
         tenant_id=tenant_id,
         user_id=user_id,
+        release=release,
     )
     unread = _unread_reason(source, result)
     if unread:
@@ -598,6 +607,8 @@ def _process_one(
         placeholder_count=placeholder_count,
         audit_id=result.audit_id,
         errors=list(result.errors),
+        art9_suspected=list(verdict.art9_suspected),
+        released=dict(verdict.released) if verdict.allowed else {},
     )
 
 
@@ -615,6 +626,7 @@ def scan(
     tenant_id: str = "",
     user_id: str = "",
     force_text: bool = False,
+    release: Optional[Release] = None,
 ) -> ScanReport:
     """Scan *target* span by span and return a governed :class:`ScanReport`.
 
@@ -690,12 +702,15 @@ def scan(
                     shield, gate, mode,
                     source="text_input", result=result,
                     destination=destination, tenant_id=tenant_id, user_id=user_id,
+                    release=release,
                 )
             )
             root_label = "text_input"
         else:
             path = Path(target)
             if path.is_dir():
+                if release is not None:
+                    raise ValueError("a release covers one document; scan the file, not the folder")
                 root_label = str(path)
                 walked, unread = _iter_files(
                     path, recursive=recursive, extensions=extensions,
@@ -722,6 +737,7 @@ def scan(
                         source=str(path), result=result,
                         destination=destination,
                         tenant_id=tenant_id, user_id=user_id,
+                        release=release,
                     )
                 )
 

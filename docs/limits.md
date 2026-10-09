@@ -1742,14 +1742,18 @@ without it.
     religion, politics, union, sexual orientation, criminal) counts only when
     the model has a special-category hit at 0.5 or more in the same sentence.
     Genetic and biometric keywords count alone.
-  - With the model on, a model hit at 0.9 or more counts without a keyword when
-    its sentence refers to a person and the hit is not itself a name
-    ("Nachname: Ostendorf" does not count). The category the gate names can
-    be wrong (IG Metall comes out as a religion about as often as a union); the
-    verdict does not depend on it. Its spans are redacted as one type,
-    `special_category`.
-  - With the ICD-10-GM index present (below), a diagnosis term in a sentence
-    that refers to a person counts as health.
+  - With the model on, a model hit at 0.9 or more in a sentence about a
+    person, and not itself a name ("Nachname: Ostendorf" is not one), is
+    evidence in `art9_suspected` ("model:<category>"). The category can be
+    wrong (IG Metall comes out as a religion about as often as a union).
+  - Every keyword counts only in a sentence that refers to a person (below):
+    "Die Diagnose der Netzwerkstörung" and "Die Kirche am Marktplatz" do not.
+  - The ICD-10-GM index (below) and the model's own hits do not decide the
+    verdict. Measured on unseen sentences, both blocked figurative business
+    language next to a named person ("Sklerose der Verwaltung", "Herzinfarkt
+    der Wirtschaft", "Not-invented-here-Syndrom"). Their terms in a sentence
+    about a person are redacted as `special_category` and listed in the
+    document's `art9_suspected`, for a person to decide.
   - "Refers to a person": the sentence holds a name the scanner finds,
     Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/mich, or a
     definite or possessive singular person noun ("die Patientin", "der
@@ -1855,4 +1859,25 @@ without it.
 - Cost measured on German business text: about 0.2–0.4 s per 1,000 characters
   on CPU, a load of about 10 s per process, and a 2.1 GB model download made
   once by the user.
+
+## Releasing special-category data
+
+`scan(..., release=Release(basis, reference, granted_by))` (CLI:
+`--release-basis`, `--release-ref`, `--released-by`) lets one document's
+overlay leave despite an Art. 9 block.
+- `basis` is the Art. 9(2) GDPR point, a to j: for example "a" for the
+  patient's explicit consent, or "h" for health care.
+- The destination must be in `PRIVACY_SHIELD_RELEASE_DESTINATIONS`, a list
+  the owner sets.
+- The release is written to the audit log with fsync before it takes effect.
+  No audit log, or a failed write, refuses it.
+- It never lifts a professional-secrecy marker, a confidentiality marker, a
+  credential, LOCAL_ONLY mode, or a folder scan.
+
+What the release does not establish: that the basis exists, that the consent
+covers this destination, or that medical secrecy (§ 203 StGB) is released.
+For a doctor, GDPR consent and a release from confidentiality are separate.
+Without the latter, a provider may only receive the data as a contractor
+bound to secrecy (§ 203(3)-(4) StGB). Those are the controller's checks; this
+package records the controller's word for them.
 

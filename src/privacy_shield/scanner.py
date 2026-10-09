@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
-from . import credentials, identifiers, names as names_module, national, pii_model
+from . import art9, credentials, icd10gm, identifiers, names as names_module, national, pii_model
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -56,8 +56,9 @@ class PIIType(str, Enum):
     SEXUAL = "sexual"
     CRIMINAL = "criminal"
     GENETIC = "genetic"
-    #: A special-category mention found by the optional model (pii_model.py):
-    #: redacted, never blocking, one type because the model confuses categories.
+    #: A special-category mention found by the optional model (pii_model.py) or
+    #: the user's ICD-10-GM index (icd10gm.py): redacted and reported as
+    #: evidence, never deciding the verdict.
     SPECIAL_CATEGORY = "special_category"
 
     # Layer 4: Internal references
@@ -1206,6 +1207,44 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    def _merge_icd(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Redact ICD-10-GM diagnosis terms in a sentence about a person (icd10gm.py, art9.py)."""
+        if 3 not in self.layers:
+            return findings
+        if self._confidence_value(Confidence.MEDIUM) < self._confidence_value(self.min_confidence):
+            return findings
+        terms = icd10gm.find_terms(text)
+        if not terms:
+            return findings
+        names = [(f.start, f.end) for f in findings if f.pii_type is PIIType.NAME]
+        sentences = art9.sentences(text)
+        merged = list(findings)
+        for start, end, value in terms:
+            if any(f.start < end and start < f.end for f in merged):
+                continue
+            if not art9.refers_to_person(text, sentences, start, names):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.SPECIAL_CATEGORY,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.MEDIUM,
+                layer=3,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_national(
         self,
         text: str,
@@ -1417,6 +1456,7 @@ class PrivacyScanner:
         findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
         findings = self._merge_model(text, findings, zone=zone, page=page)
+        findings = self._merge_icd(text, findings, zone=zone, page=page)
         findings = self._yield_to_validated(findings, text)
 
         # min_confidence, applied to the confidence a finding ENDS UP WITH.

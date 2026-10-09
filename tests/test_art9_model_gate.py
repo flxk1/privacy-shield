@@ -53,9 +53,11 @@ def test_a_keyword_the_model_backs_weakly_still_blocks(model):
     assert _allowed("Herr Albrecht ist Patient und hat Diabetes.") is False
 
 
-def test_a_confident_model_hit_blocks_without_a_keyword(model):
+def test_a_confident_model_hit_is_evidence_not_a_verdict(model):
     model([("health condition", "Chemo", 0.95)])
-    assert _allowed("Herr Albrecht ist zurück. Er geht nach der Chemo wieder arbeiten.") is False
+    text = "Herr Albrecht ist zurück. Er geht nach der Chemo wieder arbeiten."
+    assert _allowed(text) is True
+    assert PrivacyGate().art9_evidence(text) == ["model:health"]
 
 
 def test_a_weak_model_hit_without_a_keyword_does_not_block(model):
@@ -120,12 +122,12 @@ def test_the_verb_glauben_is_not_religion(monkeypatch, text):
 
 def test_a_confident_hit_on_a_name_does_not_count(model):
     model([("person", "Ostendorf", 0.95), ("religion", "Ostendorf", 0.95)])
-    assert PrivacyGate().check_art9("Vorname: Henrike\nNachname: Ostendorf") == []
+    assert PrivacyGate().art9_evidence("Vorname: Henrike\nNachname: Ostendorf") == []
 
 
 def test_a_confident_hit_about_nobody_does_not_count(model):
     model([("religion", "Testament", 0.95)])
-    assert PrivacyGate().check_art9("Der Erblasser kann durch Testament den Erben bestimmen.") == []
+    assert PrivacyGate().art9_evidence("Der Erblasser kann durch Testament den Erben bestimmen.") == []
 
 
 def test_model_support_counts_only_in_the_keywords_own_sentence(model):
@@ -136,4 +138,4 @@ def test_model_support_counts_only_in_the_keywords_own_sentence(model):
 
 def test_a_confident_hit_on_a_name_in_a_sentence_about_a_person_does_not_count(model):
     model([("person", "Henrike Ostendorf", 0.95), ("religion", "Ostendorf", 0.95)])
-    assert PrivacyGate().check_art9("Frau Henrike Ostendorf ist neu im Team.") == []
+    assert PrivacyGate().art9_evidence("Frau Henrike Ostendorf ist neu im Team.") == []

@@ -139,11 +139,12 @@ def test_names_and_addresses_do_not_change_the_gate_verdict(model, monkeypatch):
     assert (before.allowed, before.classification) == (after.allowed, after.classification)
 
 
-def test_a_confident_special_category_hit_blocks_and_is_redacted(model):
+def test_a_confident_special_category_hit_is_redacted_and_flagged(model):
     model(_ENTITIES)
     doc = scan(TEXT).documents[0]
-    assert doc.egress_allowed is False
+    assert doc.egress_allowed is True
     assert "Chemo" not in doc.overlay
+    assert doc.art9_suspected == ["model:health"]
 
 
 # conftest clears PRIVACY_SHIELD_*, so the real model comes in under its own name

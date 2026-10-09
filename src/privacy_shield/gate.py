@@ -54,6 +54,7 @@ from .enforcement import (
 
 if TYPE_CHECKING:
     from .breach import BreachDetector
+    from .release import Release
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,11 @@ class PrivacyGateResult:
     classification: str
     blocked_reason: str = ""
     redacted_fields: List[str] = field(default_factory=list)
+    # evidence of special-category data that did not decide the verdict:
+    # an ICD-10-GM term or a model hit in a sentence about a person
+    art9_suspected: List[str] = field(default_factory=list)
+    # the recorded release that lifted an Art. 9 block (release.py), if any
+    released: Dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +275,7 @@ class PrivacyGate:
         destination: str,
         tenant_id: str = "",
         user_id: str = "",
+        release: "Optional[Release]" = None,
     ) -> PrivacyGateResult:
         """Check whether *data* may be sent to *destination*.
 
@@ -296,7 +303,49 @@ class PrivacyGate:
         """
         reject_legacy_env()
         result = self._decide_local(data, destination, tenant_id, user_id)
+        if release is not None and not result.allowed:
+            result = self._apply_release(result, data, destination, release, tenant_id, user_id)
+            if result.released:
+                return self._finalize(result, destination, tenant_id, user_id, data, audit=False)
         return self._finalize(result, destination, tenant_id, user_id, data)
+
+    def _apply_release(
+        self,
+        result: PrivacyGateResult,
+        data: Dict[str, Any],
+        destination: str,
+        release: "Release",
+        tenant_id: str,
+        user_id: str,
+    ) -> PrivacyGateResult:
+        """Lift an Art. 9 block under a recorded release, or say why not."""
+        from dataclasses import replace
+
+        from .release import record
+
+        text = self._extract_text(data)
+        why = release.problems(destination)
+        if result.mode == "local_only":
+            why.append("privacy mode LOCAL_ONLY")
+        if self._classify(text)[1] != "art9":
+            why.append(f"the block is not an Art. 9 block ({result.classification})")
+        audit_log = self._resolve_audit_log()
+        if audit_log is None:
+            why.append("no audit log configured to record it")
+        if why:
+            return replace(result, blocked_reason=f"{result.blocked_reason}; release refused: {'; '.join(why)}")
+        details = {
+            "destination": destination,
+            "classification": result.classification,
+            "art9_categories": self.check_art9(text),
+            "release": release.to_dict(),
+            "user": user_id or None,
+        }
+        try:
+            record(audit_log, details, tenant_id)
+        except Exception as exc:  # unrecorded means unreleased
+            return replace(result, blocked_reason=f"{result.blocked_reason}; release refused: not recorded ({exc})")
+        return replace(result, allowed=True, blocked_reason="", released=release.to_dict())
 
     def _decide_local(
         self,
@@ -312,8 +361,21 @@ class PrivacyGate:
         ``breach_detector`` (none by default, so inert); :meth:`check` wraps
         it with the audit record and the optional enforcement-sink surface.
         """
-        mode = self._get_privacy_mode(tenant_id)
+        from dataclasses import replace
+
         text = self._extract_text(data)
+        return replace(self._decide(data, destination, tenant_id, user_id, text),
+                       art9_suspected=self.art9_evidence(text))
+
+    def _decide(
+        self,
+        data: Dict[str, Any],
+        destination: str,
+        tenant_id: str,
+        user_id: str,
+        text: str,
+    ) -> PrivacyGateResult:
+        mode = self._get_privacy_mode(tenant_id)
         classification = self.classify_data(text)
         is_external = is_external_destination(destination)
 
@@ -382,6 +444,7 @@ class PrivacyGate:
         tenant_id: str,
         user_id: str,
         data: Dict[str, Any],
+        audit: bool = True,
     ) -> PrivacyGateResult:
         """Record the local decision, then surface it to the optional sink.
 
@@ -392,7 +455,7 @@ class PrivacyGate:
         signed-chain receipt. All steps are defensive — enrichment or audit
         failure never changes the egress decision.
         """
-        audit_log = self._resolve_audit_log()
+        audit_log = self._resolve_audit_log() if audit else None
         if audit_log is not None:
             self._record_audit(result, destination, tenant_id, user_id, data, audit_log)
         try:
@@ -465,14 +528,28 @@ class PrivacyGate:
         return out
 
     def check_art9(self, text: str) -> List[str]:
-        """Detect GDPR Art. 9 special categories in *text*.
+        """The Art. 9 categories that decide the verdict for *text*."""
+        return self._art9(text)[0]
 
-        Returns a list of detected category names (e.g.
-        ``["health", "genetic"]``).  Empty list means no special
-        categories found.
-        """
+    def art9_evidence(self, text: str) -> List[str]:
+        """Special-category evidence in *text* that does not decide the verdict."""
+        evidence = self._art9(text)[1]
+        return [] if self.check_art9(text) else evidence
+
+    def _art9(self, text: str) -> Tuple[List[str], List[str]]:
+        """(deciding categories, evidence) for *text*; one decision is asked for several times."""
+        from . import icd10gm, pii_model
+        key = (text, pii_model.configured(), str(icd10gm.locate()))
+        memo = getattr(self, "_art9_memo", None)
+        if memo is None or memo[0] != key:
+            memo = (key, self._art9_uncached(text))
+            self._art9_memo = memo
+        hits, evidence = memo[1]
+        return list(hits), list(evidence)
+
+    def _art9_uncached(self, text: str) -> Tuple[List[str], List[str]]:
         if not text:
-            return []
+            return [], []
         from . import art9, icd10gm, pii_model
         text_lower = text.lower()
         keyword_at: Dict[str, List[int]] = {}
@@ -511,28 +588,30 @@ class PrivacyGate:
             if not any(person(k) for k in starts):
                 continue
             hits.append(category)
-        if "health" not in hits and any(
-            person(s) and not any(ns < e and s < ne for ns, ne in names)
-            for s, e, _t in icd10gm.find_terms(text)
-        ):
-            hits.append("health")
+        # the index and the model's own hits are evidence, not a verdict:
+        # figurative use ("Sklerose der Verwaltung") is beyond them
+        evidence: List[str] = []
+        for s, e, term in icd10gm.find_terms(text):
+            if person(s) and not any(ns < e and s < ne for ns, ne in names):
+                evidence.append(f"icd10gm:{term}")
         for start, end, category, score in model_hits:
-            if score < pii_model.special_threshold() or category in hits:
-                continue
-            # a confident hit alone counts in a sentence about a person, and
-            # not on a span that is itself a name ("Nachname: Ostendorf")
-            if person(start) and not any(s < end and start < e for s, e in names):
-                hits.append(category)
-        return hits
+            # in a sentence about a person, and not on a name ("Nachname: Ostendorf")
+            if score >= pii_model.special_threshold() and person(start) and not any(
+                    s < end and start < e for s, e in names):
+                evidence.append(f"model:{category}")
+        return hits, list(dict.fromkeys(evidence))
 
     def classify_data(self, text: str) -> str:
+        return self._classify(text)[0]
+
+    def _classify(self, text: str) -> Tuple[str, str]:
         """Classify *text* into a data sensitivity tier.
 
         Returns one of: ``public``, ``internal``, ``confidential``,
         ``berufsgeheimnis``.
         """
         if not text:
-            return "public"
+            return "public", "public"
 
         text_lower = text.lower()
 
@@ -550,7 +629,7 @@ class PrivacyGate:
                 "tax secrecy",
             )
         ):
-            return "berufsgeheimnis"
+            return "berufsgeheimnis", "berufsgeheimnis"
 
         # Confidential markers
         if any(
@@ -564,20 +643,21 @@ class PrivacyGate:
                 "streng vertraulich",
             )
         ):
-            return "confidential"
-
-        # Art. 9 special categories → at least confidential
-        if self.check_art9(text):
-            return "confidential"
+            return "confidential", "confidential_marker"
 
         # An issuer-shaped or structural credential → confidential: a key that leaves
         # is usable by the recipient. A label-and-entropy guess is redacted, not gated.
         from .scanner import Confidence, PIIType, PrivacyScanner
-        if any(
+        secret = any(
             f.pii_type == PIIType.SECRET and f.confidence == Confidence.HIGH
             for f in PrivacyScanner(layers=[1]).scan(text).findings
-        ):
-            return "confidential"
+        )
+        # Art. 9 special categories → at least confidential; "art9" alone is
+        # what a recorded release may lift (release.py)
+        if self.check_art9(text):
+            return "confidential", "art9+secret" if secret else "art9"
+        if secret:
+            return "confidential", "secret"
 
         # Financial / tax / personal identifiers → internal
         if any(
@@ -593,9 +673,9 @@ class PrivacyGate:
                 "rechnung",
             )
         ):
-            return "internal"
+            return "internal", "internal"
 
-        return "public"
+        return "public", "public"
 
     # ------------------------------------------------------------------
     # Internal helpers

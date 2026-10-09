@@ -126,10 +126,35 @@ unchanged.
    bfarm.de > Kodiersysteme > Services > Downloads > ICD-10-GM >
    "Alphabet EDV-Fassung TXT (CSV)", which forms a usage contract with BfArM.
    The user accepts those terms and downloads it; this skill does not.
-4. A diagnosis term counts only in a sentence that also refers to a person (a
-   name, Herr/Frau, er/sie, Patientin, Mitarbeiter): "Migräne ist häufig" is
-   not health data about anyone. Drug names are not in the index and are not
-   found. In the report, say whether the index was used.
+4. Index terms and the optional model's own hits do not decide the verdict.
+   They are redacted in the overlay, and the document lists them under
+   `art9_suspected`. Report that list as "special-category data suspected"
+   and name the evidence. The verdict comes from the keyword list, which
+   counts only in a sentence about a person. Drug names are not in the index
+   and are not found. Say in the report whether the index was used.
+
+## Releasing special-category data (consent)
+
+A controller with a legal basis may send one document's special-category
+data to an approved destination. Examples of a basis: the patient's explicit
+consent, Art. 9(2)(a); health care, Art. 9(2)(h). The release is reserved
+for the workspace owner (`allow_egress_of_a_blocked_source`), so:
+
+- Pass `--release-basis <a-j> --release-ref <reference> --released-by <name>`
+  only when the user has given all three in this conversation for this
+  document. Never infer a basis, never reuse an earlier release, and never
+  suggest one to get past a block.
+- The destination must be on the owner's list in
+  `PRIVACY_SHIELD_RELEASE_DESTINATIONS`. Do not set or change that variable.
+- The scan must carry `--audit` or `--audit-log`; an unrecorded release is
+  refused.
+- A release lifts only an Art. 9 block. A professional-secrecy marker, a
+  confidentiality marker, a credential or LOCAL_ONLY mode stays blocked. For
+  a doctor, consent under the GDPR does not by itself release medical
+  secrecy (§ 203 StGB). Say so when a doctor asks.
+- Only the overlay leaves, and names stay redacted. Report `released` with
+  its basis and reference.
+
 
 ## Reporting a scan
 

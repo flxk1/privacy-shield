@@ -346,6 +346,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     audit_log_path_arg = args.audit_log or (str(audit_log_path()) if args.audit else None)
 
+    release_args = (args.release_basis, args.release_ref, args.released_by)
+    if any(release_args) and not all(release_args):
+        sys.stderr.write("error: a release needs --release-basis, --release-ref and --released-by\n")
+        return 1
+    if all(release_args):
+        from .release import Release
+        scan_kwargs["release"] = Release(*release_args)
+
     report = scan(
         target,
         mode=mode,
@@ -517,6 +525,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force the target to be treated as raw text, never a path.",
     )
+    scan_p.add_argument(
+        "--release-basis",
+        help="Art. 9(2) GDPR point (a-j) that permits sending this one document's special-category "
+        "data, e.g. 'a' for explicit consent. Only with --release-ref and --released-by; only to a "
+        "destination in PRIVACY_SHIELD_RELEASE_DESTINATIONS; recorded in the audit log or refused.",
+    )
+    scan_p.add_argument("--release-ref", help="Reference to the consent or record the release rests on.")
+    scan_p.add_argument("--released-by", help="Who grants the release.")
     scan_p.add_argument("--tenant-id", default="", help="Tenant id for the audit trail.")
     scan_p.add_argument("--user-id", default="", help="Acting user id for the audit trail.")
     scan_p.set_defaults(func=_cmd_scan)
