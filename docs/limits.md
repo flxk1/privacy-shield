@@ -2031,7 +2031,9 @@ reordering a number.
 - An age is found as "Alter: 54", and as "54 Jahre alt", "im Alter von 54"
   or "54 years old" in a sentence about a person (the rule in "Special
   categories"): "Die Anlage ist 15 Jahre alt" and "Unser Unternehmen ist 25
-  Jahre alt" stay. Not found: "54-jährig" (which also writes guarantees),
+  Jahre alt" stay, unless the same sentence also names a person ("Der Kunde
+  meldet, die Software ist 10 Jahre alt." loses the age). Not found:
+  "54-jährig" (which also writes guarantees),
   and an age whose only person reference is a pronoun with no one named in
   the text.
 - A phone number with a bracketed area code ("(030) 123 456-78"), with
