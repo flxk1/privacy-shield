@@ -43,6 +43,9 @@ class PIIType(str, Enum):
     NAME = "name"
     ADDRESS = "address"
     PLZ_CITY = "plz_city"
+    #: A labelled personal reference number (Personalnummer, Kundennummer,
+    #: Patientennummer, …; identifiers.find_labelled_ids).
+    PERSON_REFERENCE = "person_reference"
     #: A German vehicle registration (identifiers.find_plates): the holder is
     #: one registry query away.
     LICENSE_PLATE = "license_plate"
@@ -268,6 +271,27 @@ LAYER_1_PATTERNS: List[PatternDef] = [
         description="Email address",
     ),
 
+    # Phone - German layouts the generic shape cuts: "(030) 123 456-78",
+    # "+49 (0)30 1234567", and "089 - 12 34 56" after a phone label
+    PatternDef(
+        pattern=_compile(
+            _NOT_DIGIT_BEFORE
+            + r"(?:\+\d{1,3}[ \t]?\(0\)[ \t]?\d{2,5}|\(0\d{2,5}\))[ \t/-]?\d{2,4}(?:[ \t-]?\d{2,4}){0,3}"
+            + _NOT_DIGIT_AFTER
+        ),
+        pii_type=PIIType.PHONE,
+        confidence=Confidence.HIGH,
+        description="Phone number with a bracketed area code",
+    ),
+    PatternDef(
+        pattern=_compile(r"0\d{2,5}[ \t]+-[ \t]+\d{2,4}(?:[ \t]\d{2,4}){0,3}" + _NOT_DIGIT_AFTER),
+        pii_type=PIIType.PHONE,
+        confidence=Confidence.HIGH,
+        description="Phone number with a spaced hyphen",
+        requires_context=re.compile(r"(?i)\b(?:tel|telefon|fax|mobil|handy|phone|fon)\b"),
+        context_window=20,
+    ),
+
     # Phone - International formats
     PatternDef(
         pattern=_compile(
@@ -413,7 +437,13 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     # Date of birth patterns
     PatternDef(
         pattern=_compile(
-            r"\b(?:geboren|geb\.|DOB|birth|Geburtsdatum)[: \t]+\d{1,2}[./]\d{1,2}[./]\d{2,4}\b"
+            r"(?:\b(?:geboren(?:[ \t]+am)?|geb\.(?:[ \t]+am)?|Geburtsdatum|Geburtstag|DOB|date[ \t]+of[ \t]+birth|"
+            r"born(?:[ \t]+on)?)[: \t]+|\([ \t]?\*[ \t]?"
+            # a bare "*" before a date is a birth only with a 19xx year: "*12.04.2024" is a footnote
+            r"|(?<![\w*(])\*[ \t]?(?=\d{1,2}[./]\d{1,2}[./]19\d{2}\b))"
+            r"(?:\d{1,2}[./]\d{1,2}[./]\d{2,4}|(?:19|20)\d{2}-\d{2}-\d{2}|\d{1,2}\.?[ \t]+(?:Januar|Februar|März|April|"
+            r"Mai|Juni|Juli|August|September|Oktober|November|Dezember|Jan|Feb|Mär|Apr|Jun|Jul|Aug|Sep|Sept|Okt|Nov|Dez)"
+            r"\.?[ \t]+\d{4})\b"
         ),
         pii_type=PIIType.DATE_OF_BIRTH,
         confidence=Confidence.HIGH,
@@ -430,7 +460,10 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # Age with context
     PatternDef(
-        pattern=_compile(r"\b(?:age|Alter|Jahre?[ \t]+alt)[: \t]+\d{1,3}\b"),
+        pattern=_compile(
+            r"\b(?:age|Alter)[: \t]+\d{1,3}\b|\b\d{1,3}[ \t]+Jahre[ \t]+alt\b"
+            r"|\bim[ \t]+Alter[ \t]+von[ \t]+\d{1,3}\b|\b\d{1,3}[ \t]+years[ \t]+old\b"
+        ),
         pii_type=PIIType.AGE,
         confidence=Confidence.MEDIUM,
         description="Age",
@@ -1360,6 +1393,37 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    _LABELLED_TYPES = {
+        "tax_number": "STEUER_ID", "id_document": "ID_CARD",
+        "health_insurance": "SVNR", "person_reference": "PERSON_REFERENCE",
+    }
+
+    def _merge_labelled_ids(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """A labelled number is its label's type, whatever a shape pattern guessed for part of it."""
+        if 1 not in self.layers:
+            return findings
+        merged = list(findings)
+        for start, end, value, kind, ok in self._through_view(text, identifiers.find_labelled_ids):
+            if any(f.checksum_validated and f.start < end and start < f.end for f in merged):
+                continue
+            merged = [f for f in merged if not (f.start < end and start < f.end)]
+            merged.append(Finding(
+                pii_type=PIIType[self._LABELLED_TYPES[kind]],
+                value=value, start=start, end=end,
+                confidence=Confidence.HIGH, layer=1,
+                context=self._get_context(text, start, end),
+                zone=zone, page=page, checksum_validated=ok,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_plates(
         self,
         text: str,
@@ -1629,6 +1693,7 @@ class PrivacyScanner:
         # every candidate substring. See identifiers.py for the precision cost.
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
         findings = self._merge_svnr(text, findings, zone=zone, page=page)
+        findings = self._merge_labelled_ids(text, findings, zone=zone, page=page)
         findings = self._merge_plates(text, findings, zone=zone, page=page)
         findings = self._merge_addresses(text, findings, zone=zone, page=page)
         findings = self._merge_national(text, findings, zone=zone, page=page)

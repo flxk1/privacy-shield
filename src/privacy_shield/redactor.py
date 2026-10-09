@@ -222,6 +222,7 @@ class Redactor:
             PIIType.ADDRESS: "[ADDRESS]",
             PIIType.PLZ_CITY: "[LOCATION]",
             PIIType.LICENSE_PLATE: "[PLATE]",
+            PIIType.PERSON_REFERENCE: "[REFERENCE]",
             PIIType.DATE_OF_BIRTH: "[DOB]",
             PIIType.AGE: "[AGE]",
             PIIType.HEALTH_DATA: "[HEALTH]",

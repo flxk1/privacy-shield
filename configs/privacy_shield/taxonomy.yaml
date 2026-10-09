@@ -85,6 +85,13 @@ entities:
     requires_review: false
 
   # A German vehicle registration; identifies the holder through the registry.
+  # A labelled personal reference number (Personalnummer, Kundennummer, ...).
+  - id: person_reference
+    canonical_name: PERSON_REFERENCE
+    detector_class: quasi_identifier
+    default_action: redact
+    requires_review: false
+
   - id: license_plate
     canonical_name: LICENSE_PLATE
     detector_class: quasi_identifier

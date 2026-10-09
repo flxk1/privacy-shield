@@ -1012,3 +1012,66 @@ def four_digit_city_after(text: str, end: int) -> Optional[Tuple[int, int, str]]
     if not m:
         return None
     return end + m.start(1), end + m.end(1), m.group(1)
+
+
+def kvnr_valid(value: str) -> bool:
+    """German health insurance number: a letter and nine digits, the last a check digit."""
+    if not re.fullmatch(r"[A-Z]\d{9}", value):
+        return False
+    digits = f"{ord(value[0]) - 64:02d}" + value[1:9]
+    total = sum(sum(divmod(int(d) * (1 if i % 2 == 0 else 2), 10)) for i, d in enumerate(digits))
+    return total % 10 == int(value[9])
+
+
+def icao_check(value: str) -> int:
+    """ICAO 9303 check digit (weights 7, 3, 1; A=10 ... Z=35)."""
+    return sum((int(c) if c.isdigit() else ord(c) - 55) * (7, 3, 1)[i % 3] for i, c in enumerate(value)) % 10
+
+
+def id_document_valid(value: str) -> bool:
+    """A German ID card or passport number: nine characters, optionally its check digit."""
+    if not re.fullmatch(r"[CFGHJKLMNPRTVWXYZ0-9]{9}\d?", value):
+        return False
+    return len(value) == 9 or icao_check(value[:9]) == int(value[9])
+
+
+# A label, then the number it names; the number is the finding, the label stays.
+_LABELLED_IDS = [
+    ("tax_number",
+     r"(?:Steuernummer|Steuer-Nr\.?|St\.?-?Nr\.?|StNr\.?)",
+     r"\d{2,3}/\d{3,4}/\d{4,5}|\d{13}", None),
+    ("id_document",
+     r"(?:Personalausweis(?:-?[Nn]r\.?|nummer)?|Ausweis(?:-?[Nn]r\.?|nummer)|Reisepass(?:-?[Nn]r\.?|nummer)?|"
+     r"Pass(?:-?[Nn]r\.?|nummer)|Dokumentennummer)",
+     r"[CFGHJKLMNPRTVWXYZ0-9]{9}\d?", id_document_valid),
+    ("health_insurance",
+     r"(?:Krankenversichertennummer|Versichertennummer|Versicherten-?[Nn]r\.?|KV-?[Nn]r\.?|KVNR)",
+     r"[A-Z]\d{9}", None),
+    ("person_reference",
+     r"(?:Personalnummer|Personal-?[Nn]r\.?|Mitarbeiter(?:nummer|-?[Nn]r\.?)|Kunden(?:nummer|-?[Nn]r\.?)|"
+     r"Kd\.-?[Nn]r\.?|Mitglieds(?:nummer|-?[Nn]r\.?)|Patienten(?:nummer|-?[Nn]r\.?|-?ID)|"
+     r"Mandanten(?:nummer|-?[Nn]r\.?)|Matrikel(?:nummer|-?[Nn]r\.?)|Bewerber(?:nummer|-?ID))",
+     r"(?=[A-Z0-9/-]*\d)[A-Z0-9][A-Z0-9/-]{2,19}", None),
+]
+_LABELLED_RES = [
+    (kind, re.compile(r"\b" + label + r"[ \t]*[:.#]?[ \t]*(" + value + r")(?![A-Za-z0-9])"), check)
+    for kind, label, value, check in _LABELLED_IDS
+]
+
+
+def find_labelled_ids(text: str) -> List[Tuple[int, int, str, str, bool]]:
+    """Every labelled identifier as (start, end, value, kind, checksum_ok); the label is not in the span."""
+    out = []
+    for kind, regex, check in _LABELLED_RES:
+        for m in regex.finditer(text):
+            value = m.group(1)
+            if kind == "health_insurance":
+                ok = kvnr_valid(value)
+            elif check is not None:
+                if not check(value):
+                    continue
+                ok = len(value) == 10
+            else:
+                ok = False
+            out.append((m.start(1), m.end(1), value, kind, ok))
+    return out

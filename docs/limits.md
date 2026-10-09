@@ -2000,3 +2000,31 @@ reordering a number.
 - Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
   postcode written first ("A-1010 Wien, Am Hof 2"), house numbers written as
   words, and foreign street formats other than "12 Main Street".
+
+## Labelled numbers, birth dates, ages, phone layouts
+
+- A number after its label is redacted and the label kept ("Steuernummer:
+  [TAX_ID]"):
+  - tax number: Steuernummer, St.-Nr., StNr, as 12/345/67890 or 13 digits;
+  - ID card or passport: Personalausweis, Ausweisnummer, Reisepass,
+    Pass-Nr., Dokumentennummer; nine characters of the ID alphabet, and a
+    tenth, if present, must be its ICAO check digit;
+  - health insurance number: Krankenversichertennummer, Versichertennummer,
+    KV-Nr.; a letter and nine digits, checked by its check digit, and
+    redacted with a wrong one;
+  - a personal reference (`person_reference`, [REFERENCE]): Personalnummer,
+    Mitarbeiternummer, Kundennummer, Kd.-Nr., Mitgliedsnummer,
+    Patientennummer, Mandantennummer, Matrikelnummer, Bewerbernummer; any
+    3-20 character code with a digit.
+  Without its label none of these is found by this rule. Contract, order,
+  invoice and case numbers (Aktenzeichen) are not personal references here.
+- A birth date is found after geboren (am), geb. (am), Geburtsdatum,
+  Geburtstag, DOB, date of birth or born (on), and after "(*"; a bare "*"
+  only before a 19xx year ("*12.04.2024" is a footnote). Dates may be
+  12.04.1971, 1971-04-12 or 12. April 1971.
+- An age is found as "54 Jahre alt", "im Alter von 54", "Alter: 54" and "54
+  years old"; not as "54-jährig" (which also writes guarantees).
+- A phone number with a bracketed area code ("(030) 123 456-78"), with
+  "+49 (0)30 …", or written "089 - 12 34 56" after Tel., Fax, Mobil or
+  similar is found whole.
+
