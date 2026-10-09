@@ -93,6 +93,33 @@ overlay, span findings and egress verdict; only the overlay may be used for a
 subsequent external call. Without `loomground-mcp`, fall back to the primary
 path above — see `degrade_gracefully_without_optional_extras` below.
 
+## Order of work
+
+1. Scan before anything reads the original. For a file, run
+   `privacy-shield scan <file> --out <empty folder> --audit` and `Read` only
+   the overlay it writes; never `Read` the original file first. Text that is
+   already in the conversation has already been seen: scanning it afterwards
+   lists what is in it, it protects nothing. Say so instead of presenting the
+   scan as protection.
+2. Scan the whole document, not an excerpt you chose. Personal data outside
+   the excerpt is not found.
+3. Continue only from the overlay. If the scan result carries
+   `overlay_withheld`, detected values are still in it: do not use it.
+
+## Reporting a scan
+
+- Report what was found, by type, and say that the scan can miss values. It
+  never certifies that none remain.
+- `egress_allowed: true` means the source class may leave for that
+  destination. It does not mean the overlay contains no personal data. Never
+  report it as "no personal data" or "safe".
+- Third parties' data (tenants, sellers, patients) needs the overlay, not the
+  verdict.
+- When you can see a value the scan missed, or a finding that is wrong (a file
+  number marked as a diagnosis, a direction marked as a political opinion),
+  name it in your answer as a detection defect and give the user the snippet
+  shape (not the value) so it can become a test case.
+
 ## Notes
 - The egress verdict is on SOURCE CLASSIFICATION (privacy mode + confidential /
   professional-secrecy / special-category tiers), not on residual overlay PII:

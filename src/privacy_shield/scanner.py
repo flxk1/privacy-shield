@@ -167,6 +167,10 @@ class PatternDef:
     pii_type: PIIType
     confidence: Confidence
     description: str
+    # A match counts only when this also matches within `context_window`
+    # characters on either side; None means the match stands on its own.
+    requires_context: Optional[Pattern] = None
+    context_window: int = 60
 
 
 def _compile(pattern: str, flags: int = re.IGNORECASE) -> Pattern:
@@ -342,7 +346,8 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     # German street address
     PatternDef(
         pattern=_compile(
-            rf"\b[A-ZÄÖÜ][a-zäöüß]+(?:straße|str\.|weg|platz|allee|gasse|ring|damm|ufer){_H}+\d+[a-z]?\b"
+            rf"\b(?:[A-ZÄÖÜ][a-zäöüß]+-)*(?:[A-ZÄÖÜ][a-zäöüß]+(?:straße|str\.|weg|platz|allee|gasse|ring|damm|ufer)"
+            rf"|(?<=-)(?:Straße|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm|Ufer)){_H}+\d+[a-z]?\b"
         ),
         pii_type=PIIType.ADDRESS,
         confidence=Confidence.HIGH,
@@ -398,12 +403,26 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 # -----------------------------------------------------------------------------
 
 LAYER_3_PATTERNS: List[PatternDef] = [
-    # ICD-10 codes
+    # ICD-10 codes. The dotted form (F32.1) is distinctive enough on its own;
+    # the bare form (H73) is also a file number, a paper size, a vitamin, and
+    # counts only beside a medical word.
     PatternDef(
-        pattern=_compile(r"\b[A-Z]\d{2}(?:\.\d{1,2})?\b"),
+        pattern=_compile(r"\b[A-TV-Z]\d{2}\.\d{1,2}\b", flags=0),
         pii_type=PIIType.ICD_CODE,
         confidence=Confidence.MEDIUM,
         description="ICD code",
+    ),
+    PatternDef(
+        pattern=_compile(r"\b[A-TV-Z]\d{2}\b(?![.,]\d)", flags=0),
+        pii_type=PIIType.ICD_CODE,
+        confidence=Confidence.MEDIUM,
+        description="ICD code beside a medical word",
+        requires_context=_compile(
+            r"\b(?:ICD|diagnos\w*|Befund\w*|Verdacht|Erkrankung\w*|Krankheit\w*|"
+            r"Patient\w*|ärztlich\w*|Arzt|Ärztin|Klinik\w*|Praxis|Krankschreibung|"
+            r"arbeitsunfähig\w*|AU-Bescheinigung|Anamnese|Therapie|Behandlung|"
+            r"disease|condition|physician|clinic\w*|medical)\b"
+        ),
     ),
 
     # Health keywords (German/English)
@@ -432,16 +451,28 @@ LAYER_3_PATTERNS: List[PatternDef] = [
         description="Biometric data reference",
     ),
 
-    # Political opinions
+    # Political opinions. The phrases name the category themselves; the single
+    # words are also directions, floors and option choices ("4. OG links",
+    # "Sie haben B gewählt") and count only beside a political word.
     PatternDef(
         pattern=_compile(
             r"\b(?:party\s+member|Parteimitglied|political\s+(?:opinion|affiliation)|"
-            r"politische\s+(?:Meinung|Zugehörigkeit)|vote[sd]?\s+for|gewählt|"
-            r"conservative|liberal|socialist|kommunist|rechts|links)\b"
+            r"politische\s+(?:Meinung|Zugehörigkeit)|vote[sd]?\s+for)\b"
         ),
         pii_type=PIIType.POLITICAL,
         confidence=Confidence.MEDIUM,
         description="Political opinion",
+    ),
+    PatternDef(
+        pattern=_compile(r"\b(?:gewählt|conservative|liberal|socialist|kommunist\w*|rechts|links)\b"),
+        pii_type=PIIType.POLITICAL,
+        confidence=Confidence.MEDIUM,
+        description="Political opinion beside a political word",
+        requires_context=_compile(
+            r"\b(?:Partei\w*|Wahl\w*|wählt\w*|politisch\w*|Gesinnung|Abgeordnet\w*|"
+            r"Bundestag|Landtag|Fraktion|extrem\w*|Demonstration\w*|"
+            r"party|election\w*|voter?s?|political\w*|politics)\b"
+        ),
     ),
 
     # Religious beliefs
@@ -833,6 +864,12 @@ class PrivacyScanner:
 
             for match in pattern_def.pattern.finditer(haystack):
                 start, end = match.start(), match.end()
+
+                if pattern_def.requires_context is not None:
+                    w = pattern_def.context_window
+                    window = haystack[max(0, start - w):start] + " " + haystack[end:end + w]
+                    if not pattern_def.requires_context.search(window):
+                        continue
 
                 # Skip if already found at this position
                 span_key = (start, end)
