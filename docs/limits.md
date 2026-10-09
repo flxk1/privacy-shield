@@ -1187,9 +1187,11 @@ placeholder or a link and is not claimed. Issuer and structural rules run before
 the generic ones, so a key with a label in front of it ("TOKEN=ghp_…") is
 still claimed by its issuer rule and still blocks. A rule that keys on a service
 name ("Heroku … :") is skipped when the label ends in "id" and holds no
-key, token, secret, pass, auth or cred word, so "Heroku-App-ID: <UUID>" or
+key, token, secret, pass, auth, cred, access, Schlüssel, Zugang,
+Kennwort or geheim word, so "Heroku-App-ID: <UUID>" or
 "Datadog dashboard_id: …" pass; "ADOBE_CLIENT_ID" passes the same way. Such a
-rule still takes an ID under any other label ("heroku app: <UUID>") for a key.
+rule still takes an ID under any other label ("Heroku App GUID: <UUID>",
+"Mailchimp-Liste: …", "Facebook Pixel-Nummer: …") for a key and blocks.
 Only the secret is redacted, not its label. Not found: values below the entropy floor (a short or
 dictionary-like password: the generic floor is 3.5 bits per character, which
 a 12-character random password can fall under), secrets with no matching

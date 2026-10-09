@@ -198,6 +198,9 @@ def test_an_id_next_to_a_service_name_is_not_a_key(line):
     "HEROKU_API_KEY=01234567-89ab-cdef-0123-456789abcdef",
     "facebook_secret: " + _r(32, "0123456789abcdef"),
     "aws_access_key_id = AKIA" + _r(16, _B32),
+    "Datadog Schlüssel-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
+    "Datadog Zugangs-ID: " + _r(40, "abcdefghijklmnopqrstuvwxyz0123456789"),
+    "SENDBIRD_ACCESS_ID=" + _r(40, "0123456789abcdef"),
 ])
 def test_a_key_labelled_as_a_key_still_blocks(line):
     assert _verdict(f"Konfiguration: {line}").allowed is False

@@ -45,7 +45,7 @@ _PLACEHOLDER = re.compile(r"^[<\[(]|://")
 # shape, so "Datadog dashboard_id: <40 chars>" reads as a Datadog key
 _LABELLED = re.compile(r"^\(\?i\)\[\\w\.-\]\{0,50\}\?\(\?:")
 _ID_LABEL = re.compile(r"(?i)(?:^|[\W_])ids?[\W_]*$")
-_SECRET_WORD = re.compile(r"(?i)key|token|secret|pass|auth|cred")
+_SECRET_WORD = re.compile(r"(?i)key|token|secret|pass|auth|cred|access|schl(?:ü|ue)ssel|zugang|kennwort|geheim")
 
 
 def _is_basic_credential(secret: str) -> bool:
