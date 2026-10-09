@@ -980,7 +980,7 @@ _TWO_WORD_STREET = re.compile(
     + r"(?=[ \t]*(?:$|[,;\n)·]|\.[ \t]*$|(?:[A-Z]{1,2}-)?\d{4,5}[ \t]))", re.MULTILINE
 )
 # a city ends its phrase: "10115 Berlin," or a line end, not "12000 Mitarbeiter arbeiteten"
-_CITY_END = r"[A-ZÄÖÜ][a-zäöüß]+(?:[ \t]+(?:am|an[ \t]+der|im|ob[ \t]+der|bei)[ \t]+[A-ZÄÖÜ][a-zäöüß]+)?(?=[ \t]*(?:$|[,;\n)]|\.(?:[ \t]|$)))"
+_CITY_END = r"[A-ZÄÖÜ][a-zäöüß]+(?:[ \t]+(?:am|an[ \t]+der|im|ob[ \t]+der|bei)[ \t]+[A-ZÄÖÜ][a-zäöüß]+)?(?=[ \t]*(?:$|[,;\n)]|\.(?:[ \t\n]|$)))"
 _POSTCODE_AFTER = re.compile(
     r"[ \t]*[,·][ \t]*(?:\n[ \t]*)?(?:(?:A|CH|AT|D)-\d{4,5}|\d{5})[ \t]+" + _CITY_END
     + r"|[ \t]*\n[ \t]*(?:(?:A|CH|AT|D)-\d{4,5}|\d{5})[ \t]+" + _CITY_END, re.MULTILINE)

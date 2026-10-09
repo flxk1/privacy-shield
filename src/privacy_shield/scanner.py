@@ -223,7 +223,7 @@ _H = r"[ \t]"
 # with an address around them (identifiers.find_lead_streets)
 _STREET_SUFFIX = r"straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer"
 # a phrase ends at a comma, ";", ")", a line end, or a full stop before a space
-_PHRASE_END = r"(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t]|$)))"
+_PHRASE_END = r"(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t\n]|$)))"
 # the place tails of German city names; "am Standort" and "im Sommer" are not
 _CITY_TAIL = (
     r"(?:am[ \t]+(?:Main|Rhein|Neckar|Inn|Lech|See|Harz)|an[ \t]+der[ \t]+(?:Oder|Donau|Saale|Ruhr|Lahn|Havel|"
@@ -386,8 +386,11 @@ LAYER_2_PATTERNS: List[PatternDef] = [
     PatternDef(
         # four digits after A-/AT-/CH-, five after D-, and a city that ends the
         # phrase: not "Bauteil A-1234 Teil der Lieferung", "Ticket D-4711 Fehler"
+        # case-sensitive: the default IGNORECASE let a sentence-final verb be the
+        # city ("Wir haben Teil A-1234 bestellt.")
         pattern=_compile(
-            rf"\b(?:(?:A|AT|CH)-\d{{4}}|D-\d{{5}}){_H}+[A-ZÄÖÜ][a-zäöüß]+{_PHRASE_END}"
+            rf"\b(?:(?:A|AT|CH)-\d{{4}}|D-\d{{5}}){_H}+[A-ZÄÖÜ][a-zäöüß]+{_PHRASE_END}",
+            re.MULTILINE,
         ),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,

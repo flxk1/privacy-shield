@@ -93,3 +93,19 @@ def test_round_24_look_alikes_stay(text):
 ])
 def test_two_word_streets_at_a_phrase_end(text, hidden):
     assert hidden not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text", [
+    "Wir haben Teil A-1234 bestellt.", "Der Antrag wurde unter dem Aktenzeichen A-1234 geprüft.",
+    "Bitte Artikel A-2041 nachliefern, danke.", "Die Norm AT-2023 gilt.",
+])
+def test_a_code_before_a_final_verb_is_not_a_postcode(text):
+    assert "[LOCATION]" not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ("Hauptstraße 1, 60311 Frankfurt am Main.\nGrüße", "Main"),
+    ("Seestrasse 1, CH-8002 Zürich.\nGrüße", "Zürich"),
+])
+def test_a_full_stop_before_a_line_break_ends_the_phrase(text, hidden):
+    assert hidden not in scan(text).documents[0].overlay
