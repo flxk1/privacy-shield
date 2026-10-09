@@ -73,7 +73,12 @@ def record(path: Path, details: Dict[str, object], tenant_id: str = "") -> None:
         "details": details,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
+    # /dev/null or a pipe accepts the write and keeps nothing
+    if path.exists() and not path.is_file():
+        raise OSError(f"{path} is not a regular file")
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
+    if not path.is_file():
+        raise OSError(f"{path} is not a regular file")

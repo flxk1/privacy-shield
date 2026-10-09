@@ -106,3 +106,15 @@ def test_the_cli_needs_all_three_release_flags(capsys):
     from privacy_shield.cli import main
     assert main(["scan", HEALTH, "--text", "--release-basis", "a"]) == 1
     assert "needs --release-basis, --release-ref and --released-by" in capsys.readouterr().err
+
+
+def test_a_device_as_audit_log_means_no_release(approved):
+    doc = _doc(HEALTH, __import__("pathlib").Path("/dev/null"))
+    assert doc.egress_allowed is False
+    assert "release refused" in doc.blocked_reason
+
+
+def test_medical_secrecy_is_never_lifted(approved):
+    doc = _doc("Unterliegt der Schweigepflicht. " + HEALTH, approved)
+    assert doc.egress_allowed is False
+    assert "not an Art. 9 block" in doc.blocked_reason

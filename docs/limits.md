@@ -1735,9 +1735,10 @@ without it.
   - Main's keyword list still decides on its own without the model. German
     endings are matched on two words only ("Medikamente", "Vorstrafen");
     "Diagnosen", "Symptome", "Krankenhäuser", "Parteien", "Wahlen", "Kirchen"
-    and "genetische" all have business uses. Without the model the list still blocks business uses
-    of its singular words ("Partei im Sinne dieses Vertrages", "nach Wahl des
-    Vermieters").
+    and "genetische" all have business uses. Every keyword counts only in a sentence about a person, so
+    "Partei im Sinne dieses Vertrages" and "nach Wahl des Vermieters" do not
+    block; next to a named person a business use still does ("Herr Lange
+    bittet um die Diagnose der Netzwerkstörung").
   - With the model on, a keyword in a category the model knows (health,
     religion, politics, union, sexual orientation, criminal) counts only when
     the model has a special-category hit at 0.5 or more in the same sentence.
@@ -1754,6 +1755,12 @@ without it.
     der Wirtschaft", "Not-invented-here-Syndrom"). Their terms in a sentence
     about a person are redacted as `special_category` and listed in the
     document's `art9_suspected`, for a person to decide.
+  - A record line is about the record's subject even with no name in it: a
+    line starting with a record field (Diagnose, Befund, Therapie,
+    Medikation, Vorerkrankungen, Anamnese, Religion, Konfession, Sexuelle
+    Orientierung, Vorstrafen, Diagnosis, Findings, Treatment, Medication, …
+    followed by ":"), or a sentence with a diagnosis code ("F32.1",
+    "(J45.9)"). A field label inside a sentence is not a record field.
   - "Refers to a person": the sentence holds a name the scanner finds,
     Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/mich, or a
     definite or possessive singular person noun ("die Patientin", "der
@@ -1871,8 +1878,10 @@ overlay leave despite an Art. 9 block.
   the owner sets.
 - The release is written to the audit log with fsync before it takes effect.
   No audit log, or a failed write, refuses it.
-- It never lifts a professional-secrecy marker, a confidentiality marker, a
-  credential, LOCAL_ONLY mode, or a folder scan.
+- It never lifts a professional-secrecy marker (Berufsgeheimnis,
+  Schweigepflicht, Arztgeheimnis, Mandantengeheimnis, …), a confidentiality
+  marker, a credential, LOCAL_ONLY mode, or a folder scan.
+- The audit log must be a regular file: `/dev/null` or a pipe refuses it.
 
 What the release does not establish: that the basis exists, that the consent
 covers this destination, or that medical secrecy (§ 203 StGB) is released.

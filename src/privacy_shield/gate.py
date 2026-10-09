@@ -409,26 +409,8 @@ class PrivacyGate:
                 ),
             )
 
-        # --- Rule 3: Art. 9 special categories force LOCAL_ONLY ----------
-        art9_hits = self.check_art9(text)
-        if art9_hits:
-            tenant_cfg = self._get_tenant_config(tenant_id)
-            if not tenant_cfg.get("art9_dismissible", True):
-                if is_external:
-                    self._on_blocked(
-                        "art9_external_blocked", destination, tenant_id, user_id, data,
-                    )
-                    return PrivacyGateResult(
-                        allowed=False,
-                        mode="local_only",
-                        classification=classification,
-                        blocked_reason=(
-                            f"Art. 9 special categories detected "
-                            f"({', '.join(art9_hits)}); tenant policy "
-                            f"enforces LOCAL_ONLY for this data"
-                        ),
-                        redacted_fields=art9_hits,
-                    )
+        # Art. 9 data needs nothing beyond Rule 2: it classifies as confidential
+        # there; a recorded release (release.py) is the only way past it.
 
         # --- Allowed -------------------------------------------------------
         return PrivacyGateResult(
@@ -624,6 +606,8 @@ class PrivacyGate:
                 "steuergeheimnis",
                 "anwaltsgeheimnis",
                 "arztgeheimnis",
+                "schweigepflicht",
+                "patientengeheimnis",
                 "attorney-client",
                 "legal privilege",
                 "tax secrecy",
@@ -702,14 +686,6 @@ class PrivacyGate:
             return get_global_privacy_mode().value
         except Exception:
             return "standard"
-
-    @staticmethod
-    def _get_tenant_config(tenant_id: str) -> Dict[str, Any]:
-        """Load tenant-level privacy config (stub for per-tenant settings, pending
-        a dedicated tenant config store)."""
-        return {
-            "art9_dismissible": False,  # conservative default
-        }
 
     @staticmethod
     def _redact_text(text: str) -> str:

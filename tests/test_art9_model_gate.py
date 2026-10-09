@@ -139,3 +139,26 @@ def test_model_support_counts_only_in_the_keywords_own_sentence(model):
 def test_a_confident_hit_on_a_name_in_a_sentence_about_a_person_does_not_count(model):
     model([("person", "Henrike Ostendorf", 0.95), ("religion", "Ostendorf", 0.95)])
     assert PrivacyGate().art9_evidence("Frau Henrike Ostendorf ist neu im Team.") == []
+
+
+@pytest.mark.parametrize("text", [
+    "Befund: HIV-positiv, Therapie läuft.",
+    "Diagnose: Asthma bronchiale (J45.9).",
+    "Diagnose: F32.1 mittelgradige depressive Episode",
+    "Diagnosis: HIV positive. Treatment ongoing.",
+    "Religion: muslimisch",
+    "Name: Lina Vogt\nVorerkrankungen: Diabetes",
+])
+def test_a_record_field_is_about_the_records_subject(monkeypatch, text):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert PrivacyGate().check_art9(text)
+
+
+def test_a_record_field_label_mid_sentence_is_not_a_record(monkeypatch):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert PrivacyGate().check_art9("Die Diagnose: Netzwerkkarte defekt, sagt der Bericht.") == []
+
+
+def test_a_diagnosis_code_ties_a_keyword_to_a_patient(monkeypatch):
+    monkeypatch.delenv(pii_model.ENV, raising=False)
+    assert PrivacyGate().check_art9("Laut Bericht ist eine Behandlung der Episode (F32.1) nötig.") == ["health"]

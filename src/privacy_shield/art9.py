@@ -69,10 +69,20 @@ def sentence_of(spans: Sequence[Tuple[int, int]], at: int) -> Tuple[int, int]:
     return (0, 0)
 
 
+# a record's field ("Befund: HIV-positiv") or a diagnosis code ("F32.1") is
+# about the record's subject even where the name stands elsewhere in the file
+_RECORD_FIELD = re.compile(
+    r"(?im)^[ \t]*(?:Diagnosen?|Befund|Therapie(?:plan)?|Medikation|Vorerkrankungen|Anamnese|Laborwerte?|"
+    r"Krankheitsbild|Religion|Konfession|Religionszugehörigkeit|Sexuelle Orientierung|Vorstrafen?|"
+    r"Diagnosis|Findings?|Treatment|Medication|Medical history|Lab results?|Religion|Criminal record)\s*:")
+_ICD_CODE = re.compile(r"\b[A-TV-Z]\d{2}\.\d{1,2}\b|\([A-TV-Z]\d{2}(?:\.\d{1,2})?\)")
+
+
 def _anchor(text: str, span: Tuple[int, int], names: Sequence[Tuple[int, int]]) -> bool:
     s, e = span
     sentence = text[s:e]
     return bool(_HONORIFIC.search(sentence) or _FIRST_PERSON.search(sentence) or _PERSON_NOUN.search(sentence)
+                or _RECORD_FIELD.search(sentence) or _ICD_CODE.search(sentence)
                 or any(s <= ns < e for ns, _ne in names))
 
 
