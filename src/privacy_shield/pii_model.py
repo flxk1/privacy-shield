@@ -118,13 +118,18 @@ def _is_role(word: str) -> bool:
     return False
 
 
+# a rank is an office prefix plus a rank ending ("Polizeiobermeister"); the
+# ending alone is a surname too often (Baumeister, Hofmeister, Burgmeister)
+_RANK_PREFIXES = ("polizei", "kriminal", "justiz", "regierungs", "amts", "ober", "haupt",
+                  "kreis", "bezirks", "landes", "bundes", "staats", "verwaltungs", "steuer",
+                  "zoll", "feuerwehr", "brand", "finanz", "gerichts", "studien", "ministerial")
 _RANK_SUFFIXES = ("meister", "kommissar", "inspektor", "sekretär", "direktor", "präsident",
                   "rat", "rätin", "leiter", "leiterin", "beamter", "beamtin", "offizier", "hauptmann")
 
 
 def _is_rank(word: str) -> bool:
     w = word.lower()
-    return _is_role(word) or any(w.endswith(x) and len(w) > len(x) + 2 for x in _RANK_SUFFIXES)
+    return _is_role(word) or (w.startswith(_RANK_PREFIXES) and w.endswith(_RANK_SUFFIXES))
 
 
 def _is_role_noun(value: str) -> bool:
@@ -215,9 +220,15 @@ _HEAD_AFTER = re.compile(r"[\s-]*([^\W\d_]+)")
 _DETERMINER = re.compile(
     r"(?i)\b(?:der|die|das|den|dem|des|ein|eine|einen|einem|einer|eines|im|am|beim|zum|zur|vom|ins|ans)\s+$")
 _HONORIFIC_WORDS = frozenset({"herr", "herrn", "frau", "dr", "prof", "mr", "mrs", "ms"})
+_PARTICLE = re.compile(r"(?i)\b((?:von|van|de|ten|zu)(?:\s+(?:der|dem|den|la))?|vom|zur|zum)\s+$")
 
 
-def _seed(text: str, start: int, end: int) -> Optional[str]:
+def _particle(text: str, at: int) -> Optional[str]:
+    m = _PARTICLE.search(text, max(0, at - 12), at)
+    return " ".join(m.group(1).lower().split()) if m else None
+
+
+def _seed(text: str, start: int, end: int) -> Optional[Tuple[str, Optional[str]]]:
     # only the surname position seeds, and never a name that is the front of an
     # institution ("Robert Koch-Institut", "Hans Böckler Stiftung")
     words = _WORD.findall(text[start:end])
@@ -235,7 +246,8 @@ def _seed(text: str, start: int, end: int) -> Optional[str]:
             w.lower() for w in _WORD.findall(text[max(0, start - 12):start])[-1:]]
         if not before or before[-1] not in _HONORIFIC_WORDS:
             return None
-    return last
+    at = start + text[start:end].rfind(last)
+    return last, _particle(text, at)
 
 
 def _corefer(text: str, spans: List[Span], known_names: Iterable[Tuple[int, int]]) -> List[Span]:
@@ -244,17 +256,24 @@ def _corefer(text: str, spans: List[Span], known_names: Iterable[Tuple[int, int]
     # never after an article, where the word is a noun ("der Wolf", "eine Rose")
     seeds = [_seed(text, s, e) for s, e, _v, k, _c in spans if k == NAME]
     seeds += [_seed(text, s, e) for s, e in known_names]
-    words = {w for w in seeds if w}
-    if not words:
+    particles: dict = {}
+    for seed in seeds:
+        if seed:
+            particles.setdefault(seed[0], set()).add(seed[1])
+    if not particles:
         return spans
     taken = [(s, e) for s, e, _v, _k, _c in spans]
     extra: List[Span] = []
-    for word in sorted(words):
-        for m in re.finditer(r"(?<![^\W\d_-])" + re.escape(word) + r"(?![^\W\d_-])", text):
+    for word in sorted(particles):
+        # the genitive is the same person: "Hollmanns Anwalt", "Fuchs' Kündigung"
+        for m in re.finditer(r"(?<![^\W\d_-])" + re.escape(word) + r"(?:s|['’]s?)?(?![^\W\d_-])", text):
             if any(m.start() < e and s < m.end() for s, e in taken):
                 continue
-            if _DETERMINER.search(text[max(0, m.start() - 8):m.start()]):
+            # "der" in "von der Leyen" and "zur" in "zur Linde" are part of the name
+            particle = _particle(text, m.start())
+            if (particle is None or particle not in particles[word]) and _DETERMINER.search(
+                    text[max(0, m.start() - 8):m.start()]):
                 continue
             taken.append((m.start(), m.end()))
-            extra.append((m.start(), m.end(), word, NAME, _THRESHOLD[NAME]))
+            extra.append((m.start(), m.end(), text[m.start():m.end()], NAME, _THRESHOLD[NAME]))
     return sorted(spans + extra, key=lambda s: (s[0], -s[4]))

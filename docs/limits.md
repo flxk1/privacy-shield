@@ -1752,10 +1752,14 @@ without it.
   Stiftung") or ends in such a noun, and a role word unless an honorific stands
   before it ("Frau Richter" seeds, "Richter" alone does not). Not matched: a
   mention right after an article or a fused preposition ("der Wolf", "eine
-  Rose", "am Bach"). A surname that is also a common noun is still redacted
+  Rose", "am Bach"), unless that is the particle the name was seeded with
+  ("von der Leyen", "zur Linde"). A genitive is matched ("Hollmanns"). A
+  colloquial article before a surname ("Der Wendehals hat …") is not matched. A surname that is also a common noun is still redacted
   where no article precedes it ("Wolf entschuldigte sich" and "Wolf und Hund").
-- A lone word after a role is not taken for a name when it is itself a role or
-  rank ("Zeuge Polizeiobermeister").
+- A lone word after a role is not taken for a name when it is itself a role,
+  or a rank built from an office prefix and a rank ending ("Zeuge
+  Polizeiobermeister"); a surname with only the ending ("Kläger Baumeister") is
+  a name.
 - This layer does not change what the rules redact: main's rules already take
   "Herr Präsident" for a name.
 - The gate's own scan (layer 1) does not run the model.

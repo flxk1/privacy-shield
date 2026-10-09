@@ -261,3 +261,30 @@ def test_a_surname_on_the_role_list_is_redacted_at_later_mentions(model):
     model([])
     text = "Laut Frau Richter ist die Akte vollständig. Richter bestätigte das."
     assert "Richter" not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text, first, later", [
+    ("Frau Dr. Ursula von der Leyen eröffnet. Später erklärte von der Leyen, die Frist laufe.", (5, 29), "Leyen"),
+    ("Herr Jan zur Linde klagt. Das Gericht meint, hier hat zur Linde recht.", (5, 18), "Linde"),
+])
+def test_a_particle_before_a_later_mention_is_part_of_the_name(text, first, later):
+    spans = pii_model._corefer(text, [], [first])
+    assert _covered(text, spans, later)[1]
+
+
+def test_a_particle_does_not_open_the_article_guard_for_other_words():
+    text = "Herr Jan zur Linde klagt. Unter der Linde sitzt man."
+    spans = pii_model._corefer(text, [], [(5, 18)])
+    assert not _covered(text, spans, "Linde")[1]
+
+
+@pytest.mark.parametrize("surname", ["Baumeister", "Hofmeister", "Burgmeister", "Konrad"])
+def test_a_surname_with_a_rank_ending_is_a_name(model, surname):
+    model([("person", surname, 0.95)])
+    assert surname not in scan(f"Kläger {surname} beantragt Prozesskostenhilfe.").documents[0].overlay
+
+
+def test_a_genitive_is_the_same_person(model):
+    model([])
+    text = "Herr Hollmann klagt. Hollmanns Anwalt widerspricht."
+    assert "Hollmann" not in scan(text).documents[0].overlay
