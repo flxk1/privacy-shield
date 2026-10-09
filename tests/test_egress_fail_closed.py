@@ -172,3 +172,13 @@ def test_only_the_secret_is_redacted_not_its_label():
     value = "Xq7Zt9Lm2PkW3vR8"
     [(start, end, found, _rule)] = find_credentials(f'password = "{value}"')
     assert found == value
+
+
+@pytest.mark.parametrize("line", [
+    "export GITHUB_TOKEN=ghp_" + _r(36),
+    "token: ghp_" + _r(36),
+    "STRIPE_KEY=sk_live_" + _r(24),
+    "api_key: AKIA" + _r(16, _B32),
+])
+def test_a_labelled_issuer_key_still_blocks(line):
+    assert _verdict(f"Konfiguration: {line}").allowed is False

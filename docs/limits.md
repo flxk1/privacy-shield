@@ -1183,7 +1183,11 @@ label-and-entropy guess (the generic rules) is redacted in the overlay but does
 not block: on German business text such a guess is often a reference, a cost
 centre or a form field, and a false block withholds the whole document. A
 generic value that starts with `<`, `[` or `(`, or contains `://`, is a
-placeholder or a link and is not claimed.
+placeholder or a link and is not claimed. Issuer and structural rules run before
+the generic ones, so a key with a label in front of it ("TOKEN=ghp_…") is
+still claimed by its issuer rule and still blocks. An issuer rule can claim a
+non-secret that has the key's shape next to the service name: gitleaks'
+Heroku rule takes a Heroku app ID (a UUID) for an API key.
 Only the secret is redacted, not its label. Not found: values below the entropy floor (a short or
 dictionary-like password: the generic floor is 3.5 bits per character, which
 a 12-character random password can fall under), secrets with no matching

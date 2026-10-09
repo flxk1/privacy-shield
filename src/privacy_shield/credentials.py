@@ -43,11 +43,6 @@ _LOCAL_RULES = [
 _PLACEHOLDER = re.compile(r"^[<\[(]|://")
 
 
-def is_generic(rule_id: str) -> bool:
-    """A label-and-entropy guess, as opposed to an issuer prefix or a structural match."""
-    return rule_id.startswith("generic") and rule_id != "generic-url-credential"
-
-
 def _is_basic_credential(secret: str) -> bool:
     import base64
     import binascii
@@ -56,6 +51,11 @@ def _is_basic_credential(secret: str) -> bool:
     except (binascii.Error, UnicodeDecodeError, ValueError):
         return False
     return ":" in decoded and decoded.isprintable()
+
+def is_generic(rule_id: str) -> bool:
+    """A label-and-entropy guess, as opposed to an issuer prefix or a structural match."""
+    return rule_id.startswith("generic") and rule_id != "generic-url-credential"
+
 
 _GLOBAL_REGEXES = [re.compile(x) for x in GLOBAL_ALLOW["regexes"]]
 _GLOBAL_STOPWORDS = GLOBAL_ALLOW["stopwords"]
@@ -68,7 +68,9 @@ _COMPILED = [
             for a in rule["allow"]
         ],
     )
-    for rule in RULES + _LOCAL_RULES
+    # issuer and structural rules first: on overlap the first claim stands, and a
+    # labelled "TOKEN=ghp_..." must be claimed by github-pat, not generic-api-key
+    for rule in sorted(RULES + _LOCAL_RULES, key=lambda r: is_generic(r["id"]))
 ]
 
 
