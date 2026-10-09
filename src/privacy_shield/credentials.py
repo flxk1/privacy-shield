@@ -30,7 +30,34 @@ _LOCAL_RULES = [
      "keywords": ["bearer"],
      "regex": r"(?i)\bbearer[ \t]+([A-Za-z0-9._~+/\-]{20,}=*)",
      "allow": []},
+    {"id": "generic-password-printable", "group": 1, "entropy": 3.5,
+     "keywords": ["password", "passwd", "secret"],
+     "regex": r"(?i)\b\w*(?:password|passwd|secret_key|client_secret)\b[\"']?[ \t]*[:=][ \t]*[\"']?([^\s\"';,]{8,})",
+     "allow": []},
+    {"id": "basic-auth-header", "group": 1, "entropy": 3.0,
+     "keywords": ["basic"],
+     "regex": r"(?i)\bbasic[ \t]+([A-Za-z0-9+/]{12,}={0,2})",
+     "allow": []},
 ]
+
+_HYPHEN_WORDS = re.compile(r"[A-Za-zÄÖÜäöüß]{3,}")
+
+
+def _is_word_chain(secret: str) -> bool:
+    """A value of hyphen-joined words ("KA-Vertrieb-Sued-2026") is a label, not a token."""
+    parts = [p for p in re.split(r"[-_.]", secret) if p]
+    words = [p for p in parts if _HYPHEN_WORDS.fullmatch(p) and any(c.islower() for c in p)]
+    return len(parts) >= 3 and len(words) >= 2
+
+
+def _is_basic_credential(secret: str) -> bool:
+    import base64
+    import binascii
+    try:
+        decoded = base64.b64decode(secret + "=" * (-len(secret) % 4), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return False
+    return ":" in decoded and decoded.isprintable()
 
 _GLOBAL_REGEXES = [re.compile(x) for x in GLOBAL_ALLOW["regexes"]]
 _GLOBAL_STOPWORDS = GLOBAL_ALLOW["stopwords"]
@@ -97,12 +124,18 @@ def find_credentials(text: str) -> List[Tuple[int, int, str, str]]:
                 continue
             if rule["id"].startswith("generic") and not any(ch.isdigit() for ch in secret):
                 continue
+            if rule["id"].startswith("generic") and _is_word_chain(secret):
+                continue
+            if rule["id"] == "basic-auth-header" and not _is_basic_credential(secret):
+                continue
             if any(r.search(secret) for r in _GLOBAL_REGEXES):
                 continue
             if any(w in secret.lower() for w in _GLOBAL_STOPWORDS):
                 continue
             line = _line(text, start, end)
             if any(_allowed(a, secret, match.group(0), line) for a in allows):
+                continue
+            if any(start < e and s < end for s, e, _v, _r in out):
                 continue
             out.append((start, end, secret, rule["id"]))
     return out

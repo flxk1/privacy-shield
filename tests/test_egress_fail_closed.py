@@ -1,3 +1,4 @@
+import base64
 import random
 
 import pytest
@@ -52,6 +53,10 @@ _SECRETS = [
     "redis://:" + _r(16) + "@cache:6379",
     "Authorization: Bearer " + _r(40),
     "Passwort: " + _r(18),
+    "DB_PASSWORD=" + _r(10) + "#!" + _r(6) + "3",
+    "Server=db;User Id=sa;Password=" + _r(12) + "%" + _r(3) + "5;",
+    "client_secret: " + _r(12) + "@" + _r(5) + "1",
+    "Authorization: Basic " + base64.b64encode(("alice:" + _r(14)).encode()).decode(),
 ]
 
 
@@ -130,6 +135,10 @@ def test_a_pdf_without_a_parser_is_never_cleared(tmp_path, monkeypatch):
     'password = "Xq7Xq7Xq7Xq7Xq7Xq"',
     'password = "TrQvLmZpXkWbNcYdHs"',
     "Passwort: TrQvLmZpXkWbNcYdHs",
+    "Key-Account: KA-Vertrieb-Sued-2026",
+    "Access-Point: AP-Nord-3OG-07-Flur",
+    "Basic Einstellungen: Standardwerte2026",
+    "Authorization: Basic " + base64.b64encode(b"no-colon-here-2026").decode(),
 ])
 def test_gitleaks_floors_entropy_digit_and_stopwords(text):
     from privacy_shield.credentials import find_credentials

@@ -1171,7 +1171,13 @@ b58d3f102cf3, 214 rules), applied as gitleaks applies it: keyword prefilter,
 the rule's regex, the rule's entropy floor on the secret, a digit required for
 generic rules, and gitleaks' global and per-rule allowlists. Three local rules
 use the same generic semantics: German labels (Passwort, Zugangsdaten,
-Geheimschlüssel, API-Schlüssel), a password inside a URL, and Bearer tokens.
+Geheimschlüssel, API-Schlüssel), a password inside a URL, Bearer tokens, and
+password or secret labels (also `DB_PASSWORD=`, `client_secret:`,
+`Password=` in a connection string) with a value of any printable characters,
+which the upstream generic rule limits to letters, digits and `.=-`.
+`Authorization: Basic` counts only when the value decodes to `user:password`.
+A generic value made of hyphen-joined words ("KA-Vertrieb-Sued-2026") is a
+label, not a token, so a passphrase written that way is not found.
 Only the secret is redacted, not its label. A secret makes the source
 confidential. Not found: values below the entropy floor (a short or
 dictionary-like password: the generic floor is 3.5 bits per character, which
