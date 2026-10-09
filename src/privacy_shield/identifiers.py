@@ -975,6 +975,9 @@ _TWO_WORD_STREET = re.compile(
     # Weg, Platz and Ring are everyday nouns ("Leider Platz 4", "Neuer Weg 2026")
     r"\b(?!(?:Unser|Euer|Ihrer|Jeder|Aller|Einer|Dieser)\b)[A-ZÄÖÜ][a-zäöüß]+er[ \t]+"
     r"(?:Straße|Strasse|Str\.|Allee|Gasse|Chaussee|Landstraße|Gürtel)" + _NUMBER
+    # ... and ends its phrase or meets a postcode: not "Breiter Straße 2 Spuren
+    # geplant", "Leder Gürtel 3 Stück", "Schwarzer Gürtel 2. Dan"
+    + r"(?=[ \t]*(?:$|[,;\n)·]|\.[ \t]*$|(?:[A-Z]{1,2}-)?\d{4,5}[ \t]))", re.MULTILINE
 )
 # a city ends its phrase: "10115 Berlin," or a line end, not "12000 Mitarbeiter arbeiteten"
 _CITY_END = r"[A-ZÄÖÜ][a-zäöüß]+(?:[ \t]+(?:am|an[ \t]+der|im|ob[ \t]+der|bei)[ \t]+[A-ZÄÖÜ][a-zäöüß]+)?(?=[ \t]*(?:$|[,;\n)]|\.(?:[ \t]|$)))"
@@ -989,7 +992,7 @@ _PO_BOX = re.compile(
     r"\bPostfach[ \t]+(?:\d{3,6}|\d{1,2}(?:[ \t]\d{2,3}){1,3})\b"
     r"(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t]|$)|(?:[A-Z]{1,2}-)?\d{4,5}[ \t]))", re.MULTILINE)
 # Austrian and Swiss postcodes have four digits; one directly after a street
-_FOUR_DIGIT_CITY = re.compile(r"\A[ \t]*[,·][ \t]*((?:(?:A|CH)-)?\d{4}[ \t]+" + _CITY_END + ")", re.MULTILINE)
+_FOUR_DIGIT_CITY = re.compile(r"\A[ \t]*(?:[,·][ \t]*|\n[ \t]*)((?:(?:A|CH)-)?\d{4}[ \t]+" + _CITY_END + ")", re.MULTILINE)
 
 
 def find_lead_streets(text: str) -> List[Tuple[int, int, str]]:

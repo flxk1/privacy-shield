@@ -222,6 +222,8 @@ _H = r"[ \t]"
 # the like also end Innenhof, Datenmarkt, Firewall and Lernpfad, and are read
 # with an address around them (identifiers.find_lead_streets)
 _STREET_SUFFIX = r"straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer"
+# a phrase ends at a comma, ";", ")", a line end, or a full stop before a space
+_PHRASE_END = r"(?=[ \t]*(?:$|[,;\n)·]|\.(?:[ \t]|$)))"
 # the place tails of German city names; "am Standort" and "im Sommer" are not
 _CITY_TAIL = (
     r"(?:am[ \t]+(?:Main|Rhein|Neckar|Inn|Lech|See|Harz)|an[ \t]+der[ \t]+(?:Oder|Donau|Saale|Ruhr|Lahn|Havel|"
@@ -382,7 +384,11 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # "CH-8640 Rapperswil", "A-1040 Wien", "D-10115 Berlin": the ticket shape took the prefix
     PatternDef(
-        pattern=_compile(rf"\b(?:A|AT|CH|D)-\d{{4,5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+\b"),
+        # four digits after A-/AT-/CH-, five after D-, and a city that ends the
+        # phrase: not "Bauteil A-1234 Teil der Lieferung", "Ticket D-4711 Fehler"
+        pattern=_compile(
+            rf"\b(?:(?:A|AT|CH)-\d{{4}}|D-\d{{5}}){_H}+[A-ZÄÖÜ][a-zäöüß]+{_PHRASE_END}"
+        ),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,
         description="Country-prefixed postal code and city",
@@ -394,7 +400,7 @@ LAYER_2_PATTERNS: List[PatternDef] = [
         # lowercase word after the city, which also takes "12000 Mitarbeiter arbeiteten"
         pattern=_compile(
             rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+"
-            rf"(?:{_H}+{_CITY_TAIL}|{_H}+[a-zäöüß]+)?\b"
+            rf"(?:{_H}+{_CITY_TAIL}{_PHRASE_END}|{_H}+[a-zäöüß]+)?\b"
         ),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,

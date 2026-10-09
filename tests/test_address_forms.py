@@ -76,3 +76,20 @@ def test_only_place_tails_extend_a_city(text, kept):
 ])
 def test_place_tails_country_prefixes_and_po_boxes(text, hidden):
     assert hidden not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text", [
+    "Ticket D-4711 Fehler beim Login.", "Bauteil A-1234 Teil der Lieferung.",
+    "Schwarzer Gürtel 2. Dan im Karate erreicht.", "Leder Gürtel 3 Stück im Angebot.",
+    "Breiter Straße 2 Spuren geplant.",
+])
+def test_round_24_look_alikes_stay(text):
+    assert scan(text).documents[0].overlay == text
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ("Mariahilfer Straße 45\n1060 Wien", "Wien"),
+    ("Wir wohnen in der Frankfurter Straße 5.", "Frankfurter"),
+])
+def test_two_word_streets_at_a_phrase_end(text, hidden):
+    assert hidden not in scan(text).documents[0].overlay

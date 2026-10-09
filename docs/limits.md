@@ -1961,8 +1961,11 @@ reordering a number.
   -gasse, -ring, -damm, -ufer) and a house number is found alone; the number
   may carry a letter and a range ("90–92", "1-3"). So is a two-word street
   of a word in -er and Straße, Strasse, Str., Allee, Gasse, Chaussee,
-  Landstraße or Gürtel ("Frankfurter Straße 5", "Wiedner Gürtel 9"); Weg,
-  Platz and Ring are everyday nouns there ("Leider Platz 4") and do not count.
+  Landstraße or Gürtel ("Frankfurter Straße 5", "Wiedner Gürtel 9") when it
+  ends its phrase (a comma, ";", ")", "·", a line end, a final full stop) or
+  meets a postcode; "Breiter Straße 2 Spuren geplant" and "Schwarzer Gürtel
+  2. Dan" do not count. Weg, Platz and Ring are everyday nouns there
+  ("Leider Platz 4") and do not count, which also loses "Leipziger Platz 12".
 - Found only before a postcode or after an address label (Anschrift,
   Adresse, wohnhaft, c/o, …): a street led by a preposition and article or
   an adjective ("Am Lindenhof", "An der Alster", "Unter den Linden", "Neuer
@@ -1979,15 +1982,21 @@ reordering a number.
   [LOCATION]."; main already made the count a [LOCATION]). Telling a city
   from a plural noun would need a list of municipality names.
 - "Postfach" with a number of three or more digits, or grouped ("10 20
-  30"), that ends its phrase (a comma, a line end, a full stop or a
-  postcode) is an address; "das Postfach 250 ungelesene Mails" is not.
-- A four-digit postcode and city is found directly after a found street
-  (", 1060 Wien"), and any postcode with a country prefix ("CH-8640
-  Rapperswil", "A-1040 Wien", "D-10115 Berlin") is a postcode and city.
+  30"), that ends its phrase (a comma, ";", ")", "·", a line end, a full
+  stop or a postcode) is an address; "das Postfach 250 ungelesene Mails" is
+  not, but an inbox count that ends its phrase is ("Im Postfach 250.").
+- A four-digit postcode and city is found directly after a found street,
+  after a comma or on the next line (", 1060 Wien"). A postcode with a
+  country prefix - four digits after A-, AT- or CH-, five after D- - and a
+  city that ends its phrase is a postcode and city ("CH-8640 Rapperswil",
+  "A-1040 Wien"); a code of that shape before a word that does not end the
+  phrase is not ("Bauteil A-1234 Teil der Lieferung").
 - A German postcode and city takes a known place tail ("Frankfurt am Main",
   "Freiburg im Breisgau", "Rothenburg ob der Tauber"), and, as before this
   change, one lowercase word after the city, so "12000 Mitarbeiter
   arbeiteten" is still [LOCATION]. "am Standort", "im Sommer" are not tails.
+  A place tail that ends the phrase also extends that old mistake: "Wir
+  erwarten 15000 Teilnehmer an der Ruhr." loses "an der Ruhr" as well.
 - Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
   postcode written first ("A-1010 Wien, Am Hof 2"), house numbers written as
   words, and foreign street formats other than "12 Main Street".
