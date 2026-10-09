@@ -1467,7 +1467,7 @@ class PrivacyScanner:
 
     _ONLINE_TYPES = {
         "email": "EMAIL", "ip": "IP_ADDRESS", "device": "DEVICE_ID", "imei": "DEVICE_ID",
-        "vin": "DEVICE_ID", "geo": "GEO_LOCATION", "online": "ONLINE_IDENTIFIER",
+        "vin": "DEVICE_ID", "geo": "GEO_LOCATION", "online": "ONLINE_IDENTIFIER", "fediverse": "ONLINE_IDENTIFIER",
         "account": "IBAN", "cvv": "SECRET", "card_expiry": "CREDIT_CARD",
     }
 

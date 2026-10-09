@@ -2044,25 +2044,35 @@ reordering a number.
 
 - An e-mail address written with "[at]", "(at)" or "{at}" (and "[dot]",
   "(dot)" or "."), not with a bare " at ", is an e-mail address.
-- IPv6 addresses (validated) are IP addresses; MAC addresses, an IMEI after
+- IPv6 addresses (validated, outside the 2001:db8::/32 documentation range)
+  are IP addresses; MAC addresses (not all-zero or all-ff), an IMEI after
   "IMEI" (Luhn-checked) and a vehicle number after FIN/VIN/Fahrgestellnummer
   are `device_id` [DEVICE].
 - Coordinates are `geo_location` [GEO]: a decimal pair with five or more
-  decimals, or with fewer after GPS/Koordinaten/Standort/Position/Location;
-  degrees-minutes-seconds pairs with N/S and E/O/W.
+  decimals, or with fewer after the word GPS, Koordinaten, Standort,
+  Position, Lat or Location; degrees-minutes-seconds pairs with N/S and
+  E/O/W. Cost: other five-decimal pairs are taken too ("Messwerte 0.12345,
+  0.67890 mg/l", exchange rates "1.08345, 1.08412"), and test MACs such as
+  aa:bb:cc:dd:ee:ff are redacted.
 - A social-media handle after a platform name ("Instagram: @…") and a
   profile link (twitter.com, x.com, instagram.com, facebook.com,
   tiktok.com, threads.net, github.com, linkedin.com/in/, xing.com/profile/)
   are `online_identifier` [ONLINE_ID]; a site's own pages (github.com/
-  features, …/login, …) are not. A handle without a platform name, or on
-  another network, is not found.
+  features, …/login, …) are not, and a host must start at a word boundary
+  ("netflix.com" is not x.com). An organisation's profile is taken like a
+  person's ("github.com/beispiel-gmbh", "facebook.com/BeispielGmbH"). A
+  fediverse handle ("Mastodon @erika@social.example.org") is masked whole.
+  "X" counts as a platform only as "X:". A handle without a platform name,
+  or on another network, is not found.
 - An account number after Kontonummer/Konto-Nr./Kto.-Nr. is redacted as
   [IBAN]; a bank code (BLZ) alone identifies a bank and stays as main
   treats it.
 - A card security code after CVV/CVC/Kartenprüfnummer/Sicherheitscode is a
   credential: redacted, and it makes the text confidential, so it does not
-  leave for an external destination. An expiry date after "gültig bis",
-  "Ablaufdatum", "valid thru" or "exp." is redacted as card data.
+  leave for an external destination, test values ("CVV 000") included. An
+  expiry date after "gültig bis", "Ablaufdatum", "valid thru" or "exp." is
+  redacted as card data only with a card named nearby (Karte, Kreditkarte,
+  card, Visa, Mastercard, …): "Das Angebot ist gültig bis 12/2025" stays.
 - A label or a coordinate pair settles the type: an IMEI is Luhn-valid by
   design and is no longer reported as a card number.
 

@@ -6,7 +6,7 @@ from privacy_shield.runner import scan
 @pytest.mark.parametrize("text, hidden", [
     ("Mail: max.mustermann [at] example [dot] org", "mustermann"),
     ("max(at)example.org", "example"),
-    ("IPv6 2001:db8:85a3::8a2e:370:7334", "8a2e"),
+    ("IPv6 2a02:8070:a1b2::8a2e:370:7334", "8a2e"),
     ("MAC 00:1A:2B:3C:4D:5E", "4D:5E"),
     ("Standort 52.520008, 13.404954", "13.404954"),
     ("GPS: 52.5200, 13.4049", "13.4049"),
@@ -42,3 +42,23 @@ def test_online_look_alikes_stay(text):
 ])
 def test_a_label_or_coordinate_settles_the_type(text, placeholder):
     assert placeholder in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text", [
+    "Stream auf netflix.com/de ansehen.", "fedex.com/de-de/tracking", "wix.com/website",
+    "https://matrix.com/hello", "Plattformgebühr 0.0125, 0.0150 je Transaktion.",
+    "Geometriedaten 1.1234, 2.2345", "Das Angebot ist gültig bis 12/2025.",
+    "Preisliste gültig bis 06/25, danach neu.", "Exp. 05/2019 Senior Consultant", "3 x @2x",
+    "Beispiel-Adresse 2001:db8::1:2 in der Doku", "MAC 00:00:00:00:00:00 als Platzhalter",
+])
+def test_round_27_look_alikes_stay(text):
+    assert scan(text).documents[0].overlay == text
+
+
+def test_a_fediverse_handle_is_masked_whole():
+    overlay = scan("Mastodon @erika@social.example.org").documents[0].overlay
+    assert overlay == "Mastodon [ONLINE_ID]"
+
+
+def test_a_card_expiry_with_a_card_is_masked():
+    assert "12/27" not in scan("Kreditkarte gültig bis 12/27").documents[0].overlay

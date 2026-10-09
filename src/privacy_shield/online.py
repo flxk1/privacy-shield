@@ -26,7 +26,8 @@ _DECIMAL_COORDS = re.compile(r"(?<![\d.])([-+]?\d{1,2}\.\d{4,})[ \t]*,[ \t]*([-+
 _DMS = r"\d{1,3}°[ \t]?\d{1,2}['′](?:[ \t]?\d{1,2}(?:[.,]\d+)?[\"″])?[ \t]?"
 _DMS_COORDS = re.compile(_DMS + r"[NS][ \t,]+" + _DMS + r"[EOW]\b")
 _PROFILE_URL = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:(?:twitter\.com|x\.com|instagram\.com|facebook\.com|tiktok\.com|threads\.net|"
+    # nothing of a domain before the host: "netflix.com" is not "x.com"
+    r"(?<![A-Za-z0-9.-])(?:https?://)?(?:www\.)?(?:(?:twitter\.com|x\.com|instagram\.com|facebook\.com|tiktok\.com|threads\.net|"
     r"github\.com)/@?|linkedin\.com/in/|xing\.com/profile/)([A-Za-z0-9_.-]{2,})",
     re.IGNORECASE,
 )
@@ -36,11 +37,15 @@ features about pricing login signup settings topics explore marketplace search h
 terms policies company jobs careers business solutions enterprise sponsors security apps trending
 collections events watch reel p tos legal blog press developers docs i share hashtag intent
 """.split())
-_COORD_LABEL = re.compile(r"(?i)(?:gps|koordinaten|coordinates|standort|position|lat(?:itude)?|location|geo)[^\n]{0,20}$")
+_COORD_LABEL = re.compile(
+    r"(?i)\b(?:gps|koordinaten|coordinates|standort|position|lat(?:itude)?|location|geo)\b[^\n]{0,20}$")
 _HANDLE = re.compile(
-    r"\b(?i:Instagram|Twitter|TikTok|Telegram|Threads|Mastodon|Snapchat|Bluesky|X)[ \t]*[:(]?[ \t]*"
-    r"(@[A-Za-z0-9_.]{2,30}(?:@[A-Za-z0-9.-]+\.[a-z]{2,})?)"
+    # "X" only as "X:" - "3 x @2x" is a size
+    r"(?:\b(?i:Instagram|Twitter|TikTok|Telegram|Threads|Mastodon|Snapchat|Bluesky)[ \t]*[:(]?|\bX[ \t]*:)[ \t]*"
+    r"(@[A-Za-z_][A-Za-z0-9_.]{1,29}(?:@[A-Za-z0-9.-]+\.[a-z]{2,})?)"
 )
+_CARD_CONTEXT = re.compile(
+    r"(?i)\b(?:karte|kreditkarte|karteninhaber|kartennummer|card|visa|mastercard|amex|maestro|debitkarte)")
 _LABELLED = [
     ("imei", r"IMEI", r"\d{15}"),
     ("vin", r"FIN|VIN|Fahrgestellnummer|Fahrzeug-?Identifizierungsnummer", r"[A-HJ-NPR-Z0-9]{17}"),
@@ -52,7 +57,7 @@ _LABELLED_RES = [
     (kind, re.compile(r"\b(?i:" + label + r")[ \t]*[:.]?[ \t]*(" + value + r")(?![A-Za-z0-9])"))
     for kind, label, value in _LABELLED
 ]
-LABELLED_KINDS = frozenset(kind for kind, _l, _v in _LABELLED)
+LABELLED_KINDS = frozenset(kind for kind, _l, _v in _LABELLED) | {"fediverse"}
 
 
 def _luhn(digits: str) -> bool:
@@ -69,11 +74,18 @@ def find(text: str) -> List[Hit]:
         out.append((m.start(), m.end(), m.group(0), "email"))
     for m in _IPV6.finditer(text):
         try:
-            if ipaddress.ip_address(m.group(0)).version == 6 and m.group(0).count(":") >= 3:
+            address = ipaddress.ip_address(m.group(0))
+            # 2001:db8::/32 is reserved for documentation (RFC 3849)
+            if address in ipaddress.ip_network("2001:db8::/32"):
+                continue
+            if address.version == 6 and m.group(0).count(":") >= 3:
                 out.append((m.start(), m.end(), m.group(0), "ip"))
         except ValueError:
             continue
     for m in _MAC.finditer(text):
+        # 00:00:… and ff:ff:… stand for no device
+        if len(set(m.group(0).lower().replace(":", "").replace("-", ""))) == 1:
+            continue
         out.append((m.start(), m.end(), m.group(0), "device"))
     for m in _DECIMAL_COORDS.finditer(text):
         lat, lon = m.group(1), m.group(2)
@@ -91,10 +103,14 @@ def find(text: str) -> List[Hit]:
             continue
         out.append((m.start(), m.end(), m.group(0), "online"))
     for m in _HANDLE.finditer(text):
-        out.append((m.start(1), m.end(1), m.group(1), "online"))
+        # "@erika@social.example.org" is a handle; the e-mail finder took the tail
+        out.append((m.start(1), m.end(1), m.group(1), "fediverse" if m.group(1).count("@") == 2 else "online"))
     for kind, regex in _LABELLED_RES:
         for m in regex.finditer(text):
             if kind == "imei" and not _luhn(m.group(1)):
+                continue
+            # "Das Angebot ist gültig bis 12/2025" has no card in it
+            if kind == "card_expiry" and not _CARD_CONTEXT.search(text[max(0, m.start() - 80):m.end() + 40]):
                 continue
             out.append((m.start(1), m.end(1), m.group(1), kind))
     return out
