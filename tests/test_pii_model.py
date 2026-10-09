@@ -152,16 +152,16 @@ def test_the_gate_scan_does_not_run_the_model(model):
     assert fake.calls == 0
 
 
-@pytest.mark.parametrize("text, flagged", [
-    ("Die Zufahrt liegt am Bergweg 3-5 hinter dem Lager.", "Bergweg 3-5"),
-    ("Die Zufahrt liegt an der Industriestr. 10-14 hinter dem Lager.", "Industriestr. 10-14"),
-    ("Er leidet an Diabetes mellitus Typ 2 seit Jahren.", "Diabetes mellitus Typ 2"),
+@pytest.mark.parametrize("text, flagged, leak", [
+    ("Die Zufahrt liegt am Bergweg 3-5 hinter dem Lager.", "Bergweg 3-5", "-5"),
+    ("Lieferung an Mühlenweg 12–14, Hof.", "Mühlenweg 12–14", "–14"),
+    ("Lieferung an Ringstr. 4/6, Hof.", "Ringstr. 4/6", "/6"),
+    ("Er leidet an Diabetes mellitus Typ 2 seit Jahren.", "Diabetes mellitus Typ 2", "mellitus"),
 ])
-def test_no_part_of_a_flagged_span_survives_a_partial_rule_match(model, text, flagged):
+def test_no_part_of_a_flagged_span_survives_a_partial_rule_match(model, text, flagged, leak):
     model([("street address", flagged, 0.95), ("health condition", flagged, 0.95)])
     overlay = scan(text).documents[0].overlay
-    tail = flagged.split()[-1]
-    assert tail not in overlay, overlay
+    assert leak not in overlay, overlay
 
 
 @pytest.mark.parametrize("text, single", [
@@ -173,7 +173,51 @@ def test_a_lone_capitalised_word_is_not_a_name(model, text, single):
     assert pii_model.find(text) == []
 
 
+def _covered(text, spans, word):
+    starts = [m for m in range(len(text)) if text.startswith(word, m)]
+    return [any(s <= m and m + len(word) <= e for s, e, _v, _k, _c in spans) for m in starts]
+
+
 def test_a_lone_surname_is_kept_after_an_honorific_or_a_full_name(model):
     text = "Jonas Albrecht kam später. Albrecht bestätigte. Frau Weiß auch."
-    model([("person", "Jonas Albrecht", 0.95), ("person", "Albrecht", 0.9), ("person", "Weiß", 0.9)])
-    assert [v for _s, _e, v, _k, _c in pii_model.find(text)] == ["Jonas Albrecht", "Albrecht", "Weiß"]
+    model([("person", "Jonas Albrecht", 0.95), ("person", "Weiß", 0.9)])
+    spans = pii_model.find(text)
+    assert _covered(text, spans, "Albrecht") == [True, True]
+    assert _covered(text, spans, "Weiß") == [True]
+
+
+def test_a_name_confirmed_by_an_honorific_is_redacted_at_later_mentions(model):
+    text = "Herr Wendehals ist Kläger. Im März hat Wendehals die Frist versäumt."
+    model([("person", "Wendehals", 0.9)])
+    assert scan(text).documents[0].overlay.count("Wendehals") == 0
+
+
+def test_a_name_the_rules_found_seeds_later_mentions(model):
+    model([])
+    assert pii_model.find("Später kam Brandhorst.", ["Dr. Ilse Brandhorst"])[0][2] == "Brandhorst"
+
+
+@pytest.mark.parametrize("text, flagged", [
+    ("Sehr geehrter Herr Präsident, wir danken.", "Herr Präsident"),
+    ("Bitte wenden Sie sich an Herrn Notar.", "Herrn Notar"),
+    ("Frau Gerichtsvollzieherin hat zugestellt.", "Frau Gerichtsvollzieherin"),
+    ("Die Klägerinnen tragen vor.", "Klägerinnen"),
+])
+def test_an_honorific_before_a_role_is_a_role(model, text, flagged):
+    model([("person", flagged, 0.95)])
+    assert pii_model.find(text) == []
+
+
+@pytest.mark.parametrize("value", ["Frau Zeuginnen", "Herren Klägerinnen", "Frau Notarin"])
+def test_feminine_and_plural_roles_are_roles(value):
+    assert pii_model._is_role_noun(value)
+
+
+@pytest.mark.parametrize("text, surname", [
+    ("Die Zeugin Brandhorst sagte aus. Später bestätigte Brandhorst die Angaben.", "Brandhorst"),
+    ("Der Kläger Hollmann beantragt Fristverlängerung.", "Hollmann"),
+    ("Dr. Kranichfeld hat das Gutachten erstellt.", "Kranichfeld"),
+])
+def test_a_surname_after_a_role_or_title_is_kept(model, text, surname):
+    model([("person", surname, 0.95)])
+    assert surname not in scan(text).documents[0].overlay

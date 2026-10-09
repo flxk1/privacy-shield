@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import re
 import threading
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 ENV = "PRIVACY_SHIELD_PII_MODEL"
 
@@ -38,7 +38,7 @@ _CHUNK = 1500
 
 # the measured clean-text false positives were all role nouns taken for a person
 _ROLE_NOUNS = frozenset("""
-herr herrn frau dr prof geschäftsführer geschäftsführerin geschäftsführung
+herr herrn herren frau damen dr prof geschäftsführer geschäftsführerin geschäftsführung
 mandant mandantin mandanten kunde kundin kunden arzt ärztin patient patientin
 mitarbeiter mitarbeiterin mitarbeitende ansprechpartner ansprechpartnerin
 vorstand vorsitzende vorsitzender rechtsanwalt rechtsanwältin anwalt anwältin
@@ -47,9 +47,18 @@ inhaber inhaberin vermieter vermieterin mieter mieterin käufer käuferin
 verkäufer verkäuferin auftraggeber auftraggeberin auftragnehmer
 auftragnehmerin gesellschafter gesellschafterin prokurist prokuristin
 empfänger empfängerin absender absenderin team kollege kollegin kollegen
+notar präsident richter kläger klägerin beklagte beklagter zeuge
+zeugin gläubiger schuldner erblasser erbe erbin bürge insolvenzverwalter
+gerichtsvollzieher staatsanwalt verteidiger sachverständige sachverständiger
+betreuer vormund bevollmächtigte bevollmächtigter antragsteller
+antragsgegner berufungskläger revisionskläger nebenkläger angeklagte
+angeklagter betroffene betroffener beteiligte beteiligter verwalter
+treuhänder schiedsrichter gutachter dolmetscher pfleger direktor professor
+doktor minister bürgermeister
 """.split())
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 _HONORIFIC = re.compile(r"(?:\b(?:Herrn?|Frau|Dr|Prof|Mr|Mrs|Ms)\.?\s+)$")
+_LAST_WORD = re.compile(r"([^\W\d_]+)\.?\s+$")
 
 _lock = threading.Lock()
 _model = None
@@ -97,9 +106,21 @@ def _get(spec: str):
         return _model
 
 
+def _is_role(word: str) -> bool:
+    w = word.lower()
+    if w in _ROLE_NOUNS:
+        return True
+    # feminine and plural forms of a listed role: Klägerin(nen), Zeugin (Zeuge)
+    for suffix in ("innen", "in"):
+        if w.endswith(suffix):
+            stem = w[: -len(suffix)]
+            return stem in _ROLE_NOUNS or stem + "e" in _ROLE_NOUNS
+    return False
+
+
 def _is_role_noun(value: str) -> bool:
     words = _WORD.findall(value)
-    return not words or all(w.lower() in _ROLE_NOUNS for w in words)
+    return not words or all(_is_role(w) for w in words)
 
 
 def _chunks(text: str):
@@ -114,8 +135,12 @@ def _chunks(text: str):
         start = end
 
 
-def find(text: str) -> List[Span]:
-    """Every model span in *text* as (start, end, value, kind, score); [] when off."""
+def find(text: str, known_names: Iterable[str] = ()) -> List[Span]:
+    """Every model span in *text* as (start, end, value, kind, score); [] when off.
+
+    *known_names* are names other layers found; their words seed the same-text
+    coreference below.
+    """
     spec = configured()
     if not spec or not text.strip():
         return []
@@ -140,24 +165,50 @@ def find(text: str) -> List[Span]:
                     continue
                 out.append((start, end, value, kind, score))
     out.sort(key=lambda s: (s[0], -s[4]))
-    return _confirm_single_words(text, out)
+    return _corefer(text, _confirm_single_words(text, out), known_names)
+
+
+def _name_words(value: str) -> List[str]:
+    return [w for w in _WORD.findall(value) if not _is_role(w) and len(w) >= 3 and w[0].isupper()]
 
 
 def _confirm_single_words(text: str, spans: List[Span]) -> List[Span]:
     # one capitalised word is as often a legal role (Erblasser, Gläubiger, Notar)
-    # as a surname: keep it after an honorific or when a longer name in the same
-    # text carries it ("Jonas Albrecht" ... "Albrecht")
+    # as a surname: keep it after an honorific or a role ("Zeugin Brandhorst"),
+    # or when a longer name in the same text carries it ("Jonas Albrecht" ... "Albrecht")
     known = {
         w.lower()
-        for _s, _e, v, k, _c in spans if k == NAME
-        for w in _WORD.findall(v) if len(_WORD.findall(v)) > 1 and w.lower() not in _ROLE_NOUNS
+        for _s, _e, v, k, _c in spans if k == NAME and len(_WORD.findall(v)) > 1
+        for w in _name_words(v)
     }
     kept = []
     for span in spans:
         start, _end, value, kind, _score = span
         words = _WORD.findall(value)
         if kind == NAME and len(words) == 1:
-            if words[0].lower() not in known and not _HONORIFIC.search(text[max(0, start - 12):start]):
+            before = text[max(0, start - 40):start]
+            last = _LAST_WORD.search(before)
+            confirmed = (words[0].lower() in known or _HONORIFIC.search(before)
+                         or (last and _is_role(last.group(1))))
+            if not confirmed:
                 continue
         kept.append(span)
     return kept
+
+
+def _corefer(text: str, spans: List[Span], known_names: Iterable[str]) -> List[Span]:
+    # a name confirmed once ("Herr Wendehals") is redacted at every later bare
+    # mention ("hat Wendehals die Frist versäumt"), found by the model or not
+    words = {w for _s, _e, v, k, _c in spans if k == NAME for w in _name_words(v)}
+    words |= {w for v in known_names for w in _name_words(v)}
+    if not words:
+        return spans
+    taken = [(s, e) for s, e, _v, _k, _c in spans]
+    extra: List[Span] = []
+    for word in sorted(words):
+        for m in re.finditer(r"(?<![^\W\d_])" + re.escape(word) + r"(?![^\W\d_])", text):
+            if any(m.start() < e and s < m.end() for s, e in taken):
+                continue
+            taken.append((m.start(), m.end()))
+            extra.append((m.start(), m.end(), word, NAME, _THRESHOLD[NAME]))
+    return sorted(spans + extra, key=lambda s: (s[0], -s[4]))

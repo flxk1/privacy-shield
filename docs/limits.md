@@ -1737,12 +1737,20 @@ without it.
 - Where a rule finding overlaps a model span, the rule's type stands and the
   rest of the model span is redacted under that type, so "Bergweg 3-5" does not
   come out as "[ADDRESS]-5".
-- A person span made only of role nouns ("Geschäftsführer", "Mandantin") is
-  dropped. A one-word person span is kept only after an honorific (Herr, Frau,
-  Dr., Prof.) or when a longer name in the same text contains it; otherwise
-  legal roles (Erblasser, Gläubiger, Notar) read as names. The cost: a bare
-  surname with neither ("Laut Albrecht …") is not redacted by this layer. A
-  multi-word role phrase the model takes for a person is still redacted.
+- A person span made only of role nouns is dropped: a listed German role
+  (Geschäftsführer, Notar, Kläger, Erblasser, Präsident, …; `_ROLE_NOUNS` in
+  pii_model.py) with its feminine and plural forms, and honorifics, so
+  "Herrn Notar" is a role. A role outside the list is still redacted.
+- A one-word person span is kept only after an honorific or a listed role
+  ("Frau Weiß", "Zeugin Brandhorst") or when a longer name in the same text
+  contains it. A bare surname with none of these ("Laut Albrecht …") is not
+  redacted by this layer.
+- Once a name is confirmed, every later whole-word mention of its words in the
+  same text is redacted ("Herr Wendehals … hat Wendehals"), found by the model
+  or not; names the rules found seed this too. A surname that is also a common
+  capitalised word ("Wolf", "Koch") is then redacted wherever it appears.
+- This layer does not change what the rules redact: main's rules already take
+  "Herr Präsident" for a name.
 - The gate's own scan (layer 1) does not run the model.
 - It loads from local files only and sets `HF_HUB_OFFLINE`; a host that imported
   `huggingface_hub` before the first scan has already fixed that setting.

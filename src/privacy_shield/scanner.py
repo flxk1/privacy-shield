@@ -1170,7 +1170,8 @@ class PrivacyScanner:
         kinds = {pii_model.NAME: (PIIType.NAME, 2), pii_model.ADDRESS: (PIIType.ADDRESS, 2),
                  pii_model.SPECIAL: (PIIType.SPECIAL_CATEGORY, 3)}
         merged = list(findings)
-        for start, end, _value, kind, _score in pii_model.find(text):
+        known = [f.value for f in merged if f.pii_type is PIIType.NAME and isinstance(f.value, str)]
+        for start, end, _value, kind, _score in pii_model.find(text, known):
             pii_type, layer = kinds[kind]
             if layer not in self.layers:
                 continue
@@ -1188,7 +1189,8 @@ class PrivacyScanner:
             if cursor < end:
                 gaps.append((cursor, end))
             for g_start, g_end in gaps:
-                if not text[g_start:g_end].strip(" \t-–.,;:"):
+                if not text[g_start:g_end].strip(" \t-–.,;:") or (
+                        pii_model._WORD.search(text[g_start:g_end]) and pii_model._is_role_noun(text[g_start:g_end])):
                     continue
                 merged.append(Finding(
                     pii_type=pii_type,
