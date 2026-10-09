@@ -2004,9 +2004,13 @@ reordering a number.
   lowercase counts directly after a found street (", 80331 münchen") or
   after in, an, nach, aus or wohnhaft ("schick es an 10115 berlin"), unless
   the word is on a list of units, currencies and counted nouns (km, ms,
-  euro, kunden, fällen, …); a counted noun missing from that list after
-  such a word is redacted ("in 12000 vorgängen"). Elsewhere a lowercase
-  city is not found ("plz 80331 münchen"). A capitalised noun after five digits is still taken for a city
+  euro, kunden, fällen, …). That list is short of the open class of German
+  plural nouns: on unseen log, metric and chat text 25 of 30 such counts
+  were still redacted ("fehler in 12000 vorgängen", "nach 45000
+  kilometern"), each narrower than before this change, which redacted all
+  30. Elsewhere a lowercase city is not found ("ort: 80331 münchen"), nor
+  one after a lowercase street the street rules miss, nor a lowercase lead
+  word ("aus 61348 bad homburg" keeps "homburg"). A capitalised noun after five digits is still taken for a city
   ("12000 Mitarbeiter" becomes [LOCATION]), and a place tail that ends the
   phrase extends it ("15000 Teilnehmer an der Ruhr.").
 - Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
