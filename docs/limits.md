@@ -1991,12 +1991,14 @@ reordering a number.
   city that ends its phrase is a postcode and city ("CH-8640 Rapperswil",
   "A-1040 Wien"); a code of that shape before a word that does not end the
   phrase is not ("Bauteil A-1234 Teil der Lieferung").
-- A German postcode and city takes a known place tail ("Frankfurt am Main",
-  "Freiburg im Breisgau", "Rothenburg ob der Tauber"), and, as before this
-  change, one lowercase word after the city, so "12000 Mitarbeiter
-  arbeiteten" is still [LOCATION]. "am Standort", "im Sommer" are not tails.
-  A place tail that ends the phrase also extends that old mistake: "Wir
-  erwarten 15000 Teilnehmer an der Ruhr." loses "an der Ruhr" as well.
+- A German postcode and city is five digits and a capitalised word, matched
+  case-sensitively ("Umsatz 25000 euro", "Gewicht 10000 kg" and "0.67890
+  mg/l" are no longer a postcode and city), with a known place tail
+  ("Frankfurt am Main", "Freiburg im Breisgau", "Rothenburg ob der
+  Tauber"). A capitalised noun after five digits is still taken for a city
+  ("12000 Mitarbeiter" becomes [LOCATION]), and a place tail that ends the
+  phrase extends it ("15000 Teilnehmer an der Ruhr."). A city written in
+  lowercase ("80331 münchen") is not found.
 - Not found: a street with neither suffix nor lead word ("Dorfmitte 3"), a
   postcode written first ("A-1010 Wien, Am Hof 2"), house numbers written as
   words, and foreign street formats other than "12 Main Street".

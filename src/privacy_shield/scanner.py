@@ -429,11 +429,12 @@ LAYER_2_PATTERNS: List[PatternDef] = [
 
     # German postal code + city
     PatternDef(
-        # "60311 Frankfurt am Main", "79098 Freiburg im Breisgau" - and, as before, one
-        # lowercase word after the city, which also takes "12000 Mitarbeiter arbeiteten"
+        # "60311 Frankfurt am Main", "79098 Freiburg im Breisgau". Case-sensitive:
+        # under the default IGNORECASE "Umsatz 25000 euro" and "10000 kg" were a
+        # postcode and a city, and a lowercase word after the city went too
         pattern=_compile(
-            rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+"
-            rf"(?:{_H}+{_CITY_TAIL}{_PHRASE_END}|{_H}+[a-zäöüß]+)?\b"
+            rf"\b\d{{5}}{_H}+[A-ZÄÖÜ][a-zäöüß]+(?:{_H}+{_CITY_TAIL}{_PHRASE_END})?\b",
+            re.MULTILINE,
         ),
         pii_type=PIIType.PLZ_CITY,
         confidence=Confidence.HIGH,
