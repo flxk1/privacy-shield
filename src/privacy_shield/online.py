@@ -22,7 +22,8 @@ _OBFUSCATED_EMAIL = re.compile(
 )
 _IPV6 = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])")
 _MAC = re.compile(r"(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])")
-_DECIMAL_COORDS = re.compile(r"(?<![\d.])([-+]?\d{1,2}\.\d{4,})[ \t]*,[ \t]*([-+]?\d{1,3}\.\d{4,})(?![\d.])")
+# a sentence may end right after the pair: "GPS: 48.1374, 11.5755."
+_DECIMAL_COORDS = re.compile(r"(?<![\d.])([-+]?\d{1,2}\.\d{4,})[ \t]*,[ \t]*([-+]?\d{1,3}\.\d{4,})(?!\d|\.\d)")
 _DMS = r"\d{1,3}°[ \t]?\d{1,2}['′](?:[ \t]?\d{1,2}(?:[.,]\d+)?[\"″])?[ \t]?"
 _DMS_COORDS = re.compile(_DMS + r"[NS][ \t,]+" + _DMS + r"[EOW]\b")
 _PROFILE_URL = re.compile(

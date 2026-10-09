@@ -67,3 +67,11 @@ def test_a_card_expiry_with_a_card_is_masked():
 @pytest.mark.parametrize("text", ["Messwerte 0.12345, 0.67890 mg/l", "EUR/USD Kurs 1.08345, 1.08412 (Geld/Brief)"])
 def test_five_decimal_pairs_are_not_coordinates(text):
     assert "[GEO]" not in scan(text).documents[0].overlay
+
+
+@pytest.mark.parametrize("text", [
+    "Das Auto stand bei 9.123456, 7.654321.", "GPS: 48.1374, 11.5755.",
+    "Koordinaten 53.5511, 9.9937. Danach weiter.", "Unfallort: 52.520008, 13.404954.",
+])
+def test_a_position_at_the_end_of_a_sentence_is_found(text):
+    assert "[GEO]" in scan(text).documents[0].overlay
