@@ -1,3 +1,5 @@
+import random
+
 import pytest
 
 from privacy_shield.gate import PrivacyGate, is_external_destination
@@ -23,67 +25,37 @@ def test_health_text_to_an_unlisted_cloud_is_blocked():
     assert _verdict("Diagnose: Depression, Behandlung läuft.", "gemini").allowed is False
 
 
-@pytest.mark.parametrize("text", [
-    "Konfession: rk",
-    "Kirchensteuermerkmal ev",
-    "Herr Kowalski ist Mitglied der IG Metall.",
-    "Sie ist Mitglied der SPD.",
-    "Aufnahme auf Station Onkologie, Herr Brandt.",
-    "Diagnose F32.1 Depression",
-    "Long-COVID U09.9",
-    "Er ist Kommunist.",
-    "Er ist Mitglied der GEW.",
-    "Sie ist Mitglied der Neuapostolischen Kirche.",
-    "Er ist aus der Kirche ausgetreten.",
-    "Er ist vorbestraft.",
-])
-def test_art9_content_is_not_cleared(text):
-    assert _verdict(text).allowed is False
+_RND = random.Random(20261009)
 
 
-@pytest.mark.parametrize("text", [
-    "Nach Wahl des Vermieters wird die Wohnung links übergeben.",
-    "Die Parteien vereinbaren den Stellplatz links der Zufahrt.",
-    "Option nach Wahl des Käufers.",
-    "Siehe Anlage A12.3 und Version M51.2.",
-    "Bitte rechts oben unterschreiben.",
-    "Siehe Punkt K40.2 des Leistungsverzeichnisses.",
-    "Artikelnummer F32.1 ist ausverkauft.",
-    "Das Gericht hat die Beklagte zur Zahlung verurteilt; die Verurteilung ist rechtskräftig.",
-    "Die Gewerkschaften verhandeln den Tarifvertrag.",
-    "Der Arbeitgeber behält Lohnsteuer und Kirchensteuer ein.",
-    "Das Klinikum Nordstadt schreibt die Reinigung aus.",
-    "Die Konfession spielt bei der Einstellung keine Rolle.",
-    "Die Große Depression begann 1929.",
-])
-def test_contract_wording_is_not_art9(text):
-    assert PrivacyGate().check_art9(text) == []
+def _r(n, alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"):
+    return "".join(_RND.choice(alphabet) for _ in range(n))
 
 
-@pytest.mark.parametrize("secret", [
-    "AKIAIOSFODNN7EXAMPLE",
-    "ghp_" + "a" * 36,
-    "github_pat_" + "B" * 50,
-    "glpat-" + "c" * 20,
-    "xoxb-" + "1234567890-abcdef",
-    "sk-ant-" + "d" * 30,
-    "sk-proj-" + "e" * 30,
-    "sk_live_" + "f" * 24,
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.abcdefghijk",
-    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
-    "Passwort: Sommer2026!",
-    "api_key=abcd1234efgh",
-    "AIza" + "S" * 35,
-    "npm_" + "n" * 36,
-    "hf_" + "h" * 34,
-    "https://hooks.slack.com/services/T0000/B0000/" + "x" * 24,
-    "postgres://app:s3cretPw@db.internal:5432/main",
-    "AccountKey=" + "k" * 40 + "==",
-    "Authorization: Bearer " + "t" * 32,
-    "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----",
-    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAA",
-    "Das Passwort lautet Xk7mPq2Lz9",
-])
+_B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+_SECRETS = [
+    "AKIA" + _r(16, _B32),
+    "ghp_" + _r(36),
+    "github_pat_" + _r(22) + "_" + _r(59),
+    "glpat-" + _r(20),
+    "xoxb-" + _r(11, "0123456789") + "-" + _r(12, "0123456789") + "-" + _r(24),
+    "sk-ant-api03-" + _r(93) + "AA",
+    "sk-proj-" + _r(74) + "T3BlbkFJ" + _r(74),
+    "sk_live_" + _r(24),
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI" + _r(20) + "In0." + _r(43),
+    "-----BEGIN RSA PRIVATE KEY-----\n" + _r(64) + "\n" + _r(64) + "\n-----END RSA PRIVATE KEY-----",
+    'password = "' + _r(16) + '"',
+    "AIza" + _r(35),
+    "npm_" + _r(36),
+    "https://hooks.slack.com/services/T" + _r(8, _B32) + "/B" + _r(10, _B32) + "/" + _r(24),
+    "postgres://app:" + _r(14) + "@db.internal:5432/main",
+    "redis://:" + _r(16) + "@cache:6379",
+    "Authorization: Bearer " + _r(40),
+    "Passwort: " + _r(18),
+]
+
+
+@pytest.mark.parametrize("secret", _SECRETS)
 def test_secrets_are_found_and_block_external(secret):
     text = f"Konfiguration: {secret} bitte nicht teilen"
     assert PIIType.SECRET in [f.pii_type for f in PrivacyScanner().scan(text).findings]
@@ -92,6 +64,12 @@ def test_secrets_are_found_and_block_external(secret):
 
 @pytest.mark.parametrize("text", [
     "Das Passwort wird separat versandt.",
+    "Passwort: mindestens zwölf Zeichen, Wechsel alle 90 Tage.",
+    "Password: required",
+    "access_token: abgelaufen",
+    "Zugangsdaten: siehe Anlage 4",
+    "ftp://anonymous:gast@ftp.example.org",
+    "AKIAIOSFODNN7EXAMPLE",
     "Kennwort: Schulneubau2026",
     "Kennwort = Gemeindehaus",
     "Passwort: vergessen?",
@@ -143,3 +121,23 @@ def test_a_pdf_without_a_parser_is_never_cleared(tmp_path, monkeypatch):
     f.write_bytes(b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF")
     doc = scan(str(f)).documents[0]
     assert doc.egress_allowed is False
+
+
+@pytest.mark.parametrize("text", [
+    'password = "aaaaaaaaaaaaaaaa1"',
+    'password = "AbcdefghijkLMNOPqrstuvWx"',
+    'password = "abcdefghijklmnopqrstuvwxyz0123"',
+    'password = "Xq7Xq7Xq7Xq7Xq7Xq"',
+    'password = "TrQvLmZpXkWbNcYdHs"',
+    "Passwort: TrQvLmZpXkWbNcYdHs",
+])
+def test_gitleaks_floors_entropy_digit_and_stopwords(text):
+    from privacy_shield.credentials import find_credentials
+    assert find_credentials(text) == []
+
+
+def test_only_the_secret_is_redacted_not_its_label():
+    from privacy_shield.credentials import find_credentials
+    value = "Xq7Zt9Lm2PkW3vR8"
+    [(start, end, found, _rule)] = find_credentials(f'password = "{value}"')
+    assert found == value

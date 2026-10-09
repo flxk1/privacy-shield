@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Pattern, Tuple
 
-from . import identifiers, names as names_module, national
+from . import credentials, identifiers, names as names_module, national
 from ._legacy_env import reject_legacy_env
 
 logger = logging.getLogger(__name__)
@@ -239,64 +239,6 @@ _NOT_DIGIT_AFTER = r"(?!\d)"
 # -----------------------------------------------------------------------------
 
 LAYER_1_PATTERNS: List[PatternDef] = [
-    # Credentials, by issuer shape. A key that leaves is usable by whoever holds
-    # it, so these are claimed whole.
-    PatternDef(
-        pattern=_compile(
-            r"\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}"
-            r"|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}"
-            r"|glpat-[A-Za-z0-9_\-]{20,}"
-            r"|xox[abprs]-[A-Za-z0-9\-]{10,}"
-            r"|sk-ant-[A-Za-z0-9_\-]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_\-]{20,}"
-            r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"
-            r"|eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"
-            r"|AIza[0-9A-Za-z_\-]{35}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,}"
-            r"|xapp-[A-Za-z0-9\-]{10,})",
-            flags=0,
-        ),
-        pii_type=PIIType.SECRET,
-        confidence=Confidence.HIGH,
-        description="API key or access token",
-    ),
-    PatternDef(
-        pattern=_compile(
-            r"https://hooks\.slack\.com/services/[A-Za-z0-9/]{20,}"
-            r"|\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:[^\s/@]+@[^\s/]+"
-            r"|\bAccountKey=[A-Za-z0-9+/=]{20,}"
-            r"|\bBearer[ \t]+[A-Za-z0-9._~+/\-]{20,}=*",
-            flags=0,
-        ),
-        pii_type=PIIType.SECRET,
-        confidence=Confidence.HIGH,
-        description="Credential in a URL, connection string or Authorization header",
-    ),
-    PatternDef(
-        pattern=_compile(
-            r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----"
-            r"(?:[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----|(?:\n[A-Za-z0-9+/=:\- ]*)+)",
-            flags=0,
-        ),
-        pii_type=PIIType.SECRET,
-        confidence=Confidence.HIGH,
-        description="Private key block",
-    ),
-    PatternDef(
-        pattern=_compile(
-            r"\b(?:passwort|password|passwd|api[_\-]?key|access[_\-]?token|"
-            r"client[_\-]?secret)\b[ \t]*[:=][ \t]*[\"']?(?![$<{/~]|vergessen|forgot|\*{3})[^\s\"'?]{6,}(?![?])"
-        ),
-        pii_type=PIIType.SECRET,
-        confidence=Confidence.HIGH,
-        description="Credential value after a label",
-    ),
-    PatternDef(
-        pattern=_compile(
-            r"\b(?:passwort|password)\s+(?:lautet|ist|is)\s+[\"']?(?=[^\s\"']*\d)[^\s\"'.,;]{8,}"
-        ),
-        pii_type=PIIType.SECRET,
-        confidence=Confidence.HIGH,
-        description="Password value in a sentence",
-    ),
     # Email - RFC 5322 simplified
     PatternDef(
         pattern=_compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
@@ -1178,6 +1120,37 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    def _merge_credentials(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Fold in credentials found by the vendored gitleaks rules (credentials.py)."""
+        if 1 not in self.layers:
+            return findings
+        merged = list(findings)
+        for start, end, value, rule_id in credentials.find_credentials(text):
+            if any(f.pii_type is PIIType.SECRET and f.start < end and start < f.end for f in merged):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.SECRET,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.HIGH,
+                layer=1,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+                checksum_validated=True,
+            ))
+            logger.debug("credential %s claimed at [%d,%d)", rule_id, start, end)
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_national(
         self,
         text: str,
@@ -1386,6 +1359,7 @@ class PrivacyScanner:
         # every candidate substring. See identifiers.py for the precision cost.
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
         findings = self._merge_national(text, findings, zone=zone, page=page)
+        findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
         findings = self._yield_to_validated(findings, text)
 

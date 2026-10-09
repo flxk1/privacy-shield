@@ -5,3 +5,9 @@ path = "**"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 flxk1"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "src/privacy_shield/_gitleaks_rules.py"
+precedence = "override"
+SPDX-FileCopyrightText = "2019 Zachary Rice"
+SPDX-License-Identifier = "MIT"

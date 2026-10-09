@@ -1158,38 +1158,25 @@ UTF-8, then cp1252; an unmarked UTF-16 file is treated as unread, not guessed.
 keep data on the machine. Any other value, an empty or misspelt one included,
 is external.
 
-**Art. 9 verdicts.** The gate counts a special category when its keyword list
-matches or when the scanner reports an Art. 9 type (with that type's context
-gates; of the scanner's types only the context-gated ICD and political
-findings count). Named membership cues: "Konfession: <value>", "aus der
-Kirche ausgetreten", "Kirchensteuermerkmal <code>", "Station <specialty>",
-"Mitglied der <party>" and "Mitglied der/im <union>"
-(IG Metall, ver.di, IG BCE, GEW, NGG, EVG, Marburger Bund). Not found, and
-not attempted because single words are too often not about a person: a drug
-name beside a person with no medical word, a partner's name that reveals
-orientation, a party, denomination or orientation stated as an adjective or
-compound ("SPD-Mitglied", "katholisch", "schwul"), pregnancy, disability
-grades, diet or prayer hints, and payroll amounts such as "KiSt 9,60". A dotted code right after Anlage, Version, Ziffer, §, Abschnitt and
-similar labels (Punkt, Artikelnummer, Pos., Seite too) is a reference, not a
-diagnosis. `Verurteilung` is not a criminal-record cue: civil judgments use it
-for every order to pay.
+**Art. 9 verdicts.** The gate decides Art. 9 on its own keyword list,
+unchanged from 2.2.0. A keyword list cannot tell "die Diagnose der
+Netzwerkstörung" from a diagnosis or a Gewerkschaft in the news from a
+member; measured on held-out German business text it both over-blocks and
+misses (membership stated as an adjective or compound, payroll codes, drug
+names). The scanner's context-gated ICD and political patterns change spans
+in the overlay, not the gate's verdict.
 
-**Secrets by issuer shape.** AWS access keys (AKIA/ASIA), GitHub (ghp_,
-gho_, ghu_, ghs_, ghr_, github_pat_), GitLab (glpat-), Slack (xox?-),
-Anthropic (sk-ant-), OpenAI-style (sk-, sk-proj-, sk-svcacct-), Stripe
-(sk_/rk_ live or test), Google (AIza), npm (npm_), Hugging Face (hf_), Slack
-app tokens (xapp-) and webhook URLs, JWTs, PEM and PGP private-key blocks
-(also without an END line), credentials inside a URL
-(`scheme://user:secret@host`), Azure `AccountKey=`, `Bearer` tokens, and a
-value of six or more characters after Passwort / password / passwd / api_key /
-access_token / client_secret with ":" or "=", unless the value is a
-placeholder (`${...}`, `<...>`), a path, or ends in "?"; and "Das Passwort
-lautet/ist <value>" when the value has eight or more characters and a digit.
-`Kennwort` is not a
-label here: in German procurement it names the bid reference. A secret makes
-the source confidential. Not found: generic high-entropy strings with no
-issuer prefix or label, keys split across lines, and passwords written in
-prose without a label.
+**Secrets.** Credentials are found with the gitleaks rule set (commit
+b58d3f102cf3, 214 rules), applied as gitleaks applies it: keyword prefilter,
+the rule's regex, the rule's entropy floor on the secret, a digit required for
+generic rules, and gitleaks' global and per-rule allowlists. Three local rules
+use the same generic semantics: German labels (Passwort, Zugangsdaten,
+Geheimschlüssel, API-Schlüssel), a password inside a URL, and Bearer tokens.
+Only the secret is redacted, not its label. A secret makes the source
+confidential. Not found: values below the entropy floor (a short or
+dictionary-like password: the generic floor is 3.5 bits per character, which
+a 12-character random password can fall under), secrets with no matching
+rule or label, keys split across lines, and passwords in prose.
 
 **Two Article 9 shapes count only beside a context word.** A bare ICD code
 (`H73`) is a diagnosis only when a medical word (Diagnose, Befund, ICD,

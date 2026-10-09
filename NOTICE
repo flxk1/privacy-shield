@@ -6,6 +6,12 @@ This product includes materials developed for the Loomground project.
 The Python implementation, tests, and repository tooling are licensed under the
 Apache License, Version 2.0 (see LICENSES/Apache-2.0.txt).
 
+Bundled third-party material:
+  - src/privacy_shield/_gitleaks_rules.py: the secret-detection rules of gitleaks
+    (https://github.com/gitleaks/gitleaks, config/gitleaks.toml at commit
+    b58d3f102cf3), Copyright (c) 2019 Zachary Rice, MIT License (see
+    LICENSES/MIT.txt). Converted to Python regex syntax; path-bound rules omitted.
+
 Optional third-party dependencies, installed by pip from their own distributions
 and not bundled here:
   - [semantic] numpy (BSD-3-Clause), onnxruntime (MIT).

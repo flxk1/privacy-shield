@@ -61,18 +61,12 @@ logger = logging.getLogger(__name__)
 # Art. 9 GDPR special category patterns (mirrored from routes/privacy_shield)
 # ---------------------------------------------------------------------------
 _ART9_PATTERNS: Dict[str, List[str]] = {
-    # main's list, minus the words that are mostly not Art. 9 in business text
-    # (treatment, vote, voting, election, partei, wahl, glaube, mutation,
-    # conviction, offence, temple, verurteilung: a civil judgment "zur Zahlung
-    # verurteilt" is not criminal-record data), plus cues shaped as a person's membership
-    # or status, which name the category themselves.
     "health": [
-        r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
-        r"\b(krankenhaus|arzt|diagnose|krankheit|medikament|patient|therapie|symptom)\b",
-        r"\bstation\s+(onkologie|psychiatrie|kardiologie|neurologie|dialyse|intensiv\w*|palliativ\w*|geriatrie|suchtmedizin)\b",
+        r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|treatment|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
+        r"\b(krankenhaus|arzt|diagnose|krankheit|behandlung|medikament|patient|therapie|symptom)\b",
     ],
     "genetic": [
-        r"\b(dna|genetic|genome|hereditary|chromosom|gene\s*test)\b",
+        r"\b(dna|genetic|genome|hereditary|chromosom|mutation|gene\s*test)\b",
         r"\b(genetisch|erbkrankheit|genom)\b",
     ],
     "biometric": [
@@ -80,36 +74,25 @@ _ART9_PATTERNS: Dict[str, List[str]] = {
         r"\b(fingerabdruck|biometrisch|gesichtserkennung)\b",
     ],
     "political": [
-        r"\b(political\s*party|political\s*opinion|party\s*member)\b",
-        r"\b(politisch|parteimitglied\w*)\b",
-        r"\bmitglied\s+(der|in\s+der)\s+(cdu|csu|spd|afd|fdp|grünen|linken|bsw)\b",
+        r"\b(political\s*party|political\s*opinion|vote|voting|election)\b",
+        r"\b(partei|politisch|wahl)\b",
     ],
     "religious": [
-        r"\b(religion|religious|church|mosque|synagogue)\b",
-        r"\b(kirche|moschee|synagoge|religiös)\b",
-        r"\b(konfession|religionszugehörigkeit)\s*[:=]\s*\w+",
-        r"\b(aus\s+der\s+kirche\s+ausgetreten|kirchenaustritt)\b",
-        r"\bkirchensteuermerkmal\s*[:=]?\s*(rk|ev|ak|lt|rf|fr|fb|fg|fm|fs|ib|ih|il|is|iw|jd|jh|jj|jl)\b",
+        r"\b(religion|religious|church|mosque|synagogue|temple)\b",
+        r"\b(kirche|moschee|synagoge|glaube|religiös)\b",
     ],
     "union": [
         r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsrat)\b",
-        r"\bmitglied\s+(der|in\s+der|im)\s+(ig\s*metall|ver\.di|ig\s*bce|gew|ngg|evg|gewerkschaft\w*|marburger\s+bund)\b",
     ],
     "sexual": [
         r"\b(sexual\s*orientation|gay|lesbian|bisexual|transgender|lgbtq)\b",
         r"\b(sexuelle\s*orientierung|geschlechtsidentität)\b",
     ],
     "criminal": [
-        r"\b(criminal\s*record|felony|misdemeanor)\b",
-        r"\b(vorstrafe\w*|vorbestraft|strafregister)\b",
+        r"\b(criminal\s*record|conviction|offence|offense|felony|misdemeanor)\b",
+        r"\b(vorstrafe|strafregister|verurteilung)\b",
     ],
 }
-
-# Scanner findings the gate counts as Art. 9. Only the types whose scanner
-# patterns carry a context gate: the scanner's plain health, criminal,
-# biometric and genetic keywords would block "die Diagnose der
-# Netzwerkstörung" or "die Große Depression 1929".
-_ART9_SCANNER_TYPES = {"icd_code": "health", "political": "political"}
 
 # Compiled patterns for performance
 _ART9_COMPILED: Dict[str, List[re.Pattern]] = {
@@ -488,11 +471,6 @@ class PrivacyGate:
                 if pat.search(text_lower):
                     hits.append(category)
                     break
-        from .scanner import PrivacyScanner
-        for finding in PrivacyScanner().scan(text).findings:
-            category = _ART9_SCANNER_TYPES.get(getattr(finding.pii_type, "value", ""))
-            if category and category not in hits:
-                hits.append(category)
         return hits
 
     def classify_data(self, text: str) -> str:
