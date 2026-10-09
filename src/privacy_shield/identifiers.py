@@ -932,9 +932,10 @@ def compact_view(text: str) -> Optional[Tuple[str, List[int]]]:
                 if len(composed) == 1:
                     out[-1] = composed
             continue
-        # letters, digits, punctuation and spaces only: a circled "Ⓐ" is a
-        # symbol NFKC spells as a letter, and is not one (see _identifier_char)
-        if not char.isascii() and category[0] in "LNPZ":
+        # letters, digits, punctuation, spaces and the full-width plus of a
+        # phone number: a circled "Ⓐ" is a symbol NFKC spells as a letter,
+        # and is not one (see _identifier_char)
+        if not char.isascii() and (category[0] in "LNPZ" or char in "＋﹢"):
             compat = unicodedata.normalize("NFKC", char)
             if len(compat) == 1 and compat.isascii() and compat != char:
                 char = compat

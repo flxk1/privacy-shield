@@ -1939,9 +1939,16 @@ other compatibility forms of letters, digits, punctuation or spaces
 ("０１７１", a no-break space), the patterns and the name finder read a compact
 view in which those are removed, composed or mapped to ASCII. Every finding
 is reported at the original offsets, and the marks that follow are included.
-Symbols are not folded: a circled "Ⓐ" is not a letter. Names may carry any
-Latin letter with a diacritic ("Joséfa", "Łukasz Wiśniewski"), not only ä, ö
-and ü.
+Symbols are not folded: a circled "Ⓐ" is not a letter, though a full-width
+plus before a phone number is read as "+". The pension number and plate
+finders read the same view. Names may carry a Latin letter with a diacritic
+from Latin-1, Latin Extended-A/B and Latin Extended Additional ("Joséfa",
+"Łukasz Wiśniewski", "Nguyễn Văn An"), not only ä, ö and ü; letters outside
+those blocks still cut a name.
+
+Figures grouped with a no-break or narrow no-break space ("10 000 000 €")
+are now read like figures grouped with an ordinary space, which the phone
+pattern already took for a phone number; typeset text loses them as well.
 
 Not handled: an address, number or name broken by a line wrap ("max.muster" +
 newline + "mann@example.org" leaves the first line); homoglyphs from other

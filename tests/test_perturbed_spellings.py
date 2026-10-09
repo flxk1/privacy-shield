@@ -29,3 +29,15 @@ def test_plain_text_takes_the_plain_path():
 
 def test_a_circled_letter_is_not_folded():
     assert compact_view("Ⓐ") is None
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ("SV-Nummer: 150​706​49C​103", "103"),
+    ("SV-Nummer: １５０７０６４９Ｃ１０３", "１０３"),
+    ("Kennzeichen B-​AB 1234", "1234"),
+    ("Tel. ＋４９ ３０ １２３４５６７８", "＋"),
+    ("Herr Nguyễn Văn An unterschreibt.", "ễn"),
+    ("Frau Trần Thị Hoa kommt.", "ần"),
+])
+def test_the_later_finders_read_the_view_too(text, hidden):
+    assert hidden not in scan(text).documents[0].overlay

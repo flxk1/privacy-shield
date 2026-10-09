@@ -49,10 +49,11 @@ from typing import List, Tuple
 from . import registry
 from .shared import Exclusions, Ruleset, Span
 
-# Latin letters with diacritics, so "José", "Łukasz" and "Zoë" are not cut
+# Latin letters with diacritics, so "José", "Łukasz", "Zoë" and "Nguyễn" are not cut
 # at their first non-German letter
-_UPPER = "A-Z" + "".join(c for c in map(chr, range(0xC0, 0x250)) if c.isalpha() and c.isupper())
-_LOWER = "a-z" + "".join(c for c in map(chr, range(0xC0, 0x250)) if c.isalpha() and c.islower())
+_LATIN = [*range(0xC0, 0x250), *range(0x1E00, 0x1F00)]  # Latin-1 to Extended-B, Extended Additional
+_UPPER = "A-Z" + "".join(c for c in map(chr, _LATIN) if c.isalpha() and c.isupper())
+_LOWER = "a-z" + "".join(c for c in map(chr, _LATIN) if c.isalpha() and c.islower())
 
 #: A capitalised word, including hyphenated surnames (Mueller-Lang).
 _WORD = rf"[{_UPPER}][{_LOWER}]+(?:-[{_UPPER}][{_LOWER}]+)?"

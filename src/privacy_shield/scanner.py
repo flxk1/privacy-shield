@@ -906,6 +906,19 @@ class PrivacyScanner:
                 ))
         return findings
 
+    @staticmethod
+    def _through_view(text: str, finder):
+        """*finder* over the compact view when there is one, its spans mapped back to *text*."""
+        view = identifiers.compact_view(text)
+        if view is None:
+            return finder(text)
+        folded, index = view
+        out = []
+        for hit in finder(folded):
+            start, end = identifiers.original_span(text, index, hit[0], hit[1])
+            out.append((start, end, text[start:end], *hit[3:]))
+        return out
+
     def _match_folded(
         self,
         text: str,
@@ -1286,7 +1299,7 @@ class PrivacyScanner:
         if 2 not in self.layers:
             return findings
         merged = list(findings)
-        for start, end, value in identifiers.find_plates(text):
+        for start, end, value in self._through_view(text, identifiers.find_plates):
             if any(f.start < end and start < f.end for f in merged):
                 continue
             merged.append(Finding(
@@ -1315,7 +1328,7 @@ class PrivacyScanner:
         if 1 not in self.layers:
             return findings
         merged = list(findings)
-        for start, end, value, ok in identifiers.find_svnr(text):
+        for start, end, value, ok in self._through_view(text, identifiers.find_svnr):
             if any(f.pii_type is PIIType.SVNR and f.start < end and start < f.end for f in merged):
                 continue
             merged.append(Finding(
