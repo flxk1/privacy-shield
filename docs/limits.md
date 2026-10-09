@@ -2052,7 +2052,9 @@ reordering a number.
   decimals, or with fewer after the word GPS, Koordinaten, Standort,
   Position, Lat or Location; degrees-minutes-seconds pairs with N/S and
   E/O/W. Cost: other five-decimal pairs are taken too ("Messwerte 0.12345,
-  0.67890 mg/l", exchange rates "1.08345, 1.08412"), and test MACs such as
+  0.67890 mg/l", exchange rates "1.08345, 1.08412"), and so are pairs after
+  a label word used in its business sense ("Position 2: 1.2500, 3.7500 EUR",
+  "Standort Hamburg: Quote 0.8125, 0.9375"); test MACs such as
   aa:bb:cc:dd:ee:ff are redacted.
 - A social-media handle after a platform name ("Instagram: @…") and a
   profile link (twitter.com, x.com, instagram.com, facebook.com,
@@ -2072,7 +2074,11 @@ reordering a number.
   leave for an external destination, test values ("CVV 000") included. An
   expiry date after "gültig bis", "Ablaufdatum", "valid thru" or "exp." is
   redacted as card data only with a card named nearby (Karte, Kreditkarte,
-  card, Visa, Mastercard, …): "Das Angebot ist gültig bis 12/2025" stays.
+  card, Visa, Mastercard, …): "Das Angebot ist gültig bis 12/2025" stays,
+  but a card word that is not a payment card still counts ("Die Karte für
+  das Konzert ist gültig bis 12/25", "Das Visa ist gültig bis 03/2026", a
+  gift card). An expiry with no card word nearby is not found
+  ("Ablaufdatum: 11/2026").
 - A label or a coordinate pair settles the type: an IMEI is Luhn-valid by
   design and is no longer reported as a card number.
 
