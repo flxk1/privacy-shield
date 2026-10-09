@@ -222,6 +222,11 @@ def _print_human(report: ScanReport, written: Optional[List[Path]]) -> None:
             out.write(f"    findings: {summary}\n")
         if not doc.egress_allowed:
             out.write(f"    blocked_reason: {doc.blocked_reason}\n")
+        if doc.released:
+            r = doc.released
+            out.write(f"    released: {r['basis']}, ref {r['reference']}, by {r['granted_by']}\n")
+        if doc.art9_suspected:
+            out.write(f"    art9_suspected: {', '.join(doc.art9_suspected)}\n")
         if doc.redaction_blocked:
             out.write(f"    redaction_blocked: {doc.redaction_block_reason}\n")
         if doc.errors:

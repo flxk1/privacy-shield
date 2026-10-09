@@ -136,3 +136,11 @@ def test_a_fifo_audit_path_never_hangs_and_refuses_the_release(approved, tmp_pat
     worker.join(30)
     assert not worker.is_alive(), "scan hung on a FIFO audit path"
     assert out["doc"].egress_allowed is False
+
+
+def test_the_cli_summary_shows_the_release(approved, monkeypatch, capsys):
+    from privacy_shield.cli import main
+    monkeypatch.setenv("PRIVACY_SHIELD_AUDIT_LOG", str(approved))
+    assert main(["scan", HEALTH, "--text", "--destination", "openai", "--audit", "--release-basis", "a",
+                 "--release-ref", "Einwilligung 2026-114", "--released-by", "Dr. Weber"]) == 0
+    assert "released: Art. 9(2)(a) GDPR, ref Einwilligung 2026-114, by Dr. Weber" in capsys.readouterr().out
