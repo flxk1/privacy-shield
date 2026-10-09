@@ -1909,3 +1909,22 @@ Without the latter, a provider may only receive the data as a contractor
 bound to secrecy (§ 203(3)-(4) StGB). Those are the controller's checks; this
 package records the controller's word for them.
 
+## Pension insurance numbers and vehicle plates
+
+- A German pension insurance number (Rentenversicherungsnummer,
+  "SV-Nummer") is found written together or grouped by spaces or hyphens
+  ("15 070649 C 103", "15070649C103", "15-070649-C-103"). It needs a real
+  birth date (day 01-31, month 01-12). With a valid check digit it is
+  `high` and checksum-validated; with a wrong one it is still redacted, at
+  `medium`. Not found: other groupings ("150 706 49C103"), a lowercase
+  letter, and full-width digits.
+- A German vehicle plate is found in its hyphenated form ("B-AB 1234",
+  "HH-A 1", with an optional E or H). The spaced form ("B AB 1234") counts
+  only after "Kennzeichen", "Kfz", "Fahrzeug" or "Nummernschild", and so does
+  any plate of three letters or fewer in all ("B-A 1"). The district code is
+  not checked against the official list. Standards and abbreviations (DIN,
+  ISO, EN, IEC, VDE, PDF, …) and the single letters no district uses
+  (I, J, O, Q, T, X) are excluded. A hyphenated code-like string in business
+  text can still be taken for a plate ("MS-AB 2024"). Foreign plates are not
+  found.
+

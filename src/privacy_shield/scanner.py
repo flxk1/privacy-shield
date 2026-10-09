@@ -43,6 +43,9 @@ class PIIType(str, Enum):
     NAME = "name"
     ADDRESS = "address"
     PLZ_CITY = "plz_city"
+    #: A German vehicle registration (identifiers.find_plates): the holder is
+    #: one registry query away.
+    LICENSE_PLATE = "license_plate"
     DATE_OF_BIRTH = "date_of_birth"
     AGE = "age"
 
@@ -312,13 +315,8 @@ LAYER_1_PATTERNS: List[PatternDef] = [
         description="German tax ID (Steuer-ID)",
     ),
 
-    # German Social Security Number (SVNR)
-    PatternDef(
-        pattern=_compile(_NOT_DIGIT_BEFORE + r"\d{2}[A-Z]\d{6}[A-Z]\d{3}" + _NOT_DIGIT_AFTER),
-        pii_type=PIIType.SVNR,
-        confidence=Confidence.HIGH,
-        description="German social security number",
-    ),
+    # German pension insurance number: identifiers.find_svnr, merged in _merge_svnr
+    # with its check digit (the old letter-third pattern matched no real number)
 
     # Passport numbers (EU format)
     PatternDef(
@@ -1245,6 +1243,64 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    def _merge_plates(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        if 2 not in self.layers:
+            return findings
+        merged = list(findings)
+        for start, end, value in identifiers.find_plates(text):
+            if any(f.start < end and start < f.end for f in merged):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.LICENSE_PLATE,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.MEDIUM,
+                layer=2,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
+    def _merge_svnr(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Pension insurance numbers: HIGH with a valid check digit, MEDIUM (a typo) without."""
+        if 1 not in self.layers:
+            return findings
+        merged = list(findings)
+        for start, end, value, ok in identifiers.find_svnr(text):
+            if any(f.pii_type is PIIType.SVNR and f.start < end and start < f.end for f in merged):
+                continue
+            merged.append(Finding(
+                pii_type=PIIType.SVNR,
+                value=value,
+                start=start,
+                end=end,
+                confidence=Confidence.HIGH if ok else Confidence.MEDIUM,
+                layer=1,
+                context=self._get_context(text, start, end),
+                zone=zone,
+                page=page,
+                checksum_validated=ok,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_national(
         self,
         text: str,
@@ -1452,6 +1508,8 @@ class PrivacyScanner:
         # walks maximal runs of identifier characters and offers the validator
         # every candidate substring. See identifiers.py for the precision cost.
         findings = self._merge_run_based(text, findings, zone=zone, page=page)
+        findings = self._merge_svnr(text, findings, zone=zone, page=page)
+        findings = self._merge_plates(text, findings, zone=zone, page=page)
         findings = self._merge_national(text, findings, zone=zone, page=page)
         findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)

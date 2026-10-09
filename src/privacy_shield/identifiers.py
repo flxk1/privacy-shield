@@ -850,3 +850,57 @@ def find_emails(text: str) -> List[Span]:
         start, end = kept[left], kept[domain.end() - 1] + 1
         spans.append((start, end, original[start:end]))
     return spans
+
+
+# German pension insurance number (Rentenversicherungsnummer, the "SV-Nummer"):
+# area (2) + birth date DDMMYY (6) + initial of the birth name + serial (2) +
+# check digit, written together or grouped "15 070649 C 103".
+_SVNR = re.compile(
+    r"(?<![0-9A-Za-z])(\d{2})[ \-]?(\d{2})(\d{2})(\d{2})[ \-]?([A-Z])[ \-]?(\d{2})[ \-]?(\d)(?![0-9A-Za-z])"
+)
+_SVNR_WEIGHTS = (2, 1, 2, 5, 7, 1, 2, 1, 2, 1, 2, 1)
+
+
+def svnr_check_digit(area: str, birth: str, letter: str, serial: str) -> int:
+    digits = area + birth + f"{ord(letter) - ord('A') + 1:02d}" + serial
+    return sum(sum(divmod(int(d) * w, 10)) for d, w in zip(digits, _SVNR_WEIGHTS)) % 10
+
+
+def find_svnr(text: str) -> List[Tuple[int, int, str, bool]]:
+    """Every pension insurance number shape with a real birth date, as (start, end, value, checksum_ok)."""
+    out = []
+    for m in _SVNR.finditer(text):
+        area, day, month, year, letter, serial, check = m.groups()
+        if not 1 <= int(month) <= 12 or not 1 <= int(day) <= 31:
+            continue
+        ok = svnr_check_digit(area, day + month + year, letter, serial) == int(check)
+        out.append((m.start(), m.end(), m.group(0), ok))
+    return out
+
+
+# German vehicle registration (FZV § 8): district code of 1-3 letters, then
+# 1-2 letters and 1-4 digits, at most 8 characters, an optional E or H. The
+# hyphenated form stands alone; the spaced form ("B AB 1234") also writes
+# standards ("DIN EN 1234") and counts only after a vehicle label.
+_PLATE = re.compile(
+    r"(?<![0-9A-Za-zÄÖÜäöüß-])([A-ZÄÖÜ]{1,3})(-| )([A-Z]{1,2}) ?(\d{1,4})([EH]?)(?![0-9A-Za-zÄÖÜäöüß])"
+)
+_PLATE_LABEL = re.compile(
+    r"(?i)(?:kennzeichen|kfz|fahrzeug|amtl\.?\s*kennz\.?|nummernschild)[^\n]{0,20}$")
+# not district codes: standards and abbreviations, and the single letters no district uses
+_NOT_A_DISTRICT = frozenset("DIN ISO IEC EN VDE VDI VDA DE EU US UK PDF ID NR I J O Q T X".split())
+
+
+def find_plates(text: str) -> List[Tuple[int, int, str]]:
+    """Every German registration plate shape the rules accept, as (start, end, value)."""
+    out = []
+    for m in _PLATE.finditer(text):
+        district, sep, letters, digits, suffix = m.groups()
+        if district in _NOT_A_DISTRICT or len(district + letters + digits) > 8:
+            continue
+        # "Raum A-B 12", "Produkt X-Z 9000": two letters in all are a label's job
+        short = len(district + letters) < 3
+        if (sep == " " or short) and not _PLATE_LABEL.search(text[max(0, m.start() - 40):m.start()]):
+            continue
+        out.append((m.start(), m.end(), m.group(0)))
+    return out

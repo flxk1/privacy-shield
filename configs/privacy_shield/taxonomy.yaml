@@ -84,6 +84,13 @@ entities:
     default_action: block
     requires_review: false
 
+  # A German vehicle registration; identifies the holder through the registry.
+  - id: license_plate
+    canonical_name: LICENSE_PLATE
+    detector_class: quasi_identifier
+    default_action: redact
+    requires_review: false
+
   - id: name
     canonical_name: PERSON_NAME
     detector_class: quasi_identifier
