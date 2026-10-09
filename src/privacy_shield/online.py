@@ -91,9 +91,9 @@ def find(text: str) -> List[Hit]:
         lat, lon = m.group(1), m.group(2)
         if abs(float(lat)) > 90 or abs(float(lon)) > 180:
             continue
-        # "Version 1.2345, 6.7890" and prices have four decimals; a position
-        # has five or more, or a label
-        precise = min(len(lat.split(".")[1]), len(lon.split(".")[1])) >= 5
+        # prices, versions, measurements and exchange rates carry up to five
+        # decimals; an unlabelled position has six or more ("52.520008")
+        precise = min(len(lat.split(".")[1]), len(lon.split(".")[1])) >= 6
         if precise or _COORD_LABEL.search(text[max(0, m.start() - 30):m.start()]):
             out.append((m.start(), m.end(), m.group(0), "geo"))
     for m in _DMS_COORDS.finditer(text):

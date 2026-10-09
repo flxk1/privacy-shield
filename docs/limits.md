@@ -2048,11 +2048,11 @@ reordering a number.
   are IP addresses; MAC addresses (not all-zero or all-ff), an IMEI after
   "IMEI" (Luhn-checked) and a vehicle number after FIN/VIN/Fahrgestellnummer
   are `device_id` [DEVICE].
-- Coordinates are `geo_location` [GEO]: a decimal pair with five or more
+- Coordinates are `geo_location` [GEO]: a decimal pair with six or more
   decimals, or with fewer after the word GPS, Koordinaten, Standort,
   Position, Lat or Location; degrees-minutes-seconds pairs with N/S and
-  E/O/W. Cost: other five-decimal pairs are taken too ("Messwerte 0.12345,
-  0.67890 mg/l", exchange rates "1.08345, 1.08412"), and so are pairs after
+  E/O/W. A five-decimal position with no label is not found. Cost: other
+  six-decimal pairs are taken too, and so are pairs after
   a label word used in its business sense ("Position 2: 1.2500, 3.7500 EUR",
   "Standort Hamburg: Quote 0.8125, 0.9375"); test MACs such as
   aa:bb:cc:dd:ee:ff are redacted.

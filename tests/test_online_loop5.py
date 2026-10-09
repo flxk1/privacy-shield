@@ -30,6 +30,7 @@ def test_a_card_security_code_blocks():
 @pytest.mark.parametrize("text", [
     "Uhrzeit 12:30:45", "Version 1.2345, 6.7890", "Wir treffen uns at 5",
     "Preis 12.5000, 3.4000 EUR", "Siehe https://github.com/features", "linkedin.com/company/acme",
+    "Messwerte 0.12345, 0.67890 mg/l", "EUR/USD Kurs 1.08345, 1.08412 (Geld/Brief)",
 ])
 def test_online_look_alikes_stay(text):
     assert scan(text).documents[0].overlay == text
