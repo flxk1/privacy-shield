@@ -50,6 +50,7 @@ from .enforcement import (
     EnforcementDecision,
     EnforcementSink,
     EnforcementVerdict,
+    ExternalEnforcementAdapter,
     NoOpEnforcementSink,
 )
 
@@ -278,6 +279,15 @@ class PrivacyGate:
         """
         try:
             return self._sink.gate(action, enforce=enforce)
+        except NotImplementedError:
+            # (D9) The interface-only stub must fail loudly when attached,
+            # as its docstring promises — an accidental attach of
+            # ExternalEnforcementAdapter is a configuration error, not an
+            # enrichment failure the core path should swallow.
+            if isinstance(self._sink, ExternalEnforcementAdapter):
+                raise
+            logger.debug("Enforcement sink gate() raised NotImplementedError")
+            return None
         except Exception as exc:  # never let enrichment break the core path
             logger.debug("Enforcement sink gate() skipped: %s", exc)
             return None
@@ -479,6 +489,13 @@ class PrivacyGate:
                     user_id=user_id,
                 )
             )
+        except NotImplementedError:
+            # (D9) See the matching comment in plan_action(): the stub must
+            # fail loudly rather than be caught by the enrichment-is-never-
+            # fatal path below.
+            if isinstance(self._sink, ExternalEnforcementAdapter):
+                raise
+            logger.debug("Enforcement sink record_decision raised NotImplementedError")
         except Exception as exc:  # never let enrichment break the core path
             logger.debug("Enforcement sink record_decision skipped: %s", exc)
         return result
