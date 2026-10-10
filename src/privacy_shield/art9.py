@@ -93,7 +93,13 @@ def _anchor(text: str, span: Tuple[int, int], names: Sequence[Tuple[int, int]]) 
 # A document that names itself as a record about one person: every sentence in
 # it is about that person, though clinical prose drops the subject
 # ("Vorbekannt sind ein Typ-2-Diabetes und eine Hypertonie.")
-_NAMED = r"(?:(?:Herrn?|Frau|Hr\.|Fr\.)[ \t]+[A-ZÄÖÜ][a-zäöüß]+|[A-ZÄÖÜ][a-zäöüß]+[ \t]+[A-ZÄÖÜ][a-zäöüß]+)"
+# a person's name, not an article or quantifier and a noun ("Die
+# Antragstellerin", "Alle Beschäftigten")
+_NOT_A_NAME = r"(?!(?:Die|Der|Das|Den|Dem|Des|Ein|Eine|Einen|Einem|Alle|Jede|Jeder|Jedes|Kein|Keine|Unsere|Unser|Ihre|Ihr|Diese|Dieser|Sämtliche|Beide|Siehe)\b)"
+_NAMED = (
+    r"(?:(?:Herrn?|Frau|Hr\.|Fr\.)[ \t]+[A-ZÄÖÜ][a-zäöüß]+|"
+    + _NOT_A_NAME + r"[A-ZÄÖÜ][a-zäöüß]+[ \t]+[A-ZÄÖÜ][a-zäöüß]+)"
+)
 _RECORD_ANCHOR = re.compile(
     # a label whose value is a person: not "Mitarbeiter:" left empty, "Patient:
     # siehe Anlage" or "Versicherte Person: die im Antrag genannte Person"
@@ -103,7 +109,7 @@ _RECORD_ANCHOR = re.compile(
     # "Überweisung", which is also a bank transfer
     + r"|^[ \t]*(?:Arztbrief|Entlass(?:ungs)?brief|Befundbericht|Überweisungsschein|Krankmeldung|"
     r"Arbeitsunfähigkeitsbescheinigung|AU-Bescheinigung|Ärztliches[ \t]+Attest|Attest|Anamnese|Epikrise|"
-    r"Pflegebericht)[ \t]*(?::|$)"
+    r"Pflegebericht)[ \t]*(?::|$|[ \t]\d{1,2}\.\d{1,2}\.)"
 )
 
 

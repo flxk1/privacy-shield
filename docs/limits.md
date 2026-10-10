@@ -1778,8 +1778,9 @@ without it.
   - A record is about one person throughout: a document with a line
     "Patient(in):", "Versicherte(r):", "Betroffene(r):", "Bewerber(in):",
     "Mitarbeiter(in):" or "Arbeitnehmer(in):" whose value is a person
-    ("Herr Lehmann", "Lea Sommer"; not an empty field, "siehe Anlage" or "die
-    im Antrag genannte Person"), or a line headed Arztbrief, Entlassbrief,
+    ("Herr Lehmann", "Lea Sommer"; not an empty field, "siehe Anlage", "die
+    im Antrag genannte Person", "Die Antragstellerin" or "Alle
+    Beschäftigten"), or a line headed Arztbrief, Entlassbrief,
     Befundbericht, Überweisungsschein, Krankmeldung, AU-Bescheinigung,
     (Ärztliches) Attest, Anamnese, Epikrise or Pflegebericht, alone or with
     a colon ("Arztbrief-Software" and a bank "Überweisung" are not). In it
@@ -1787,8 +1788,12 @@ without it.
     subject), keywords need no model support with the model on, and an
     ICD-10-GM term decides the verdict instead of only flagging. Cost: a
     business document with a named label or such a heading blocks on any
-    keyword in it. Not a record: a referral without a named label or heading
-    ("Überweisung zum Orthopäden" in running text).
+    keyword in it, measured at 4 of 35 realistic documents: a policy page
+    headed "Krankmeldung" or "Attest", and the new keywords next to a person
+    noun with no one named ("Beschäftigte mit einem GdB ab 50 erhalten …").
+    Not a record: a referral without a named label or heading ("Überweisung
+    zum Orthopäden" in running text). A heading may carry a date
+    ("Pflegebericht 14.05.").
   - Health keywords include the words of sick notes and applications:
     krankgeschrieben, krankgemeldet, arbeitsunfähig, AU-Bescheinigung, Reha,
     ärztliches Attest, schwerbehindert, GdB, Medikation, Entzug,

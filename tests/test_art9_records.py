@@ -56,3 +56,19 @@ def test_payment_templates_and_product_text_are_not_records(text):
 def test_a_named_label_or_a_heading_makes_a_record(text):
     from privacy_shield import art9
     assert art9.is_record(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Produktblatt Zahnzusatzversicherung\nVersicherte Person: Die Antragstellerin bzw. der Antragsteller.\n"
+    "Leistungen für Behandlung und Zahnersatz sind enthalten.",
+    "Leitfaden Betriebliches Eingliederungsmanagement\nArbeitnehmer: Alle Beschäftigten, die länger als "
+    "sechs Wochen arbeitsunfähig sind, erhalten ein Angebot.",
+])
+def test_an_article_and_a_noun_are_not_a_named_person(text):
+    from privacy_shield import art9
+    assert not art9.is_record(text)
+
+
+def test_a_heading_with_a_date_is_a_heading():
+    from privacy_shield import art9
+    assert art9.is_record("Pflegebericht 14.05.\nBlutzucker 210 mg/dl, Insulin nach Schema.")
