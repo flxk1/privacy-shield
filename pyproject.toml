@@ -46,8 +46,12 @@ model = ["gliner2>=2.0"]
 # leak invariant (tests/test_leak_invariant.py); the deterministic battery
 # in the same file runs without it. schwifty is the external IBAN registry
 # tests/test_iban_registry.py checks the country/length table against - nothing
-# inside this package can notice that table going stale.
-dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024", "python-stdnum>=1.19", "tomli>=2; python_version<'3.11'"]
+# inside this package can notice that table going stale. numpy is needed only
+# to collect tests/test_onnx_contextual_pii.py, which exercises the feature
+# contract (privacy_shield/onnx_contextual_pii.py) against plain numpy arrays
+# and never imports onnxruntime - [dev] alone must be able to collect and run
+# the full suite, so numpy lives here rather than in [semantic].
+dev = ["pyyaml>=6", "pytest>=7", "hypothesis>=6", "schwifty>=2024", "python-stdnum>=1.19", "tomli>=2; python_version<'3.11'", "numpy>=1.24"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
