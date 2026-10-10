@@ -657,8 +657,8 @@ trees — pin the major version.
   `get_llm_client`, `check_byok_available`, `list_available_providers`,
   `get_openai_client_simple`, `get_anthropic_client_simple` — the BYOK/cloud
   provider factories, which existed to serve the removed credential store.
-  From `privacy_shield.enforcement`: `RvndEnforcementAdapter` — superseded by
-  the vendor-neutral `ExternalEnforcementAdapter`, which is still exported.
+  From `privacy_shield.enforcement`: the earlier enforcement adapter — superseded
+  by the vendor-neutral `ExternalEnforcementAdapter`, which is still exported.
   Importing any of them raises `AttributeError` in 2.0.0. Tested:
   `tests/test_2_0_0_surface.py::test_the_split_removed_modules_stay_removed`
   (now covering all three removed modules, not two),
@@ -1001,7 +1001,7 @@ trees — pin the major version.
   fallback) run without the environment's proxy. Tested:
   `tests/test_proxy_transport_guard.py`.
 - **A fourth client was missed by that fix**, because the list of sites was
-  drawn from memory. `privacy_shield_embeddings` built its OpenAI client with
+  drawn from memory. `privacy_shield_embeddings` built its embeddings client with
   no `http_client` at all. Worse than the transport: `PIIContextMatcher._embed`
   sends the first 8000 characters of raw, pre-redaction document text, it is
   reachable from the main scan path, and `PRIVACY_SHIELD_SEMANTIC_ENABLED`
@@ -1103,8 +1103,8 @@ trees — pin the major version.
   path and requires `loomground-mcp`; the package/CLI path (`scan()`,
   `privacy-shield` on the command line) needs nothing else installed and is
   what the skill falls back to without it.
-- Governance key renamed in the skill's manifest: `require_rvnd_on_default_path`
-  -> `require_external_enforcement_on_default_path`.
+- Governance key in the skill's manifest renamed to
+  `require_external_enforcement_on_default_path`.
 
 ### Migration
 
@@ -1114,10 +1114,10 @@ trees — pin the major version.
 | `brain.<module>`, e.g. `brain.audit_log` | `privacy_shield.<module>` |
 | console script `brain.privacy_shield.cli:main` | `privacy_shield.cli:main` |
 | `<site-packages>/brain/...` runtime state (audit log, skill KG, breach log, pseudonymisation sessions) | platform user-state directory, all four (see `docs/limits.md`) |
-| skill governance key `require_rvnd_on_default_path` | `require_external_enforcement_on_default_path` |
+| earlier skill governance key | `require_external_enforcement_on_default_path` |
 | `privacy_shield.user_credentials`, `privacy_shield.compliance_evidence_export`, `privacy_shield.utils.datetime` | removed; vendor from the `v1.0.0` tag if needed |
 | `llm_client.get_openai_client`, `get_anthropic_client`, `get_google_client`, `get_llm_client`, `check_byok_available`, `list_available_providers`, `get_openai_client_simple`, `get_anthropic_client_simple` | removed with the credential store; no replacement |
-| `enforcement.RvndEnforcementAdapter` | `enforcement.ExternalEnforcementAdapter` |
+| the earlier enforcement adapter | `enforcement.ExternalEnforcementAdapter` |
 | `BRAIN_CREDENTIALS_MASTER_KEY`, `BRAIN_SKILL_INTAKE_MASTER_KEY` | removed with `user_credentials.py`; no replacement, and **no error either** — unlike every other legacy name these are ignored silently |
 | skill `allowed-tools: Bash` | `Bash(privacy-shield:*)` |
 | `BRAIN_DEVICE_CLASS` | `PRIVACY_SHIELD_DEVICE_CLASS` |

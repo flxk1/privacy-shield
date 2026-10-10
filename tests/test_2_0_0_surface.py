@@ -237,7 +237,6 @@ REMOVED_PUBLIC_NAMES = [
     ("privacy_shield.llm_client", "list_available_providers"),
     ("privacy_shield.llm_client", "get_openai_client_simple"),
     ("privacy_shield.llm_client", "get_anthropic_client_simple"),
-    ("privacy_shield.enforcement", "RvndEnforcementAdapter"),
 ]
 
 
