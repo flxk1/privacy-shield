@@ -73,6 +73,10 @@ _ART9_PATTERNS: Dict[str, List[str]] = {
         r"\b(diagnos[ei]s|patient|medical|disease|illness|symptom|treatment|medication|prescription|hospital|clinic|doctor|physician|therapy|surgery|cancer|diabetes|hiv|aids|blood\s*type|allergy)\b",
         r"\b(krankenhaus|arzt|diagnose|krankheit|patient|therapie|symptom|behandlung)\b",
         r"\bmedikament" + _DE + r"\b",
+        # the words of sick notes, applications and records
+        r"\b(krankgeschrieben|krankgemeldet|arbeitsunfähig|arbeitsunfähigkeit|au-bescheinigung|"
+        r"reha|rehabilitation|ärztliches attest|schwerbehindert|schwerbehinderung|gdb|medikation|entzug|"
+        r"suchterkrankung|suchtklinik)\b",
     ],
     "genetic": [
         r"\b(dna|genetic|genome|hereditary|chromosom|mutation|gene\s*test)\b",
@@ -91,7 +95,9 @@ _ART9_PATTERNS: Dict[str, List[str]] = {
         r"\b(kirche|moschee|synagoge|glaube|religiös)\b",
     ],
     "union": [
-        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsrat)\b",
+        # "Betriebsrat" alone is the works council, not a person's membership
+        r"\b(trade\s*union|union\s*member|labor\s*union|gewerkschaft|betriebsratsmitglied)\b",
+        r"\bmitglied\s+(?:des|im)\s+betriebsrat",
     ],
     "sexual": [
         r"\b(sexual\s*orientation|gay|lesbian|bisexual|transgender|lgbtq)\b",
@@ -574,13 +580,15 @@ class PrivacyGate:
 
         hits: List[str] = []
         model_on = pii_model.configured()
+        record = art9.is_record(text)
         for category, starts in keyword_at.items():
             if not starts:
                 continue
             # with the model on, a keyword the model knows needs a model hit in
             # its own sentence: "Partei im Sinne dieses Vertrages" has the
             # keyword and nothing else
-            if model_on and category in _MODEL_CATEGORIES and not any(
+            # ... except in a record, where the subject is given by the document
+            if model_on and category in _MODEL_CATEGORIES and not record and not any(
                 art9.sentence_of(sentences, k) == art9.sentence_of(sentences, h[0])
                 for k in starts for h in model_hits
             ):
@@ -595,6 +603,9 @@ class PrivacyGate:
         evidence: List[str] = []
         for s, e, term in icd10gm.find_terms(text):
             if person(s) and not any(ns < e and s < ne for ns, ne in names):
+                # in a record a diagnosis is a diagnosis: it decides
+                if record and "health" not in hits:
+                    hits.append("health")
                 evidence.append(f"icd10gm:{term}")
         for start, end, category, score in model_hits:
             # in a sentence about a person, and not on a name ("Nachname: Ostendorf")

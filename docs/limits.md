@@ -1775,6 +1775,20 @@ without it.
     lautet Morbus Crohn, Therapie mit Mesalazin." is not caught.
   - A record field's qualifier may be at most 24 characters before the colon:
     "Befund der Kontrolluntersuchung:" (25) is not a record field.
+  - A record is about one person throughout: a document with a line
+    "Patient(in):", "Versicherte(r):", "Betroffene(r):", "Bewerber(in):",
+    "Mitarbeiter(in):" or "Arbeitnehmer(in):", or one that names itself
+    Arztbrief, Entlassbrief, Befundbericht, Überweisung, Krankmeldung,
+    AU-Bescheinigung, Attest, Anamnese, Epikrise or Pflegebericht. In it
+    every keyword counts in every sentence (clinical prose drops the
+    subject), keywords need no model support with the model on, and an
+    ICD-10-GM term decides the verdict instead of only flagging. Cost: a
+    business document with such a line or word blocks on any keyword in it.
+  - Health keywords include the words of sick notes and applications:
+    krankgeschrieben, krankgemeldet, arbeitsunfähig, AU-Bescheinigung, Reha,
+    ärztliches Attest, schwerbehindert, GdB, Medikation, Entzug,
+    Suchterkrankung. "Betriebsrat" alone is the works council and does not
+    count; "Betriebsratsmitglied" and "Mitglied des Betriebsrats" do.
   - "Refers to a person": the sentence holds a name the scanner finds,
     Herr/Frau/Hr./Fr./Dr./Prof. before a capital, ich/mein/mir/mich, or a
     definite or possessive singular person noun ("die Patientin", "der

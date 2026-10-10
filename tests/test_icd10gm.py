@@ -93,7 +93,7 @@ def _evidence(text):
 
 
 @pytest.mark.parametrize("text", [
-    "Herr Albrecht ist wegen Arthrose krankgeschrieben.",
+    "Herr Albrecht hat seit Jahren Arthrose.",
     "Frau Weiß kam vorbei. Sie hat Asthma bronchiale.",
     "Info: Herr Dahl fehlt diese Woche. Ursache: Hepatitis.",
     "Bei Fr. Dr. med. Weber wurde Arthrose festgestellt.",
@@ -121,7 +121,7 @@ def test_the_formal_you_is_not_a_person_in_the_text(index, text):
 def test_without_the_index_the_gate_is_unchanged(tmp_path, monkeypatch):
     monkeypatch.delenv(pii_model.ENV, raising=False)
     monkeypatch.setenv(icd10gm.ENV, str(tmp_path / "missing"))
-    assert _art9("Herr Albrecht ist wegen Arthrose krankgeschrieben.") == []
+    assert _art9("Herr Albrecht hat seit Jahren Arthrose.") == []
 
 
 # conftest moves the user-state folder, so the real index comes in by path
@@ -204,7 +204,12 @@ def test_the_sentence_before_counts_only_for_a_short_follow_up(index):
 
 def test_a_diagnosis_about_a_person_is_redacted_and_flagged_not_blocked(index):
     from privacy_shield.runner import scan
-    doc = scan("Herr Albrecht ist wegen Arthrose krankgeschrieben.").documents[0]
+    doc = scan("Herr Albrecht hat seit Jahren Arthrose.").documents[0]
     assert doc.egress_allowed is True
     assert "Arthrose" not in doc.overlay
     assert doc.art9_suspected == ["icd10gm:Arthrose"]
+
+
+def test_in_a_record_an_index_term_decides(index):
+    text = "Mitarbeiterin: Lea Sommer\n\nIm weiteren Verlauf zeigte sich eine Arthrose im linken Knie."
+    assert "health" in _art9(text)

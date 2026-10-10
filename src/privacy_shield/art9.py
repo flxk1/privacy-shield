@@ -90,6 +90,23 @@ def _anchor(text: str, span: Tuple[int, int], names: Sequence[Tuple[int, int]]) 
                 or any(s <= ns < e for ns, _ne in names))
 
 
+# A document that names itself as a record about one person: every sentence in
+# it is about that person, though clinical prose drops the subject
+# ("Vorbekannt sind ein Typ-2-Diabetes und eine Hypertonie.")
+_RECORD_ANCHOR = re.compile(
+    r"(?m)^[ \t]*(?i:Patient(?:in)?|Versicherte(?:r)?|Versicherte[ \t]+Person|Betroffene(?:r)?|"
+    r"Bewerber(?:in)?|Mitarbeiter(?:in)?|Arbeitnehmer(?:in)?)[ \t]*:"
+    # the record words are capitalised nouns: "attest" is an English verb
+    r"|\b(?:Arztbrief|Entlass(?:ungs)?brief|Befundbericht|Überweisung(?:sschein)?|Krankmeldung|"
+    r"Arbeitsunfähigkeitsbescheinigung|AU-Bescheinigung|Attest|Anamnese|Epikrise|Pflegebericht|"
+    r"Gutachten[ \t]+zur[ \t]+Person)\b"
+)
+
+
+def is_record(text: str) -> bool:
+    return bool(_RECORD_ANCHOR.search(text))
+
+
 def refers_to_person(text: str, spans: Sequence[Tuple[int, int]], at: int,
                      names: Sequence[Tuple[int, int]] = ()) -> bool:
     """Whether the sentence holding *at*, or the one before it, is about a person.
@@ -100,6 +117,8 @@ def refers_to_person(text: str, spans: Sequence[Tuple[int, int]], at: int,
     third-person pronoun counts in the sentence itself, and only when such an
     anchor stands somewhere in the text.
     """
+    if is_record(text):
+        return True
     current = sentence_of(spans, at)
     index = list(spans).index(current) if current in spans else -1
     if _anchor(text, current, names):
