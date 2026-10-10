@@ -2141,7 +2141,22 @@ Without the model, a name is also evidenced by:
 - a greeting line ("Hallo Martin,", "Liebe Petra,") and a short sign-off
   ("LG Petra", "Viele Grüße" and a first name on the next line); group words
   (Team, Kollegen, Ihr Team, …) are not names.
-- a surname already found, at a later bare mention ("gegen Lüders"), not
-  after an article ("der Fischer").
-Titles are not part of a claim.
+Titles are not part of a claim. A greeting or sign-off counts only with a
+known given name or Herr/Frau before it ("Hallo Zusammen", "Liebe Eltern"
+greet no one), and a label or list value that starts with an organisation
+or body word (Spedition, Agentur, Stadt, Aufsichtsrat, Abteilung, …) is not
+a person. A surname repeated alone later in the text is not found by the
+rules ("… Klage gegen Lüders"): spreading it reached common nouns and places
+("Koch ist ein Ausbildungsberuf", "von Bergen nach Oslo"). The given-name
+list is a short data table; a name outside it is found only with stronger
+evidence (a title, a signature, an address block).
+
+## Precision budget
+
+tests/test_precision_budget.py pins what all detectors together claim on
+the name-free corpora and on tests/corpora_precision.py, a set of business
+look-alikes (figures with units, greetings to groups, labels without a
+person, codes, policy pages): 8 spans, 2.90 % of characters, no text
+blocked. A change that claims more fails there and must re-state its trade
+before the budget moves.
 

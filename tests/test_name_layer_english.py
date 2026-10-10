@@ -179,7 +179,7 @@ def test_the_adversarial_false_positives_are_exactly_the_named_class(scanner):
 #: English's OWN rules - 12 of the 36 - and German's always-on GIVEN rule
 #: recovers 3 of those 12 (the ones whose label value is also a German given
 #: name plus surname), leaving 9/36 actually missed here.
-NAMED_RECALL = {"development": (16, 21), "held out": (12, 15)}
+NAMED_RECALL = {"development": (18, 21), "held out": (12, 15)}
 
 
 @pytest.mark.parametrize(
@@ -221,7 +221,7 @@ def test_nothing_but_the_english_name_is_claimed(corpus, label, scanner):
 
 #: Through the dispatcher (German always-on); English's rules alone measure
 #: 7/21 (see the ablation table above).
-ENGLISH_INDEPENDENT_RECALL = 10
+ENGLISH_INDEPENDENT_RECALL = 11
 ENGLISH_INDEPENDENT_TOTAL = 21
 
 

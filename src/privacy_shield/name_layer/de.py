@@ -124,6 +124,10 @@ Paul Peter Petra Philipp Rainer Ralf Regina Renate Robert Roland Rolf Ruth
 Sabine Sandra Sarah Sebastian Silke Simon Sofia Sophie Stefan Stefanie Steffen
 Stephan Susanne Sven Tanja Thomas Tim Tobias Ulrich Ulrike Ursula Ute Uwe
 Vanessa Verena Volker Walter Werner Wolfgang Yvonne
+Lea Mia Emma Finn Elias Luca Clara Emil Jakob Paula Lina Ole Greta Svenja Jannik Nils Lars Torsten
+Horst Jürgen Leonie Johanna Hannes Malte Jonathan Henrik Kai Florian Benjamin Fabian Lennart
+Anja Sonja Melanie Jessica Jennifer Denise Sebastian Dominik Kevin Marvin Pascal Mehmet Ahmet Fatma
+Ayşe Olga Svetlana Natalia Elena Irina Tatjana Piotr Andrzej Katarzyna Agnieszka Elfriede Dorothee
 """.split())
 
 #: A single capitalised word, located so the GIVEN rule can anchor on the
@@ -307,9 +311,6 @@ def find_names(text: str) -> List[Span]:
         for start, end, _value in probe(text):
             _claim(spans, start, end, text)
 
-    for start, end, _value in _repeated_surnames(text, list(spans)):
-        _claim(spans, start, end, text)
-
     spans.sort(key=lambda span: span[0])
     return spans
 
@@ -474,7 +475,12 @@ _ROLE_LABEL = (
 _LIST_LABEL = r"(?:Anwesend|Teilnehmende|Entschuldigt|Abwesend|Gäste)"
 _NOT_A_PERSON_START = frozenset(
     "Die Der Das Den Dem Des Ein Eine Alle Jede Jeder Kein Keine Unsere Unser Ihre Ihr Siehe Diese Dieser "
-    "Team Kollegen Kolleginnen Leute Allerseits Freunde Nachbarn Damen Herren Mitglieder Euer Dein Deine".split()
+    "Team Kollegen Kolleginnen Leute Allerseits Freunde Nachbarn Damen Herren Mitglieder Euer Dein Deine "
+    # an organisation or a body at the start of a value ("Spedition Müller",
+    # "Stadt Köln", "Aufsichtsrat Nord")
+    "Spedition Agentur Firma Stadt Gemeinde Landkreis Kreis Amt Behörde Verein Verband Kanzlei Praxis "
+    "Klinik Büro Abteilung Aufsichtsrat Vorstand Betriebsrat Geschäftsführung Gruppe Bereich Referat "
+    "Stelle Zentrale Filiale Niederlassung Hotel Restaurant Bank Versicherung Schule Universität".split()
 )
 # ends at a word boundary and is not itself the next label ("…, Unfallgegner: …")
 _ONE_NAME = rf"(?:(?:{_TITLE}[ \t]+)*(?:[{_UPPER}]\.[ \t]?)?{_WORD}(?:[ \t]+{_SURNAME})?)(?![\w]|[ \t]*:)"
@@ -542,25 +548,15 @@ def _listed_names(text: str) -> List[Span]:
 
 
 def _greeted_names(text: str) -> List[Span]:
+    """A greeting or sign-off names a person only with a known given name or Herr/Frau before it:
+    "Hallo Zusammen", "Liebe Eltern" and "Guten Morgen Deutschland" greet no one by name."""
     out: List[Span] = []
     for regex in (_GREETING, _SIGN_OFF):
         for m in regex.finditer(text):
-            if _person_value(m.group(1)):
-                out.append((m.start(1), m.end(1), m.group(1)))
-    return out
-
-
-def _repeated_surnames(text: str, spans: List[Span]) -> List[Span]:
-    """A surname found once is the same person at a later bare mention ("gegen Lüders")."""
-    surnames = {v.split()[-1] for _s, _e, v in spans if len(v.split()) >= 2 and len(v.split()[-1]) >= 4}
-    surnames -= GIVEN_NAMES
-    out: List[Span] = []
-    for name in surnames:
-        for m in re.finditer(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", text):
-            before = text[max(0, m.start() - 6):m.start()].lower()
-            if re.search(r"\b(?:der|die|das|den|dem|des|ein|eine)[ \t]+$", before):
-                continue
-            out.append((m.start(), m.end(), name))
+            value = m.group(1)
+            addressed = re.search(r"(?:Herr|Frau)[ \t]+$", text[max(0, m.start(1) - 6):m.start(1)])
+            if (value.split()[0] in GIVEN_NAMES or addressed) and _person_value(value):
+                out.append((m.start(1), m.end(1), value))
     return out
 
 
