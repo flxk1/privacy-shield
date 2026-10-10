@@ -2122,3 +2122,26 @@ reordering a number.
 - A label or a coordinate pair settles the type: an IMEI is Luhn-valid by
   design and is no longer reported as a card number.
 
+## Names from labels, meeting lists, greetings and repeats
+
+Without the model, a name is also evidenced by:
+- a label that only a natural person holds: Patient(in), Zeuge/Zeugin,
+  Versicherte(r), Bewerber(in), Mitarbeiter(in), Arbeitnehmer(in),
+  Erblasser(in), Betroffene(r), Fahrer(in), Protokoll, Moderation, followed
+  by names ("Zeugin: Mia Kranz"). One bare word after such a label counts
+  only as a known given name. Customer, buyer, landlord, creditor and party
+  labels (Kunde, Käufer, Mieter, Vermieter, Gläubiger, Kläger, …) are not
+  used: a company fills those, and a list of legal forms to tell them apart
+  fails open, which is why that position was withdrawn once already. So
+  "Vermieter: Horst Lindemann" is not found this way.
+- a meeting list after Anwesend, Teilnehmende, Entschuldigt, Abwesend or
+  Gäste, as initial and surname ("S. Brandt") or given name and surname;
+  one bare word only as a known given name. CC and Verteiler lists are not
+  used.
+- a greeting line ("Hallo Martin,", "Liebe Petra,") and a short sign-off
+  ("LG Petra", "Viele Grüße" and a first name on the next line); group words
+  (Team, Kollegen, Ihr Team, …) are not names.
+- a surname already found, at a later bare mention ("gegen Lüders"), not
+  after an article ("der Fischer").
+Titles are not part of a claim.
+

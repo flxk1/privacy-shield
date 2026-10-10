@@ -447,16 +447,19 @@ def test_a_table_cell_is_a_name_only_under_a_person_column():
 
 
 def test_the_probes_are_separable_and_named():
-    """One probe ships. It is still named and separable, so a regression
-    reports its cause and the owner can drop it without touching the core
-    rules."""
+    """Four probes ship, each named and separable, so a regression reports its
+    cause and the owner can drop one without touching the core rules."""
     from privacy_shield.names import PROBES, find_names_by_probe
 
-    assert set(PROBES) == {"table"}
+    assert set(PROBES) == {"table", "labelled", "listed", "greeted"}
     blame = find_names_by_probe(
         "| Bearbeiter | Status |\n| Osterloh | offen |\n"
+        "Zeugin: Mia Kranz\nAnwesend: S. Brandt, T. Okafor\nHallo Martin,\n"
     )
     assert [v for _s, _e, v in blame["table"]] == ["Osterloh"]
+    assert [v for _s, _e, v in blame["labelled"]] == ["Mia Kranz"]
+    assert [v for _s, _e, v in blame["listed"]] == ["S. Brandt", "T. Okafor"]
+    assert [v for _s, _e, v in blame["greeted"]] == ["Martin"]
 
 
 @pytest.mark.parametrize(

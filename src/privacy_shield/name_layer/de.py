@@ -307,6 +307,9 @@ def find_names(text: str) -> List[Span]:
         for start, end, _value in probe(text):
             _claim(spans, start, end, text)
 
+    for start, end, _value in _repeated_surnames(text, list(spans)):
+        _claim(spans, start, end, text)
+
     spans.sort(key=lambda span: span[0])
     return spans
 
@@ -454,8 +457,118 @@ def _table_names(text: str) -> List[Span]:
 
 #: Named and separable, so a regression reports which probe caused it and the
 #: owner can drop one without touching the other.
+# ---------------------------------------------------------------------------
+# Probes for names a label, a list, a greeting or a short sign-off evidences.
+# ---------------------------------------------------------------------------
+
+#: Roles that only a natural person can hold, so the value after the label is
+#: a person. Customer, buyer, landlord, creditor and claimant are left out: a
+#: company fills those, and judging a value against a list of legal forms
+#: fails open (tests/test_name_layer_enumeration_limit.py records why that
+#: position was withdrawn once already).
+_ROLE_LABEL = (
+    r"(?:Patient(?:in)?|Zeuge|Zeugin|Versicherte[rn]?|Bewerber(?:in)?|Mitarbeiter(?:in)?|Arbeitnehmer(?:in)?|"
+    r"Erblasser(?:in)?|Betroffene[rn]?|Fahrer(?:in)?|Protokoll(?:führer(?:in)?)?|Moderation)"
+)
+#: Meeting lists; "CC" and "Verteiler" hold companies as well
+_LIST_LABEL = r"(?:Anwesend|Teilnehmende|Entschuldigt|Abwesend|Gäste)"
+_NOT_A_PERSON_START = frozenset(
+    "Die Der Das Den Dem Des Ein Eine Alle Jede Jeder Kein Keine Unsere Unser Ihre Ihr Siehe Diese Dieser "
+    "Team Kollegen Kolleginnen Leute Allerseits Freunde Nachbarn Damen Herren Mitglieder Euer Dein Deine".split()
+)
+# ends at a word boundary and is not itself the next label ("…, Unfallgegner: …")
+_ONE_NAME = rf"(?:(?:{_TITLE}[ \t]+)*(?:[{_UPPER}]\.[ \t]?)?{_WORD}(?:[ \t]+{_SURNAME})?)(?![\w]|[ \t]*:)"
+_LABELLED = re.compile(
+    rf"(?m)(?:^|(?<=[,;][ \t]))[ \t]*{_ROLE_LABEL}[ \t]*:[ \t]*"
+    rf"({_ONE_NAME}(?:[ \t]*(?:,|und|&)[ \t]*{_ONE_NAME})*)"
+)
+_LISTED = re.compile(rf"(?m)^[ \t]*{_LIST_LABEL}[ \t]*:[ \t]*(.*(?:\n[ \t]*[-•*][ \t]*.+)*)")
+_LIST_ITEM = re.compile(rf"(?:{_TITLE}[ \t]+)*(?:[{_UPPER}]\.[ \t]?{_WORD}|{_WORD}(?:[ \t]+{_SURNAME})?)")
+_GREETING = re.compile(
+    rf"(?m)^[ \t]*(?:Hallo|Hi|Hey|Moin|Servus|Liebe|Lieber|Liebes|Guten[ \t]+(?:Tag|Morgen|Abend))[ \t]+"
+    rf"(?:(?:Herr|Frau)[ \t]+)?({_WORD}(?:[ \t]+{_WORD})?)[ \t]*[,!]"
+)
+_SIGN_OFF = re.compile(
+    rf"(?mi)^[ \t]*(?:VG|LG|MfG|Gruß|Grüße|Viele[ \t]+Grüße|Liebe[ \t]+Grüße|Beste[ \t]+Grüße|"
+    rf"Herzliche[ \t]+Grüße|Schöne[ \t]+Grüße|Cheers|Danke(?:[ \t]+und[ \t]+Grüße)?)[ \t]*,?[ \t]*(?:\n[ \t]*)?"
+    rf"(?-i:({_WORD}(?:[ \t]+{_WORD})?))[ \t]*$"
+)
+
+
+_LEADING_TITLES = re.compile(rf"^(?:{_TITLE}[ \t]+)+")
+
+
+def _name_part(start: int, value: str) -> Tuple[int, str]:
+    """The span without its titles: the claim is the name, as the TITLE rule claims it."""
+    titles = _LEADING_TITLES.match(value)
+    return (start + titles.end(), value[titles.end():]) if titles else (start, value)
+
+
+def _person_value(value: str) -> bool:
+    first = value.split()[0].rstrip(",") if value.split() else ""
+    return bool(first) and first not in _NOT_A_PERSON_START and not _is_organisational(value)
+
+
+def _labelled_names(text: str) -> List[Span]:
+    out: List[Span] = []
+    for m in _LABELLED.finditer(text):
+        for item in re.finditer(_ONE_NAME, m.group(1)):
+            value = item.group(0)
+            words = value.replace(".", " ").split()
+            # one bare word after a label is a person only as a known given name
+            # ("Kunde: Beispiel" is a firm)
+            if len(words) == 1 and value not in GIVEN_NAMES:
+                continue
+            if _person_value(value):
+                start, name = _name_part(m.start(1) + item.start(), value)
+                out.append((start, start + len(name), name))
+    return out
+
+
+def _listed_names(text: str) -> List[Span]:
+    out: List[Span] = []
+    for m in _LISTED.finditer(text):
+        for item in _LIST_ITEM.finditer(m.group(1)):
+            value = item.group(0)
+            words = value.replace(".", " ").split()
+            # a list holds roles too ("Vorstand"): one bare word is a person
+            # only when it is a known given name
+            if len(words) == 1 and value not in GIVEN_NAMES:
+                continue
+            if _person_value(value):
+                start, name = _name_part(m.start(1) + item.start(), value)
+                out.append((start, start + len(name), name))
+    return out
+
+
+def _greeted_names(text: str) -> List[Span]:
+    out: List[Span] = []
+    for regex in (_GREETING, _SIGN_OFF):
+        for m in regex.finditer(text):
+            if _person_value(m.group(1)):
+                out.append((m.start(1), m.end(1), m.group(1)))
+    return out
+
+
+def _repeated_surnames(text: str, spans: List[Span]) -> List[Span]:
+    """A surname found once is the same person at a later bare mention ("gegen Lüders")."""
+    surnames = {v.split()[-1] for _s, _e, v in spans if len(v.split()) >= 2 and len(v.split()[-1]) >= 4}
+    surnames -= GIVEN_NAMES
+    out: List[Span] = []
+    for name in surnames:
+        for m in re.finditer(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", text):
+            before = text[max(0, m.start() - 6):m.start()].lower()
+            if re.search(r"\b(?:der|die|das|den|dem|des|ein|eine)[ \t]+$", before):
+                continue
+            out.append((m.start(), m.end(), name))
+    return out
+
+
 PROBES = {
     "table": _table_names,
+    "labelled": _labelled_names,
+    "listed": _listed_names,
+    "greeted": _greeted_names,
 }
 
 
