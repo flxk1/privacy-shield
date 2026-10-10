@@ -1777,13 +1777,18 @@ without it.
     "Befund der Kontrolluntersuchung:" (25) is not a record field.
   - A record is about one person throughout: a document with a line
     "Patient(in):", "Versicherte(r):", "Betroffene(r):", "Bewerber(in):",
-    "Mitarbeiter(in):" or "Arbeitnehmer(in):", or one that names itself
-    Arztbrief, Entlassbrief, Befundbericht, Überweisung, Krankmeldung,
-    AU-Bescheinigung, Attest, Anamnese, Epikrise or Pflegebericht. In it
+    "Mitarbeiter(in):" or "Arbeitnehmer(in):" whose value is a person
+    ("Herr Lehmann", "Lea Sommer"; not an empty field, "siehe Anlage" or "die
+    im Antrag genannte Person"), or a line headed Arztbrief, Entlassbrief,
+    Befundbericht, Überweisungsschein, Krankmeldung, AU-Bescheinigung,
+    (Ärztliches) Attest, Anamnese, Epikrise or Pflegebericht, alone or with
+    a colon ("Arztbrief-Software" and a bank "Überweisung" are not). In it
     every keyword counts in every sentence (clinical prose drops the
     subject), keywords need no model support with the model on, and an
     ICD-10-GM term decides the verdict instead of only flagging. Cost: a
-    business document with such a line or word blocks on any keyword in it.
+    business document with a named label or such a heading blocks on any
+    keyword in it. Not a record: a referral without a named label or heading
+    ("Überweisung zum Orthopäden" in running text).
   - Health keywords include the words of sick notes and applications:
     krankgeschrieben, krankgemeldet, arbeitsunfähig, AU-Bescheinigung, Reha,
     ärztliches Attest, schwerbehindert, GdB, Medikation, Entzug,

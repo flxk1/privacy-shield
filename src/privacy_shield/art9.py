@@ -93,13 +93,17 @@ def _anchor(text: str, span: Tuple[int, int], names: Sequence[Tuple[int, int]]) 
 # A document that names itself as a record about one person: every sentence in
 # it is about that person, though clinical prose drops the subject
 # ("Vorbekannt sind ein Typ-2-Diabetes und eine Hypertonie.")
+_NAMED = r"(?:(?:Herrn?|Frau|Hr\.|Fr\.)[ \t]+[A-ZÄÖÜ][a-zäöüß]+|[A-ZÄÖÜ][a-zäöüß]+[ \t]+[A-ZÄÖÜ][a-zäöüß]+)"
 _RECORD_ANCHOR = re.compile(
+    # a label whose value is a person: not "Mitarbeiter:" left empty, "Patient:
+    # siehe Anlage" or "Versicherte Person: die im Antrag genannte Person"
     r"(?m)^[ \t]*(?i:Patient(?:in)?|Versicherte(?:r)?|Versicherte[ \t]+Person|Betroffene(?:r)?|"
-    r"Bewerber(?:in)?|Mitarbeiter(?:in)?|Arbeitnehmer(?:in)?)[ \t]*:"
-    # the record words are capitalised nouns: "attest" is an English verb
-    r"|\b(?:Arztbrief|Entlass(?:ungs)?brief|Befundbericht|Überweisung(?:sschein)?|Krankmeldung|"
-    r"Arbeitsunfähigkeitsbescheinigung|AU-Bescheinigung|Attest|Anamnese|Epikrise|Pflegebericht|"
-    r"Gutachten[ \t]+zur[ \t]+Person)\b"
+    r"Bewerber(?:in)?|Mitarbeiter(?:in)?|Arbeitnehmer(?:in)?)[ \t]*:[ \t]*" + _NAMED
+    # a record word as the heading of a line: not "Arztbrief-Software", and not
+    # "Überweisung", which is also a bank transfer
+    + r"|^[ \t]*(?:Arztbrief|Entlass(?:ungs)?brief|Befundbericht|Überweisungsschein|Krankmeldung|"
+    r"Arbeitsunfähigkeitsbescheinigung|AU-Bescheinigung|Ärztliches[ \t]+Attest|Attest|Anamnese|Epikrise|"
+    r"Pflegebericht)[ \t]*(?::|$)"
 )
 
 
