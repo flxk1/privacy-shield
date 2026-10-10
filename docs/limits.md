@@ -2180,13 +2180,19 @@ recall or precision on documents nobody chose.
   "ich" or singular person noun; a pronoun only where such an anchor stands
   in the text), or as a label that opens a line or follows a comma and is
   followed directly by the date ("Eintritt: 01.07.2025", not "Eintritt:
-  frei am 03.10."). A bare "AU" counts after an article ("die AU") or before
-  bis/ab/seit/vom/von or a colon, not as a country code or the gold symbol.
+  frei am 03.10."). A bare "AU" counts by position only: after an article
+  ("die AU", "seine AU") or before bis/ab/seit/vom/von or a colon. So
+  "nach AU am" and "(AU) am" stay, but the country code, the gold symbol and
+  the African Union count in those positions ("Versand nach AU ab
+  15.06.2025", "Goldkurs AU: … am 01.10.2025", "Die AU tagt ab 12.02.2026"
+  lose the date).
   The costs: "Er war stationär vom 02.04." in a text that names nobody
   stays; a named speaker makes any sentence about a person ("Laut Frau
   Schulz erfolgte der Eintritt der Bedingung am 01.04.2025" loses the
   date); a label-shaped sentence start counts ("Austritt zum 31.12.2025 aus
-  dem Arbeitgeberverband"); sick-leave words count in policy or figurative
+  dem Arbeitgeberverband", "Eintritt am 03.10.2025 frei für alle Gäste");
+  "Eintrittsdatum 01.08.2025" with no colon, "Krankmeldung (AU)" and "eAU"
+  are not found; sick-leave words count in policy or figurative
   text ("Der Server ist seit 02.06.2025 arbeitsunfähig").
 - The verb-final order counts too: vom/seit/am/ab/bis, the date, at most
   three words, then arbeitsunfähig, krankgeschrieben, krankgemeldet,
