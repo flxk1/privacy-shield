@@ -73,6 +73,8 @@ privacy-shield/
 │   ├── media/    (image, audio, video, metadata)
 │   ├── privacy_shield_embeddings.py  simplifier.py
 │   ├── audit_log.py  privacy_skill_kg.py  llm_client.py  _legacy_env.py
+│   ├── identifiers.py  names.py  national.py  freshness.py
+│   ├── name_layer/  (per-language name detection)
 │   ├── helpers/  (json_template_overlay, documents)
 │   ├── services/ (local_model_runtime)
 │   └── utils/    (file_io, network)
