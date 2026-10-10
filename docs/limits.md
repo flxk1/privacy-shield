@@ -2178,7 +2178,7 @@ recall or precision on documents nobody chose.
   Handel", "Austritt Großbritanniens"), so they count only in a sentence
   that is about a person by the special-category rule (a name, honorific,
   "ich" or singular person noun; a pronoun only where such an anchor stands
-  in the text), or as a label that opens a line or follows a comma and is
+  in the text), or as a label that opens a line or follows a comma or semicolon and is
   followed directly by the date ("Eintritt: 01.07.2025", not "Eintritt:
   frei am 03.10."). A bare "AU" counts by position only: after an article
   ("die AU", "seine AU") or before bis/ab/seit/vom/von or a colon. So
