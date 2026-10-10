@@ -71,4 +71,11 @@ PRECISION_DE = [
     "Die Kündigung des Vertrags zum 30.06.2025 ist eingegangen.",
     "Aufnahme in den Katalog am 01.03.2025, Artikel (12) und Tabelle (3).",
     "10-jährige Garantie für 5 Geräte.",
+    "Die Unfallversicherung gilt ab 01.01.2026, die Unfallkasse prüft seit 01.02.2025.",
+    "Der stationäre Handel verzeichnet seit 01.03. steigende Umsätze.",
+    "Eintritt der Bedingung am 01.04.2025; Eintritt frei am 03.10.2025.",
+    "Der Austritt Großbritanniens am 31.01.2020 war folgenreich.",
+    "Am Todestag des Firmengründers, dem 14.02.2025, bleibt das Werk zu.",
+    "Die Maschine (12 J.) wird ersetzt. AU-Zone Nord: Lieferung am 12.06.2025.",
+    "Die Entlassungswelle begann am 15.01.2024. Unser Team operiert ab 01.10. in Berlin.",
 ]

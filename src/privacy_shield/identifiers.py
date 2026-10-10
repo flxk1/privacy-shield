@@ -1114,29 +1114,52 @@ def lowercase_city_after(text: str, end: int) -> Optional[Tuple[int, int, str]]:
 # A date tied to an event in a person's life: sick leave, a hospital stay, an
 # accident, joining or leaving, death. Without such an anchor a date is a due
 # date or a delivery date and stays.
-_DATE = r"\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2}(?!\d))?"
-_EVENT_ANCHOR = (
-    # not "Kündigung" or "Aufnahme": a contract is terminated and a product
-    # listed on a date too
-    r"(?i:\bAU\b|arbeitsunfähig|krankgeschrieben|krankgemeldet|stationär|Entlassung|"
-    r"Unfall(?:tag)?|Eintritt(?:sdatum)?|Austritt(?:sdatum)?|Beschäftigungsbeginn|"
-    r"verstorben|Todestag|Sterbedatum|OP-Termin|operiert)"
+_MONTHS = r"(?:Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)"
+_DATE = r"(?:\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2}(?!\d))?|\d{1,2}\.[ \t]?" + _MONTHS + r"(?:[ \t]\d{4})?)"
+_RANGE = "(" + _DATE + r"(?:[ \t]*(?:bis|–|-)[ \t]*(?:zum[ \t]+)?" + _DATE + r")?)"
+# anchors that are a person's own: sick leave
+_SICK = r"(?:\bAU\b(?!-)|\barbeitsunfähig\w*|\bkrankgeschrieben\b|\bkrankgemeldet\b)"
+# anchors with business senses too ("Eintritt der Bedingung", "stationärer Handel",
+# "Austritt Großbritanniens"): they count only in a sentence about a person,
+# or as a label ("Eintritt:", "Austritt zum")
+_PERSONAL = (
+    r"(?:\bstationär\b|\bEntlassung\b|\bUnfall(?:tag)?\b|\bEintritt(?:sdatum)?\b|\bAustritt(?:sdatum)?\b|"
+    r"\bBeschäftigungsbeginn\b|\bverstorben\b|\bTodestag\b|\bSterbedatum\b|\bOP-Termin\b|\boperiert\b)"
 )
-_EVENT_DATE = re.compile(
-    _EVENT_ANCHOR + r"(?:(?!\.[ \t\n])[^\n]){0,30}?(" + _DATE + r"(?:[ \t]*(?:bis|–|-)[ \t]*" + _DATE + r")?)"
+_LABEL_FORM = re.compile(r"(?i)^(?:Eintritt(?:sdatum)?|Austritt(?:sdatum)?|Beschäftigungsbeginn|Sterbedatum|OP-Termin|Unfalltag)[ \t]*(?::|zum|am)")
+_EVENT_AFTER = re.compile(
+    "(?i:" + _SICK + "|" + _PERSONAL + ")" + r"(?:(?!\.[ \t\n])[^\n]){0,30}?" + _RANGE
 )
+# the verb-final order: "seit 02.06.2025 krankgeschrieben", "am 09.01.2025 verstorben"
+_EVENT_BEFORE = re.compile(
+    r"(?i:\b(?:vom|seit|am|ab|bis)[ \t]+)" + _RANGE
+    + r"(?:[ \t]+(?:\w+[ \t]+){0,3}?)(?=(?i:arbeitsunfähig|krankgeschrieben|krankgemeldet|verstorben|operiert|stationär)\b)"
+)
+
+
+def find_event_dates(text: str) -> List[Tuple[int, int, str, bool]]:
+    """(start, end, value, needs_person): sick-leave dates stand alone, the others need a person or a label."""
+    out = []
+    for m in _EVENT_AFTER.finditer(text):
+        anchor = m.group(0)[: m.start(1) - m.start()]
+        sick = re.match("(?i:" + _SICK + ")", anchor) is not None
+        out.append((m.start(1), m.end(1), m.group(1), not sick and not _LABEL_FORM.match(anchor)))
+    for m in _EVENT_BEFORE.finditer(text):
+        tail = text[m.end():m.end() + 20].lower()
+        sick = tail.startswith(("arbeitsunfähig", "krankgeschrieben", "krankgemeldet"))
+        out.append((m.start(1), m.end(1), m.group(1), not sick))
+    return out
+
+
 _PERSON_AGE = re.compile(
-    r"(\(\d{1,3}[ \t]?J\.?\))"
+    # "(58 J.)" directly after a name; the scanner checks the name
+    r"(?<=[a-zäöüß][ \t])(\(\d{1,3}[ \t]?J\.?\))"
     r"|\b(?:Fahrerin|Fahrer|Radfahrerin|Radfahrer|Fußgängerin|Fußgänger|Patientin|Patient|Mann|Frau|Kind|"
     r"Junge|Mädchen|Seniorin|Senior|Rentnerin|Rentner|Schülerin|Schüler|Opfer|Verletzte|Verletzter|"
     r"Beschuldigte|Beschuldigter|Tatverdächtige|Tatverdächtiger)[ \t](\(\d{1,3}\))"
     # "den 28-jährigen Pascal Lüders", not "die 10-jährige Garantie"
     r"|\b(\d{1,3}-jährige[nrms]?)(?=[ \t]+[A-ZÄÖÜ][a-zäöüß]+[ \t]+[A-ZÄÖÜ][a-zäöüß]+)"
 )
-
-
-def find_event_dates(text: str) -> List[Tuple[int, int, str]]:
-    return [(m.start(1), m.end(1), m.group(1)) for m in _EVENT_DATE.finditer(text)]
 
 
 def find_person_ages(text: str) -> List[Tuple[int, int, str]]:

@@ -1548,8 +1548,19 @@ class PrivacyScanner:
         if 2 not in self.layers:
             return findings
         merged = list(findings)
-        hits = [(s, e, v, PIIType.EVENT_DATE) for s, e, v in self._through_view(text, identifiers.find_event_dates)]
-        hits += [(s, e, v, PIIType.AGE) for s, e, v in self._through_view(text, identifiers.find_person_ages)]
+        names = [(f.start, f.end) for f in findings if f.pii_type is PIIType.NAME]
+        sentences = art9.sentences(text)
+        hits = []
+        for start, end, value, needs_person in self._through_view(text, identifiers.find_event_dates):
+            if needs_person and not art9.refers_to_person(text, sentences, start, names):
+                continue
+            hits.append((start, end, value, PIIType.EVENT_DATE))
+        for start, end, value in self._through_view(text, identifiers.find_person_ages):
+            # "(58 J.)" counts after a name ("Herr Dahl (58 J.)"), not "Die Maschine (12 J.)"
+            if value.endswith("J.)") or value.endswith("J)"):
+                if not any(0 <= start - ne <= 2 for _ns, ne in names):
+                    continue
+            hits.append((start, end, value, PIIType.AGE))
         for start, end, value, pii_type in hits:
             overlapping = [f for f in merged if f.start < end and start < f.end]
             if any(f.checksum_validated for f in overlapping):

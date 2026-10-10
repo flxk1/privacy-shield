@@ -2169,15 +2169,26 @@ recall or precision on documents nobody chose.
 ## Dates of a person's events, age forms, phone layouts
 
 - A date or date range is `event_date` [DATE] when it follows, in the same
-  phrase and within 30 characters, an anchor of a person's event: AU,
-  arbeitsunfähig, krankgeschrieben, krankgemeldet, stationär, Entlassung,
-  Unfall(tag), Eintritt(sdatum), Austritt(sdatum), Beschäftigungsbeginn,
-  verstorben, Todestag, Sterbedatum, OP-Termin, operiert ("AU bis Freitag,
-  16.05.", "stationär vom 02.04. bis 09.04.2025"). "Kündigung" and
-  "Aufnahme" are not anchors, since a contract is terminated and a product
-  listed on a date too, so a dismissal date is not found this way. A date
-  with no such anchor stays ("Lieferung am 22.03.2025").
-- Ages: "(58 J.)", a person noun before "(71)" ("Radfahrerin (71)"), and
+  phrase and within 30 characters, an anchor word of a person's event, as a
+  whole word ("Unfallversicherung" and "AU-Zone" are not anchors). Sick
+  leave (AU, arbeitsunfähig, krankgeschrieben, krankgemeldet) counts on its
+  own. Stationär, Entlassung, Unfall(tag), Eintritt, Austritt,
+  Beschäftigungsbeginn, verstorben, Todestag, Sterbedatum, OP-Termin and
+  operiert have business senses ("Eintritt der Bedingung", "stationärer
+  Handel", "Austritt Großbritanniens"), so they count only in a sentence
+  that is about a person by the special-category rule (a name, honorific,
+  "ich" or singular person noun; a pronoun only where such an anchor stands
+  in the text), or as a label ("Eintritt:", "Austritt zum"). The cost: "Er
+  war stationär vom 02.04." in a text that names nobody stays.
+- The verb-final order counts too: vom/seit/am/ab/bis, the date, at most
+  three words, then arbeitsunfähig, krankgeschrieben, krankgemeldet,
+  verstorben, operiert or stationär ("seit 02.06.2025 krankgeschrieben").
+  Month names count as dates ("seit 7. Juli 2025").
+- "Kündigung" and "Aufnahme" are not anchors, since a contract is
+  terminated and a product listed on a date too, so a dismissal date is not
+  found this way. A date with no anchor stays ("Lieferung am 22.03.2025").
+- Ages: "(58 J.)" directly after a name ("Herr Dahl (58 J.)", not "Die
+  Maschine (12 J.)"), a person noun before "(71)" ("Radfahrerin (71)"), and
   "28-jährigen" before a two-word name; not "10-jährige Garantie".
 - Phone numbers with an extension ("+49 711 55601-23") and, after a phone
   label, with a spaced en dash ("0176 – 2344 1987").
