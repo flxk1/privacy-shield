@@ -1126,7 +1126,12 @@ _PERSONAL = (
     r"(?:\bstationär\b|\bEntlassung\b|\bUnfall(?:tag)?\b|\bEintritt(?:sdatum)?\b|\bAustritt(?:sdatum)?\b|"
     r"\bBeschäftigungsbeginn\b|\bverstorben\b|\bTodestag\b|\bSterbedatum\b|\bOP-Termin\b|\boperiert\b)"
 )
-_LABEL_FORM = re.compile(r"(?i)^(?:Eintritt(?:sdatum)?|Austritt(?:sdatum)?|Beschäftigungsbeginn|Sterbedatum|OP-Termin|Unfalltag)[ \t]*(?::|zum|am)")
+_LABEL_FORM = re.compile(
+    r"(?i)^(?:Eintritt(?:sdatum)?|Austritt(?:sdatum)?|Beschäftigungsbeginn|Sterbedatum|OP-Termin|Unfalltag)[ \t]*(?::|zum|am)[ \t]*$")
+_LABEL_START = re.compile(r"(?:^|[\n,;])[ \t]*$")
+# "AU" is also a country code and the gold symbol: it counts after an article or before its period
+_AU_BEFORE = re.compile(r"(?i)\b(?:die|eine|seine|ihre|keine|neue|aktuelle)[ \t]+$")
+_AU_AFTER = re.compile(r"(?i)^AU[ \t]*(?::|\b(?:bis|ab|seit|vom|von)\b)")
 _EVENT_AFTER = re.compile(
     "(?i:" + _SICK + "|" + _PERSONAL + ")" + r"(?:(?!\.[ \t\n])[^\n]){0,30}?" + _RANGE
 )
@@ -1142,8 +1147,11 @@ def find_event_dates(text: str) -> List[Tuple[int, int, str, bool]]:
     out = []
     for m in _EVENT_AFTER.finditer(text):
         anchor = m.group(0)[: m.start(1) - m.start()]
+        if anchor[:2] == "AU" and not (_AU_BEFORE.search(text[max(0, m.start() - 12):m.start()]) or _AU_AFTER.match(anchor)):
+            continue
         sick = re.match("(?i:" + _SICK + ")", anchor) is not None
-        out.append((m.start(1), m.end(1), m.group(1), not sick and not _LABEL_FORM.match(anchor)))
+        label = _LABEL_FORM.match(anchor) and _LABEL_START.search(text[max(0, m.start() - 8):m.start()])
+        out.append((m.start(1), m.end(1), m.group(1), not sick and not label))
     for m in _EVENT_BEFORE.finditer(text):
         tail = text[m.end():m.end() + 20].lower()
         sick = tail.startswith(("arbeitsunfähig", "krankgeschrieben", "krankgemeldet"))

@@ -78,4 +78,5 @@ PRECISION_DE = [
     "Am Todestag des Firmengründers, dem 14.02.2025, bleibt das Werk zu.",
     "Die Maschine (12 J.) wird ersetzt. AU-Zone Nord: Lieferung am 12.06.2025.",
     "Die Entlassungswelle begann am 15.01.2024. Unser Team operiert ab 01.10. in Berlin.",
+    "Eintritt: frei am 03.10.2025. Lieferung nach AU am 12.06.2025, Goldpreis (AU) am 01.10.2025.",
 ]

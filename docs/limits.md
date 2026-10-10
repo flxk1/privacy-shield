@@ -2178,8 +2178,16 @@ recall or precision on documents nobody chose.
   Handel", "Austritt Großbritanniens"), so they count only in a sentence
   that is about a person by the special-category rule (a name, honorific,
   "ich" or singular person noun; a pronoun only where such an anchor stands
-  in the text), or as a label ("Eintritt:", "Austritt zum"). The cost: "Er
-  war stationär vom 02.04." in a text that names nobody stays.
+  in the text), or as a label that opens a line or follows a comma and is
+  followed directly by the date ("Eintritt: 01.07.2025", not "Eintritt:
+  frei am 03.10."). A bare "AU" counts after an article ("die AU") or before
+  bis/ab/seit/vom/von or a colon, not as a country code or the gold symbol.
+  The costs: "Er war stationär vom 02.04." in a text that names nobody
+  stays; a named speaker makes any sentence about a person ("Laut Frau
+  Schulz erfolgte der Eintritt der Bedingung am 01.04.2025" loses the
+  date); a label-shaped sentence start counts ("Austritt zum 31.12.2025 aus
+  dem Arbeitgeberverband"); sick-leave words count in policy or figurative
+  text ("Der Server ist seit 02.06.2025 arbeitsunfähig").
 - The verb-final order counts too: vom/seit/am/ab/bis, the date, at most
   three words, then arbeitsunfähig, krankgeschrieben, krankgemeldet,
   verstorben, operiert or stationär ("seit 02.06.2025 krankgeschrieben").

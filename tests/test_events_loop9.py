@@ -12,6 +12,8 @@ from privacy_shield.runner import scan
     ("Er ist seit 02.06.2025 krankgeschrieben.", "02.06.2025"),
     ("Herr Bauer ist am 09.01.2025 verstorben.", "09.01.2025"),
     ("Krankgemeldet seit 7. Juli 2025.", "Juli"),
+    ("AU: 12.05.–16.05.2025", "16.05.2025"),
+    ("Seine AU läuft bis 16.05.2025.", "16.05.2025"),
     ("Herr Dahl (58 J.) kam.", "58"),
     ("eine Radfahrerin (71) wurde verletzt", "71"),
     ("den 28-jährigen Pascal Lüders", "28"),
@@ -37,6 +39,11 @@ def test_person_event_dates_ages_and_phone_layouts_are_masked(text, hidden):
     "AU-Zone Nord: Lieferung am 12.06.2025.",
     "Die Entlassungswelle begann am 15.01.2024.",
     "Unser Team operiert ab 01.10. in Berlin.",
+    "Eintritt: frei am 03.10.2025.",
+    "Eintritt: 12 Euro, Konzert am 03.10.2025.",
+    "Großbritanniens Austritt am 31.01.2020 war folgenreich.",
+    "Lieferung nach AU am 12.06.2025.",
+    "Goldpreis (AU) am 01.10.2025 gestiegen.",
 ])
 def test_business_dates_and_counts_stay(text):
     assert scan(text).documents[0].overlay == text
