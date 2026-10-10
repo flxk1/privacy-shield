@@ -2166,6 +2166,22 @@ person must be blocked. Both corpora are small and hand-picked from the
 loops' own examples; they guard against regressions and do not measure
 recall or precision on documents nobody chose.
 
+### With the optional model on
+
+tests/test_precision_budget_model.py runs the same corpora with
+fastino/gliner2-privacy-filter-PII-multi (revision 1cb4166; Apache-2.0, built
+on GLiNER2 multi, Apache-2.0, and mDeBERTa-v3, MIT; trained on synthetic text;
+its card names en, fr, es, de, it, pt, nl) when PII_MODEL_UNDER_TEST is set.
+Model off → on, spans and character loss: German dev 1 → 2 (0.56 → 1.52 %),
+English dev 4 → 5 (1.90 → 3.56 %), English held-out 2 → 5 (1.44 → 5.44 %),
+English adversarial 7 → 13 (2.56 → 5.68 %), business look-alikes 6 → 14
+(1.61 → 4.33 %); German held-out and adversarial unchanged; no look-alike
+blocks either way. It names group nouns ("Betroffene Personen", "All Staff",
+"Hiring Manager") and brands ("John Lewis", "Charles Schwab"), reads
+"Neuer Weg 2026" and "Supermarkt 3" as streets, and "Migräne", "Testament",
+"Netzwerkstörung" as special categories (redacted, never blocking). The
+corpora took 0.5 s off and 34 s on, model load included.
+
 ## Dates of a person's events, age forms, phone layouts
 
 - A date or date range is `event_date` [DATE] when it follows, in the same
