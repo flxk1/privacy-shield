@@ -44,6 +44,9 @@ ACCURACY_DE = [
     ("date", "Herr Albrecht (* 12.04.1971) ist neu.", "1971"),
     ("date", "geb. am 12. April 1971", "April"),
     ("date", "Herr Albrecht ist 54 Jahre alt.", "54"),
+    ("date", "Er war stationär vom 02.04. bis 09.04.2025 im Klinikum.", "09.04.2025"),
+    ("date", "eine Radfahrerin (71) wurde verletzt", "71"),
+    ("contact", "Tel. +49 711 55601-23", "55601-23"),
     # secrets
     ("secret", "export GITHUB_TOKEN=ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8", "ghp_"),
     ("secret", "Karte gültig bis 12/27, CVV 123", "CVV 123"),

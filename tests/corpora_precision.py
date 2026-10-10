@@ -66,4 +66,9 @@ PRECISION_DE = [
     "Neuer Weg 2026 für die Firma.",
     "Breiter Straße 2 Spuren geplant.",
     "Wir treffen uns at 5, Fußnote *12.04.2024 geändert.",
+    # dates and counts without a person's event
+    "Lieferung am 22.03.2025, Rechnung vom 01.07.2025.",
+    "Die Kündigung des Vertrags zum 30.06.2025 ist eingegangen.",
+    "Aufnahme in den Katalog am 01.03.2025, Artikel (12) und Tabelle (3).",
+    "10-jährige Garantie für 5 Geräte.",
 ]

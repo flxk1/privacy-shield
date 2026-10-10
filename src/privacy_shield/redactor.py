@@ -223,6 +223,7 @@ class Redactor:
             PIIType.PLZ_CITY: "[LOCATION]",
             PIIType.LICENSE_PLATE: "[PLATE]",
             PIIType.PERSON_REFERENCE: "[REFERENCE]",
+            PIIType.EVENT_DATE: "[DATE]",
             PIIType.ONLINE_IDENTIFIER: "[ONLINE_ID]",
             PIIType.DEVICE_ID: "[DEVICE]",
             PIIType.GEO_LOCATION: "[GEO]",

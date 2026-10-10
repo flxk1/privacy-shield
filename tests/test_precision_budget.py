@@ -13,13 +13,13 @@ import pytest
 
 from corpora_english import EN_CLEAN_ADVERSARIAL, EN_CLEAN_DEV, EN_CLEAN_HELD_OUT
 from corpora_german import CLEAN_ADVERSARIAL, CLEAN_DEV, CLEAN_HELD_OUT
-from privacy_shield.scanner import PIIType, PrivacyScanner
+from privacy_shield.scanner import Confidence, PIIType, PrivacyScanner
 
 # corpus: (max spans, max character loss in percent)
 BUDGET = {
-    "de_dev": (CLEAN_DEV, 2, 1.06),
+    "de_dev": (CLEAN_DEV, 1, 0.56),
     "de_held_out": (CLEAN_HELD_OUT, 0, 0.0),
-    "de_adversarial": (CLEAN_ADVERSARIAL, 5, 2.63),
+    "de_adversarial": (CLEAN_ADVERSARIAL, 3, 1.69),
     "en_dev": (EN_CLEAN_DEV, 4, 1.90),
     "en_held_out": (EN_CLEAN_HELD_OUT, 2, 1.44),
     "en_adversarial": (EN_CLEAN_ADVERSARIAL, 7, 2.56),
@@ -27,8 +27,11 @@ BUDGET = {
 
 
 def _measure(docs):
+    # what the runner redacts: it scans at MEDIUM, so a LOW finding (a bare date
+    # as a possible birth date) never reaches the overlay and is not counted
     texts = [d if isinstance(d, str) else d[-1] for d in docs]
-    findings = [f for t in texts for f in PrivacyScanner().scan(t).findings]
+    scanner = PrivacyScanner(min_confidence=Confidence.MEDIUM)
+    findings = [f for t in texts for f in scanner.scan(t).findings]
     loss = 100 * sum(f.end - f.start for f in findings) / sum(len(t) for t in texts)
     return findings, loss
 
@@ -49,10 +52,10 @@ def test_no_name_is_claimed_on_the_german_name_free_corpora(corpus):
 
 
 # PRECISION_DE holds the shapes the detectors misread: figures with units,
-# greetings to groups, labels without a person, codes, policy pages. Its 8
-# spans today are known (a due date taken for a birth date, an order number
-# for a phone, keywords redacted as words); none of its texts may block.
-PRECISION_BUDGET = (8, 2.90)
+# greetings to groups, labels without a person, codes, policy pages. Its 6
+# redactions today are known (an order number as a phone, a type code as a
+# plate, keywords redacted as words); none of its texts may block.
+PRECISION_BUDGET = (6, 1.96)
 
 
 def test_business_look_alikes_stay_within_the_precision_budget():

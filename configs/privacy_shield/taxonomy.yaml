@@ -107,6 +107,13 @@ entities:
     default_action: redact
     requires_review: false
 
+  # A date tied to an event in a person's life.
+  - id: event_date
+    canonical_name: EVENT_DATE
+    detector_class: quasi_identifier
+    default_action: redact
+    requires_review: false
+
   - id: person_reference
     canonical_name: PERSON_REFERENCE
     detector_class: quasi_identifier

@@ -2156,8 +2156,8 @@ evidence (a title, a signature, an address block).
 tests/test_precision_budget.py pins what all detectors together claim on
 the name-free corpora and on tests/corpora_precision.py, a set of business
 look-alikes (figures with units, greetings to groups, labels without a
-person, codes, policy pages): 8 spans, 2.90 % of characters, no text
-blocked. A change that claims more fails there and must re-state its trade
+person, codes, policy pages): 6 redactions, 1.96 % of characters, no text
+blocked, counted at the runner's MEDIUM floor (what reaches the overlay). A change that claims more fails there and must re-state its trade
 before the budget moves. The same file holds the accuracy check: every
 value in tests/corpora_accuracy.py (identifiers, contact and online data,
 addresses, names, dates, secrets, special categories) must leave the
@@ -2165,4 +2165,20 @@ overlay, and every text there with special-category or card data about a
 person must be blocked. Both corpora are small and hand-picked from the
 loops' own examples; they guard against regressions and do not measure
 recall or precision on documents nobody chose.
+
+## Dates of a person's events, age forms, phone layouts
+
+- A date or date range is `event_date` [DATE] when it follows, in the same
+  phrase and within 30 characters, an anchor of a person's event: AU,
+  arbeitsunfähig, krankgeschrieben, krankgemeldet, stationär, Entlassung,
+  Unfall(tag), Eintritt(sdatum), Austritt(sdatum), Beschäftigungsbeginn,
+  verstorben, Todestag, Sterbedatum, OP-Termin, operiert ("AU bis Freitag,
+  16.05.", "stationär vom 02.04. bis 09.04.2025"). "Kündigung" and
+  "Aufnahme" are not anchors, since a contract is terminated and a product
+  listed on a date too, so a dismissal date is not found this way. A date
+  with no such anchor stays ("Lieferung am 22.03.2025").
+- Ages: "(58 J.)", a person noun before "(71)" ("Radfahrerin (71)"), and
+  "28-jährigen" before a two-word name; not "10-jährige Garantie".
+- Phone numbers with an extension ("+49 711 55601-23") and, after a phone
+  label, with a spaced en dash ("0176 – 2344 1987").
 

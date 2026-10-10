@@ -43,6 +43,9 @@ class PIIType(str, Enum):
     NAME = "name"
     ADDRESS = "address"
     PLZ_CITY = "plz_city"
+    #: A date tied to an event in a person's life (sick leave, a hospital stay,
+    #: an accident, joining or leaving; identifiers.find_event_dates).
+    EVENT_DATE = "event_date"
     #: GDPR Art. 4(1) "online identifier": a social-media handle or profile URL.
     ONLINE_IDENTIFIER = "online_identifier"
     #: A device identifier: MAC address, IMEI, vehicle identification number.
@@ -290,6 +293,13 @@ LAYER_1_PATTERNS: List[PatternDef] = [
         description="Email address",
     ),
 
+    # Phone - an extension after the subscriber number: "+49 711 55601-23"
+    PatternDef(
+        pattern=_compile(_NOT_DIGIT_BEFORE + r"\+\d{1,3}[ \t]\d{2,5}[ \t]\d{3,8}-\d{1,5}" + _NOT_DIGIT_AFTER),
+        pii_type=PIIType.PHONE,
+        confidence=Confidence.HIGH,
+        description="Phone number with an extension",
+    ),
     # Phone - German layouts the generic shape cuts: "(030) 123 456-78",
     # "+49 (0)30 1234567", and "089 - 12 34 56" after a phone label
     PatternDef(
@@ -303,7 +313,7 @@ LAYER_1_PATTERNS: List[PatternDef] = [
         description="Phone number with a bracketed area code",
     ),
     PatternDef(
-        pattern=_compile(r"0\d{2,5}[ \t]+-[ \t]+\d{2,4}(?:[ \t]\d{2,4}){0,3}" + _NOT_DIGIT_AFTER),
+        pattern=_compile(r"0\d{2,5}[ \t]+[-–—][ \t]+\d{2,4}(?:[ \t]\d{2,4}){0,3}" + _NOT_DIGIT_AFTER),
         pii_type=PIIType.PHONE,
         confidence=Confidence.HIGH,
         description="Phone number with a spaced hyphen",
@@ -1526,6 +1536,33 @@ class PrivacyScanner:
         merged.sort(key=lambda f: f.start)
         return merged
 
+    def _merge_events(
+        self,
+        text: str,
+        findings: List[Finding],
+        *,
+        zone: Optional[str],
+        page: Optional[int],
+    ) -> List[Finding]:
+        """Dates of a person's events and age forms (identifiers.find_event_dates, find_person_ages)."""
+        if 2 not in self.layers:
+            return findings
+        merged = list(findings)
+        hits = [(s, e, v, PIIType.EVENT_DATE) for s, e, v in self._through_view(text, identifiers.find_event_dates)]
+        hits += [(s, e, v, PIIType.AGE) for s, e, v in self._through_view(text, identifiers.find_person_ages)]
+        for start, end, value, pii_type in hits:
+            overlapping = [f for f in merged if f.start < end and start < f.end]
+            if any(f.checksum_validated for f in overlapping):
+                continue
+            merged = [f for f in merged if f not in overlapping]
+            merged.append(Finding(
+                pii_type=pii_type, value=value, start=start, end=end,
+                confidence=Confidence.MEDIUM, layer=2,
+                context=self._get_context(text, start, end), zone=zone, page=page,
+            ))
+        merged.sort(key=lambda f: f.start)
+        return merged
+
     def _merge_plates(
         self,
         text: str,
@@ -1803,6 +1840,7 @@ class PrivacyScanner:
         findings = self._merge_credentials(text, findings, zone=zone, page=page)
         findings = self._merge_names(text, findings, zone=zone, page=page)
         findings = self._merge_ages(text, findings, zone=zone, page=page)
+        findings = self._merge_events(text, findings, zone=zone, page=page)
         findings = self._merge_model(text, findings, zone=zone, page=page)
         findings = self._merge_icd(text, findings, zone=zone, page=page)
         findings = self._yield_to_validated(findings, text)
