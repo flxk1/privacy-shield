@@ -2158,5 +2158,11 @@ the name-free corpora and on tests/corpora_precision.py, a set of business
 look-alikes (figures with units, greetings to groups, labels without a
 person, codes, policy pages): 8 spans, 2.90 % of characters, no text
 blocked. A change that claims more fails there and must re-state its trade
-before the budget moves.
+before the budget moves. The same file holds the accuracy check: every
+value in tests/corpora_accuracy.py (identifiers, contact and online data,
+addresses, names, dates, secrets, special categories) must leave the
+overlay, and every text there with special-category or card data about a
+person must be blocked. Both corpora are small and hand-picked from the
+loops' own examples; they guard against regressions and do not measure
+recall or precision on documents nobody chose.
 

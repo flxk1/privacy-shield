@@ -68,3 +68,25 @@ def test_no_business_look_alike_blocks():
     from privacy_shield.gate import PrivacyGate
     blocked = [t for t in PRECISION_DE if not PrivacyGate()._decide_local({"text": t}, "external_llm").allowed]
     assert blocked == []
+
+
+# ---------------------------------------------------------------------------
+# Accuracy: the counterpart. Every value in tests/corpora_accuracy.py leaves
+# the overlay, and every text with special-category or card data about a
+# person is blocked. A change that loses one fails here.
+# ---------------------------------------------------------------------------
+
+
+def test_every_listed_value_leaves_the_overlay():
+    from corpora_accuracy import ACCURACY_DE
+    from privacy_shield.runner import scan
+    missed = [(cls, value, text) for cls, text, value in ACCURACY_DE
+              if value in scan(text).documents[0].overlay]
+    assert missed == [], missed
+
+
+def test_every_must_block_text_is_blocked():
+    from corpora_accuracy import ART9_MUST_BLOCK
+    from privacy_shield.gate import PrivacyGate
+    allowed = [t for t in ART9_MUST_BLOCK if PrivacyGate()._decide_local({"text": t}, "external_llm").allowed]
+    assert allowed == []
